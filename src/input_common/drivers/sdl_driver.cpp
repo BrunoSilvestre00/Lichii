@@ -7,6 +7,7 @@
 #include <array>
 #include <chrono>
 #include <numbers>
+#include <vector>
 #include "common/logging.h"
 #include "common/math_util.h"
 #include "common/param_package.h"
@@ -645,26 +646,40 @@ void SDLDriver::PumpEvents() {
         return;
     }
     SDL_PumpEvents();
-    // RenHDrum paces HD Rumble packets itself; due ones go out here
+
+    // RenHDrum paces HD Rumble packets itself; due ones go out here. The pads are ticked, and
+    // stalled motion sensors restarted, after the map lock is released: both call into SDL, and
+    // SDL's controller-added callback can hold the SDL joystick lock while it waits for the map
+    // lock.
     const auto now = std::chrono::steady_clock::now();
-    const auto now_us =
-        std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
     const bool check_motion = now - last_motion_stall_check >= std::chrono::milliseconds{250};
     if (check_motion) {
         last_motion_stall_check = now;
     }
-    std::scoped_lock lock{joystick_map_mutex};
-    for (const auto& [guid, joystick_list] : joystick_map) {
-        for (const auto& joystick : joystick_list) {
-            if (const auto pad = joystick->GetRenHDrum()) {
-                pad->Tick(now_us);
-            }
-            if (check_motion && joystick->IsMotionStalled(now)) {
-                LOG_INFO(Input, "Motion sensor of {} port {} stopped reporting, restarting it",
-                         joystick->GetControllerName(), joystick->GetPort());
-                joystick->EnableMotion();
+    std::vector<std::shared_ptr<RenHDrumPad>> pads;
+    std::vector<std::shared_ptr<SDLJoystick>> stalled;
+    {
+        std::scoped_lock lock{joystick_map_mutex};
+        for (const auto& [guid, joystick_list] : joystick_map) {
+            for (const auto& joystick : joystick_list) {
+                if (auto pad = joystick->GetRenHDrum()) {
+                    pads.push_back(std::move(pad));
+                }
+                if (check_motion && joystick->IsMotionStalled(now)) {
+                    stalled.push_back(joystick);
+                }
             }
         }
+    }
+    const auto now_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
+    for (const auto& pad : pads) {
+        pad->Tick(now_us);
+    }
+    for (const auto& joystick : stalled) {
+        LOG_INFO(Input, "Motion sensor of {} port {} stopped reporting, restarting it",
+                 joystick->GetControllerName(), joystick->GetPort());
+        joystick->EnableMotion();
     }
 }
 
