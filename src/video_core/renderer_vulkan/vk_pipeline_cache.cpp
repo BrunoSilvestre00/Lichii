@@ -1162,6 +1162,7 @@ GraphicsPipeline* PipelineCache::BuiltPipeline(GraphicsPipeline* pipeline) const
     }
     // EDEN_NX2_ASYNC_DISCARD=1: skip native draws whose pipeline is still building instead of
     // waiting for it (experimental; the draw may be missing for a frame or more).
+    /// Reads EDEN_NX2_ASYNC_DISCARD once and logs when it is on.
     static const bool discard_native = [] {
         const char* value = std::getenv("EDEN_NX2_ASYNC_DISCARD");
         const bool enabled = value != nullptr && value[0] == '1';
