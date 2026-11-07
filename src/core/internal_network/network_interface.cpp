@@ -7,7 +7,6 @@
 #include <vector>
 #include <numeric>
 #include <ranges>
-#include <bit>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -15,6 +14,7 @@
 #include <iphlpapi.h>
 #elif defined(__linux__) || defined(__ANDROID__) || defined(__APPLE__)
 #include <cerrno>
+#include <cstring>
 #include <ifaddrs.h>
 #include <net/if.h>
 #elif defined(__FreeBSD__)
@@ -136,6 +136,20 @@ static std::unordered_set<std::string> GetWifiInterfaceNames() {
 }
 #endif
 
+#if defined(__ANDROID__) || defined(__linux__) || defined(__APPLE__)
+/// IPv4 address of a getifaddrs sockaddr. macOS netmasks can be shorter than sockaddr_in
+/// (sa_len 5 or 7), so only sa_len bytes are copied there.
+static in_addr ToInAddr(const struct sockaddr* addr) {
+    struct sockaddr_in sin{};
+#ifdef __APPLE__
+    std::memcpy(&sin, addr, std::min<size_t>(addr->sa_len, sizeof(sin)));
+#else
+    std::memcpy(&sin, addr, sizeof(sin));
+#endif
+    return sin.sin_addr;
+}
+#endif
+
 std::vector<Network::NetworkInterface> GetAvailableNetworkInterfaces() {
 #if defined(__ANDROID__) || defined(__linux__) || defined(__APPLE__)
     struct ifaddrs* ifaddr = nullptr;
@@ -187,8 +201,8 @@ std::vector<Network::NetworkInterface> GetAvailableNetworkInterfaces() {
         gw.s_addr = it != routes.end() ? it->gateway : 0;
         ifaces.emplace_back(Network::NetworkInterface{
             .name = ifa->ifa_name,
-            .ip_address = std::bit_cast<struct sockaddr_in>(*ifa->ifa_addr).sin_addr,
-            .subnet_mask = std::bit_cast<struct sockaddr_in>(*ifa->ifa_netmask).sin_addr,
+            .ip_address = ToInAddr(ifa->ifa_addr),
+            .subnet_mask = ToInAddr(ifa->ifa_netmask),
             .gateway = gw,
 #ifdef __APPLE__
             .kind = wifi_names.contains(ifa->ifa_name) ? HostAdapterKind::Wifi
