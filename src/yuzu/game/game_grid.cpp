@@ -20,17 +20,25 @@ GameGrid::GameGrid(QWidget* parent) : QListView{parent} {
     setSelectionMode(QAbstractItemView::SingleSelection);
     setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+    setMouseTracking(true);
 
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
     setEditTriggers(QAbstractItemView::NoEditTriggers);
     setContextMenuPolicy(Qt::CustomContextMenu);
 
-    setSpacing(10);
+    setSpacing(12);
     setWordWrap(true);
     setTextElideMode(Qt::ElideRight);
     setFlow(QListView::LeftToRight);
     setWrapping(true);
+    setStyleSheet(QStringLiteral(
+        "QListView {"
+        "  border: none;"
+        "  background: transparent;"
+        "  outline: none;"
+        "  padding: 6px 8px 12px 8px;"
+        "}"));
 }
 
 void GameGrid::SetModel(GameListModel* model) {

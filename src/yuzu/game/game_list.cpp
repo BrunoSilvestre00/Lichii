@@ -8,7 +8,9 @@
 #include <QApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QFont>
 #include <QHeaderView>
+#include <QIcon>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -811,14 +813,31 @@ GameListPlaceholder::GameListPlaceholder(MainWindow* parent) : QWidget{parent} {
     image = new QLabel;
     text = new QLabel;
     layout->setAlignment(Qt::AlignCenter);
-    image->setPixmap(QIcon::fromTheme(QStringLiteral("plus_folder")).pixmap(200));
+    layout->setContentsMargins(32, 32, 32, 48);
+    layout->setSpacing(18);
+    image->setPixmap(QIcon::fromTheme(QStringLiteral("plus_folder")).pixmap(168));
+    image->setAlignment(Qt::AlignHCenter);
+    image->setObjectName(QStringLiteral("gameListPlaceholderImage"));
 
     RetranslateUI();
     QFont font = text->font();
-    font.setPointSize(20);
+    font.setPointSize(18);
+    font.setWeight(QFont::Medium);
     text->setFont(font);
     text->setAlignment(Qt::AlignHCenter);
-    image->setAlignment(Qt::AlignHCenter);
+    text->setWordWrap(true);
+    text->setObjectName(QStringLiteral("gameListPlaceholderText"));
+    text->setMaximumWidth(520);
+
+    setObjectName(QStringLiteral("gameListPlaceholder"));
+    setCursor(Qt::PointingHandCursor);
+    setStyleSheet(QStringLiteral(
+        "QWidget#gameListPlaceholder QLabel#gameListPlaceholderText {"
+        "  color: palette(text);"
+        "}"
+        "QWidget#gameListPlaceholder QLabel#gameListPlaceholderImage {"
+        "  opacity: 0.9;"
+        "}"));
 
     layout->addWidget(image);
     layout->addWidget(text);

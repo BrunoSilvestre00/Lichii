@@ -15,6 +15,7 @@ GameCarousel::GameCarousel(QWidget* parent) : QListView{parent} {
     setMovement(QListView::Static);
     setUniformItemSizes(true);
     setSelectionMode(QAbstractItemView::SingleSelection);
+    setMouseTracking(true);
 
     setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
@@ -24,11 +25,18 @@ GameCarousel::GameCarousel(QWidget* parent) : QListView{parent} {
     setEditTriggers(QAbstractItemView::NoEditTriggers);
     setContextMenuPolicy(Qt::CustomContextMenu);
 
-    setSpacing(10);
+    setSpacing(12);
     setWordWrap(true);
     setTextElideMode(Qt::ElideRight);
     setFlow(QListView::LeftToRight);
     setWrapping(false);
+    setStyleSheet(QStringLiteral(
+        "QListView {"
+        "  border: none;"
+        "  background: transparent;"
+        "  outline: none;"
+        "  padding: 8px 10px 12px 10px;"
+        "}"));
 }
 
 void GameCarousel::SetModel(GameListModel* model) {

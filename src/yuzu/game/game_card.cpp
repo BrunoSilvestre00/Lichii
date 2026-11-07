@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <algorithm>
+#include <cmath>
 #include <QPainter>
 #include <QPainterPath>
 #include "game_card.h"
@@ -16,68 +18,94 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
         return;
 
     painter->save();
-    painter->setRenderHint(QPainter::Antialiasing);
-
-    constexpr int cardCornerRadius = 10;
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->setRenderHint(QPainter::SmoothPixmapTransform, true);
 
     const QRect cardRect = getCardRect(option, index);
+    const bool selected = option.state & QStyle::State_Selected;
+    const bool hovered = option.state & QStyle::State_MouseOver;
+    const QPalette palette = option.palette;
+    const bool dark = palette.window().color().lightness() < 128;
+    const int radius = 14;
 
-    QPalette palette = option.palette;
-    QColor backgroundColor = palette.window().color();
-    QColor borderColor = palette.dark().color();
-    QColor textColor = palette.text().color();
+    QColor surface = dark ? QColor(22, 27, 38, 235) : QColor(255, 255, 255, 245);
+    QColor border = dark ? QColor(255, 255, 255, 18) : QColor(24, 34, 54, 18);
+    QColor titleColor = palette.text().color();
+    QColor subtitleColor = palette.text().color();
+    subtitleColor.setAlpha(dark ? 150 : 165);
 
-    // highlight on select or hover
-    if (option.state & QStyle::State_Selected) {
-        backgroundColor = palette.highlight().color();
-        borderColor = palette.highlight().color().lighter(150);
-        textColor = palette.highlightedText().color();
-    } else if (option.state & QStyle::State_MouseOver) {
-        backgroundColor = backgroundColor.lighter(120);
+    if (selected) {
+        QColor accent = palette.highlight().color();
+        surface = accent;
+        surface.setAlpha(dark ? 95 : 55);
+        border = palette.highlight().color();
+        border.setAlpha(190);
+        titleColor = palette.highlightedText().color();
+        subtitleColor = palette.highlightedText().color();
+        subtitleColor.setAlpha(190);
+    } else if (hovered) {
+        surface = dark ? QColor(30, 37, 52, 245) : QColor(248, 250, 255, 252);
+        border = palette.highlight().color();
+        border.setAlpha(dark ? 95 : 75);
     }
 
-    painter->setBrush(backgroundColor);
-    painter->setPen(QPen(borderColor, 1));
-    painter->drawRoundedRect(cardRect, cardCornerRadius, cardCornerRadius);
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(dark ? QColor(0, 0, 0, hovered || selected ? 65 : 40)
+                           : QColor(20, 30, 60, hovered || selected ? 28 : 18));
+    painter->drawRoundedRect(cardRect.translated(0, selected ? 2 : 3), radius, radius);
+
+    painter->setBrush(surface);
+    painter->setPen(QPen(border, 1));
+    painter->drawRoundedRect(cardRect, radius, radius);
 
     const u32 icon_size = UISettings::values.game_icon_size.GetValue();
-    QPixmap icon_pixmap = index.data(Qt::DecorationRole).value<QPixmap>();
+    const QPixmap icon_pixmap = index.data(Qt::DecorationRole).value<QPixmap>();
+    const int inset = cardMargin + 2;
+    const int titleHeight = UISettings::values.show_game_name.GetValue() ? 44 : 0;
+    QRect iconArea(cardRect.left() + inset, cardRect.top() + inset, cardRect.width() - inset * 2,
+                   cardRect.height() - inset * 2 - titleHeight);
+    iconArea.setHeight(std::max(1, iconArea.height()));
 
-    QRect iconRect;
     if (!icon_pixmap.isNull()) {
         QSize scaled = icon_pixmap.size();
-        scaled.scale(icon_size, icon_size, Qt::KeepAspectRatio);
-
-        iconRect = {cardRect.left() + (cardRect.width() - scaled.width()) / 2,
-                    cardRect.top() + cardMargin - 1, scaled.width(), scaled.height()};
-
-        painter->setRenderHint(QPainter::SmoothPixmapTransform, true);
-
-        painter->save();
+        scaled.scale(iconArea.size(), Qt::KeepAspectRatio);
+        QRect iconRect(iconArea.left() + (iconArea.width() - scaled.width()) / 2,
+                       iconArea.top() + (iconArea.height() - scaled.height()) / 2, scaled.width(),
+                       scaled.height());
+        const int imageRadius = std::max(8, radius - 4);
         QPainterPath clip_path;
-        clip_path.addRoundedRect(iconRect, cardCornerRadius, cardCornerRadius);
+        clip_path.addRoundedRect(iconRect, imageRadius, imageRadius);
+        painter->save();
         painter->setClipPath(clip_path);
         painter->drawPixmap(iconRect, icon_pixmap);
         painter->restore();
+
+        painter->setPen(QPen(QColor(255, 255, 255, dark ? 14 : 24), 1));
+        painter->setBrush(Qt::NoBrush);
+        painter->drawRoundedRect(iconRect.adjusted(0, 0, -1, -1), imageRadius, imageRadius);
     } else {
-        iconRect = {cardRect.left() + cardMargin, cardRect.top() + cardMargin,
-                    static_cast<int>(icon_size), static_cast<int>(icon_size)};
+        QRect placeholder = iconArea;
+        placeholder.setHeight(std::min(placeholder.height(), placeholder.width()));
+        placeholder.moveTop(iconArea.top());
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(dark ? QColor(255, 255, 255, 10) : QColor(0, 0, 0, 8));
+        painter->drawRoundedRect(placeholder, std::max(8, radius - 4), std::max(8, radius - 4));
     }
 
     if (UISettings::values.show_game_name.GetValue()) {
-        QRect textRect = cardRect;
-        textRect.setTop(iconRect.bottom() + cardMargin);
-        textRect.adjust(cardMargin, 0, -cardMargin, -cardMargin);
+        QRect textRect = cardRect.adjusted(inset, 0, -inset, -inset);
+        textRect.setTop(cardRect.bottom() - inset - titleHeight + 2);
 
-        QString title = index.data(Qt::DisplayRole).toString().split(QLatin1Char('\n')).first();
+        const QString full = index.data(Qt::DisplayRole).toString();
+        const QStringList lines = full.split(QLatin1Char('\n'));
+        const QString title = lines.value(0);
 
-        painter->setPen(textColor);
-        QFont font = option.font;
-        font.setBold(true);
-        font.setPixelSize(std::max(11.0, std::sqrt(static_cast<double>(icon_size))));
-        painter->setFont(font);
-
-        painter->drawText(textRect, Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap, title);
+        painter->setPen(titleColor);
+        QFont titleFont = option.font;
+        titleFont.setBold(true);
+        titleFont.setPixelSize(std::clamp(static_cast<int>(std::sqrt(static_cast<double>(icon_size)) * 1.15), 12, 16));
+        painter->setFont(titleFont);
+        painter->drawText(textRect, Qt::AlignHCenter | Qt::AlignVCenter | Qt::TextWordWrap, title);
     }
 
     painter->restore();

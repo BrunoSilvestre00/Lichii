@@ -2880,3 +2880,75 @@ QDialog#QtSoftwareKeyboardDialog QPushButton#button_space:disabled,
 QDialog#QtSoftwareKeyboardDialog QPushButton#button_space_shift:disabled {
   image: url(:/overlay/osk_button_Y_dark_disabled.png);
 }
+
+QMenuBar {
+    padding: 2px 4px;
+}
+
+QMenuBar::item {
+    padding: 4px 8px;
+    margin: 0 1px;
+    border-radius: 6px;
+}
+
+QMenu {
+    padding: 6px;
+    border-radius: 8px;
+}
+
+QMenu::item {
+    padding: 6px 22px 6px 10px;
+    border-radius: 6px;
+}
+
+QMenu::separator {
+    height: 1px;
+    margin: 6px 4px;
+    background: palette(midlight);
+}
+
+QToolBar {
+    spacing: 4px;
+    padding: 2px;
+}
+
+QStatusBar {
+    padding-left: 2px;
+}
+
+QTabWidget::pane {
+    border-radius: 8px;
+}
+
+QTabBar::tab {
+    padding: 7px 12px;
+    margin-right: 2px;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+}
+
+QHeaderView::section {
+    padding: 6px 8px;
+}
+
+QPushButton {
+    min-height: 24px;
+    padding: 4px 12px;
+    border-radius: 7px;
+}
+
+QToolButton {
+    padding: 3px;
+    border-radius: 6px;
+}
+
+QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox, QAbstractSpinBox {
+    border-radius: 6px;
+    min-height: 24px;
+}
+
+QGroupBox {
+    margin-top: 18px;
+    padding: 10px 8px 8px 8px;
+    border-radius: 8px;
+}
