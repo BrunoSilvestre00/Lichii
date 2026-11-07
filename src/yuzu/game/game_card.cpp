@@ -8,6 +8,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QRectF>
+#include <QSvgRenderer>
 #include <QStringList>
 #include "game_card.h"
 #include "qt_common/config/uisettings.h"
@@ -17,6 +18,16 @@
 namespace {
 
 void DrawSwitch2Placeholder(QPainter* painter, const QRect& bounds) {
+    static const QSvgRenderer switch2_logo(QStringLiteral(":/img/switch2_logo.svg"));
+    if (switch2_logo.isValid()) {
+        painter->fillRect(bounds, QColor(230, 0, 18));
+        const int side = std::min(bounds.width(), bounds.height());
+        const QRectF logo_rect(bounds.center().x() - side / 2.0,
+                               bounds.center().y() - side / 2.0, side, side);
+        switch2_logo.render(painter, logo_rect);
+        return;
+    }
+
     const QRectF rect(bounds);
     const QColor red(226, 0, 20);
     painter->fillRect(rect, red);
@@ -76,6 +87,61 @@ void DrawSwitch2Placeholder(QPainter* painter, const QRect& bounds) {
                       Qt::AlignCenter, QStringLiteral("SWITCH"));
 }
 
+void DrawAddFolderArtwork(QPainter* painter, const QRect& bounds, const QColor& accent, bool dark) {
+    const QRectF rect(bounds);
+    const QColor surface = dark ? QColor(17, 38, 54) : QColor(237, 243, 249);
+    painter->fillRect(rect, surface);
+
+    const qreal width = rect.width();
+    const qreal height = rect.height();
+    const QRectF folder(rect.left() + width * 0.27, rect.top() + height * 0.31,
+                        width * 0.46, height * 0.4);
+
+    QPainterPath folder_path;
+    folder_path.moveTo(folder.left(), folder.top() + folder.height() * 0.22);
+    folder_path.lineTo(folder.left(), folder.top() + folder.height() * 0.08);
+    folder_path.quadTo(folder.left(), folder.top(), folder.left() + folder.width() * 0.12,
+                       folder.top());
+    folder_path.lineTo(folder.left() + folder.width() * 0.4, folder.top());
+    folder_path.lineTo(folder.left() + folder.width() * 0.53,
+                       folder.top() + folder.height() * 0.2);
+    folder_path.lineTo(folder.right() - folder.width() * 0.1,
+                       folder.top() + folder.height() * 0.2);
+    folder_path.quadTo(folder.right(), folder.top() + folder.height() * 0.2, folder.right(),
+                       folder.top() + folder.height() * 0.3);
+    folder_path.lineTo(folder.right(), folder.bottom() - folder.height() * 0.1);
+    folder_path.quadTo(folder.right(), folder.bottom(), folder.right() - folder.width() * 0.1,
+                       folder.bottom());
+    folder_path.lineTo(folder.left() + folder.width() * 0.1, folder.bottom());
+    folder_path.quadTo(folder.left(), folder.bottom(), folder.left(),
+                       folder.bottom() - folder.height() * 0.1);
+    folder_path.closeSubpath();
+
+    QColor folder_fill = accent;
+    folder_fill.setAlpha(dark ? 42 : 30);
+    painter->setPen(QPen(accent, std::max(3.0, std::min(width, height) * 0.018), Qt::SolidLine,
+                         Qt::RoundCap, Qt::RoundJoin));
+    painter->setBrush(folder_fill);
+    painter->drawPath(folder_path);
+
+    const qreal badge_size = std::min(width, height) * 0.22;
+    const QPointF badge_center(folder.right() - badge_size * 0.05,
+                               folder.bottom() - badge_size * 0.04);
+    const QRectF badge(badge_center.x() - badge_size / 2, badge_center.y() - badge_size / 2,
+                       badge_size, badge_size);
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(accent);
+    painter->drawEllipse(badge);
+
+    const qreal plus_half = badge_size * 0.22;
+    painter->setPen(QPen(dark ? QColor(12, 29, 43) : QColor(Qt::white), badge_size * 0.09,
+                         Qt::SolidLine, Qt::RoundCap));
+    painter->drawLine(QPointF(badge_center.x() - plus_half, badge_center.y()),
+                      QPointF(badge_center.x() + plus_half, badge_center.y()));
+    painter->drawLine(QPointF(badge_center.x(), badge_center.y() - plus_half),
+                      QPointF(badge_center.x(), badge_center.y() + plus_half));
+}
+
 }
 
 GameCard::GameCard(QObject* parent) : QStyledItemDelegate{parent} {
@@ -94,6 +160,8 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
     const QRect cardRect = getCardRect(option, index);
     const bool selected = option.state & QStyle::State_Selected;
     const bool hovered = option.state & QStyle::State_MouseOver;
+    const bool add_folder =
+        index.data(GameListItem::TypeRole).value<GameListItemType>() == GameListItemType::AddDir;
     const QPalette palette = option.palette;
     const bool dark = palette.window().color().lightness() < 128;
     const int radius = 10;
@@ -144,7 +212,11 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
     painter->setClipPath(artwork_clip);
     painter->setRenderHint(QPainter::SmoothPixmapTransform, true);
 
-    if (has_icon && !icon_pixmap.isNull()) {
+    if (add_folder) {
+        const QColor accent = selected ? palette.highlightedText().color()
+                                       : palette.highlight().color();
+        DrawAddFolderArtwork(painter, artworkRect, accent, dark);
+    } else if (has_icon && !icon_pixmap.isNull()) {
         QSize scaled = icon_pixmap.size();
         scaled.scale(artworkRect.size(), Qt::KeepAspectRatioByExpanding);
         const QRect imageRect(artworkRect.center().x() - scaled.width() / 2,
@@ -161,10 +233,13 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
         textRect.setTop(cardRect.bottom() - inset - titleHeight + 2);
 
         const QString full = index.data(GameListItemPath::TitleRole).toString();
-        const QString title =
-            full.isEmpty()
-                ? index.data(Qt::DisplayRole).toString().section(QLatin1Char('\n'), 0, 0)
-                : full;
+        const QString title = add_folder
+                                  ? tr("Add Games Folder")
+                                  : (full.isEmpty()
+                                         ? index.data(Qt::DisplayRole)
+                                               .toString()
+                                               .section(QLatin1Char('\n'), 0, 0)
+                                         : full);
 
         painter->setPen(titleColor);
         QFont titleFont = option.font;
@@ -177,15 +252,19 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
         painter->drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextWordWrap, title);
 
         QStringList meta_parts;
-        const QString size_text = index.sibling(index.row(), GameListModel::COLUMN_SIZE)
-                                      .data(Qt::DisplayRole)
-                                      .toString();
-        if (!size_text.isEmpty()) {
-            meta_parts.append(size_text);
-        }
-        const QString file_type = index.data(GameListItemPath::FileTypeRole).toString();
-        if (!file_type.isEmpty()) {
-            meta_parts.append(file_type);
+        if (add_folder) {
+            meta_parts.append(tr("Choose your games folder"));
+        } else {
+            const QString size_text = index.sibling(index.row(), GameListModel::COLUMN_SIZE)
+                                          .data(Qt::DisplayRole)
+                                          .toString();
+            if (!size_text.isEmpty()) {
+                meta_parts.append(size_text);
+            }
+            const QString file_type = index.data(GameListItemPath::FileTypeRole).toString();
+            if (!file_type.isEmpty()) {
+                meta_parts.append(file_type);
+            }
         }
         if (!meta_parts.isEmpty()) {
             const QString meta = meta_parts.join(QStringLiteral(" \u2022 "));
