@@ -115,9 +115,6 @@ GameListSearchField::GameListSearchField(GameList* parent) : QWidget{parent} {
     setLayout(layout_filter);
     setObjectName(QStringLiteral("gameListSearchField"));
     setStyleSheet(QStringLiteral(
-        "QWidget#gameListSearchField {"
-        "  background-color: transparent;"
-        "}"
         "QLineEdit#gameListFilterEdit {"
         "  border: 1px solid palette(mid);"
         "  border-radius: 10px;"

@@ -793,3 +793,57 @@ QGroupBox::indicator {
   height: 16px;
   width: 16px;
 }
+
+QWidget#centralwidget {
+  background-color: #081722;
+}
+
+QWidget#gameListSearchField {
+  background-color: #0a1a27;
+  border-top: 1px solid #1b3445;
+}
+
+QLabel#gameListFilterLabel,
+QLabel#gameListFilterResult {
+  color: #93a8b7;
+}
+
+QListView#gameGridView,
+QListView#gameCarouselView {
+  background-color: #081722;
+  border: none;
+}
+
+QMenuBar {
+  min-height: 42px;
+  padding: 0 10px;
+  background-color: #0a1a27;
+  border-bottom: 1px solid #1b3445;
+}
+
+QMenuBar::item {
+  color: #a9becd;
+  padding: 8px 13px;
+  margin: 4px 2px;
+  border-radius: 6px;
+}
+
+QMenuBar::item:selected {
+  color: #72d1f7;
+  background-color: #102b3d;
+  border-bottom: 2px solid #32bdf0;
+}
+
+QToolBar {
+  spacing: 6px;
+  padding: 4px 8px;
+  background-color: #0a1a27;
+  border: none;
+}
+
+QStatusBar {
+  color: #93a8b7;
+  padding-left: 10px;
+  background-color: #081722;
+  border-top: 1px solid #183043;
+}

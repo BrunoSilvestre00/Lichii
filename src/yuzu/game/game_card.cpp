@@ -3,14 +3,80 @@
 
 #include <algorithm>
 #include <cmath>
+#include <QColor>
 #include <QFont>
 #include <QPainter>
 #include <QPainterPath>
+#include <QRectF>
 #include <QStringList>
 #include "game_card.h"
 #include "qt_common/config/uisettings.h"
 #include "qt_common/game_list/game_list_p.h"
 #include "qt_common/game_list/model.h"
+
+namespace {
+
+void DrawSwitch2Placeholder(QPainter* painter, const QRect& bounds) {
+    const QRectF rect(bounds);
+    const QColor red(226, 0, 20);
+    painter->fillRect(rect, red);
+
+    const qreal width = rect.width();
+    const qreal height = rect.height();
+    const qreal left = rect.left();
+    const qreal top = rect.top();
+    const qreal body_width = width * 0.15;
+    const qreal body_height = height * 0.39;
+    const qreal body_top = top + height * 0.14;
+    const qreal inner = std::max(2.0, width * 0.012);
+
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(Qt::white);
+    const QRectF left_controller(left + width * 0.09, body_top, body_width, body_height);
+    const QRectF right_controller(left + width * 0.28, body_top, body_width, body_height);
+    painter->drawRoundedRect(left_controller, width * 0.035, width * 0.035);
+    painter->drawRoundedRect(right_controller, width * 0.035, width * 0.035);
+
+    painter->setBrush(red);
+    painter->drawRoundedRect(left_controller.adjusted(inner, inner, -inner, -inner),
+                             width * 0.025, width * 0.025);
+    painter->drawRoundedRect(right_controller.adjusted(inner, inner, -inner, -inner),
+                             width * 0.025, width * 0.025);
+
+    painter->setBrush(Qt::white);
+    const qreal button_size = width * 0.035;
+    painter->drawEllipse(QRectF(left_controller.center().x() - button_size / 2,
+                                body_top + body_height * 0.30, button_size, button_size));
+    painter->drawEllipse(QRectF(right_controller.center().x() - button_size / 2,
+                                body_top + body_height * 0.58, button_size, button_size));
+
+    QFont number_font(QStringLiteral("Arial"));
+    number_font.setPixelSize(std::max(18, static_cast<int>(height * 0.48)));
+    number_font.setWeight(QFont::Black);
+    painter->setFont(number_font);
+    painter->drawText(QRectF(left + width * 0.47, top + height * 0.04, width * 0.45,
+                             height * 0.53),
+                      Qt::AlignCenter, QStringLiteral("2"));
+
+    QFont brand_font(QStringLiteral("Arial"));
+    brand_font.setPixelSize(std::max(8, static_cast<int>(height * 0.085)));
+    brand_font.setWeight(QFont::DemiBold);
+    brand_font.setLetterSpacing(QFont::AbsoluteSpacing, std::max(1.0, width * 0.008));
+    painter->setFont(brand_font);
+    painter->drawText(QRectF(left + width * 0.08, top + height * 0.62, width * 0.84,
+                             height * 0.14),
+                      Qt::AlignCenter, QStringLiteral("NINTENDO"));
+
+    QFont switch_font(QStringLiteral("Arial"));
+    switch_font.setPixelSize(std::max(12, static_cast<int>(height * 0.16)));
+    switch_font.setWeight(QFont::Bold);
+    painter->setFont(switch_font);
+    painter->drawText(QRectF(left + width * 0.08, top + height * 0.74, width * 0.84,
+                             height * 0.21),
+                      Qt::AlignCenter, QStringLiteral("SWITCH"));
+}
+
+}
 
 GameCard::GameCard(QObject* parent) : QStyledItemDelegate{parent} {
     setObjectName("GameCard");
@@ -30,13 +96,13 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
     const bool hovered = option.state & QStyle::State_MouseOver;
     const QPalette palette = option.palette;
     const bool dark = palette.window().color().lightness() < 128;
-    const int radius = 14;
+    const int radius = 10;
 
-    QColor surface = dark ? QColor(22, 27, 38, 235) : QColor(255, 255, 255, 245);
-    QColor border = dark ? QColor(255, 255, 255, 18) : QColor(24, 34, 54, 18);
+    QColor surface = dark ? QColor(12, 29, 43) : QColor(255, 255, 255, 245);
+    QColor border = dark ? QColor(42, 72, 91) : QColor(24, 34, 54, 18);
     QColor titleColor = palette.text().color();
-    QColor subtitleColor = palette.text().color();
-    subtitleColor.setAlpha(dark ? 150 : 165);
+    QColor subtitleColor = dark ? QColor(145, 166, 183) : palette.text().color();
+    subtitleColor.setAlpha(dark ? 230 : 165);
 
     if (selected) {
         QColor accent = palette.highlight().color();
@@ -48,7 +114,7 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
         subtitleColor = palette.highlightedText().color();
         subtitleColor.setAlpha(190);
     } else if (hovered) {
-        surface = dark ? QColor(30, 37, 52, 245) : QColor(248, 250, 255, 252);
+        surface = dark ? QColor(15, 37, 52) : QColor(248, 250, 255, 252);
         border = palette.highlight().color();
         border.setAlpha(dark ? 95 : 75);
     }
@@ -63,56 +129,51 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
     painter->drawRoundedRect(cardRect, radius, radius);
 
     const u32 icon_size = UISettings::values.game_icon_size.GetValue();
-    const QPixmap icon_pixmap = index.data(Qt::DecorationRole).value<QPixmap>();
+    const QPixmap icon_pixmap = index.data(GameListItemPath::CardIconRole).value<QPixmap>();
+    const bool has_icon = index.data(GameListItemPath::HasIconRole).toBool();
+    const bool show_game_name = UISettings::values.show_game_name.GetValue();
     const int inset = cardMargin + 2;
-    const int titleHeight = UISettings::values.show_game_name.GetValue() ? 62 : 0;
-    QRect iconArea(cardRect.left() + inset, cardRect.top() + inset, cardRect.width() - inset * 2,
-                   cardRect.height() - inset * 2 - titleHeight);
-    iconArea.setHeight(std::max(1, iconArea.height()));
+    const int titleHeight = show_game_name ? 74 : 0;
+    const QRect artworkRect(cardRect.left() + 1, cardRect.top() + 1,
+                            std::max(1, cardRect.width() - 2),
+                            std::max(1, cardRect.height() - titleHeight -
+                                             (show_game_name ? inset : 2)));
+    QPainterPath artwork_clip;
+    artwork_clip.addRoundedRect(artworkRect, radius - 1, radius - 1);
+    painter->save();
+    painter->setClipPath(artwork_clip);
 
-    if (!icon_pixmap.isNull()) {
+    if (has_icon && !icon_pixmap.isNull()) {
         QSize scaled = icon_pixmap.size();
-        scaled.scale(iconArea.size(), Qt::KeepAspectRatio);
-        QRect iconRect(iconArea.left() + (iconArea.width() - scaled.width()) / 2,
-                       iconArea.top() + (iconArea.height() - scaled.height()) / 2, scaled.width(),
-                       scaled.height());
-        const int imageRadius = std::max(8, radius - 4);
-        QPainterPath clip_path;
-        clip_path.addRoundedRect(iconRect, imageRadius, imageRadius);
-        painter->save();
-        painter->setClipPath(clip_path);
-        painter->drawPixmap(iconRect, icon_pixmap);
-        painter->restore();
-
-        painter->setPen(QPen(QColor(255, 255, 255, dark ? 14 : 24), 1));
-        painter->setBrush(Qt::NoBrush);
-        painter->drawRoundedRect(iconRect.adjusted(0, 0, -1, -1), imageRadius, imageRadius);
-    } else {
-        QRect placeholder = iconArea;
-        placeholder.setHeight(std::min(placeholder.height(), placeholder.width()));
-        placeholder.moveTop(iconArea.top());
-        painter->setPen(Qt::NoPen);
-        painter->setBrush(dark ? QColor(255, 255, 255, 10) : QColor(0, 0, 0, 8));
-        painter->drawRoundedRect(placeholder, std::max(8, radius - 4), std::max(8, radius - 4));
+        scaled.scale(artworkRect.size(), Qt::KeepAspectRatioByExpanding);
+        const QRect imageRect(artworkRect.center().x() - scaled.width() / 2,
+                              artworkRect.center().y() - scaled.height() / 2, scaled.width(),
+                              scaled.height());
+        painter->drawPixmap(imageRect, icon_pixmap);
+    } else if (!has_icon) {
+        DrawSwitch2Placeholder(painter, artworkRect);
     }
+    painter->restore();
 
-    if (UISettings::values.show_game_name.GetValue()) {
-        QRect textRect = cardRect.adjusted(inset, 0, -inset, -inset);
+    if (show_game_name) {
+        QRect textRect = cardRect.adjusted(12, 0, -12, -inset);
         textRect.setTop(cardRect.bottom() - inset - titleHeight + 2);
 
         const QString full = index.data(GameListItemPath::TitleRole).toString();
-        const QString title = full.isEmpty()
-                                  ? index.data(Qt::DisplayRole).toString().section(QLatin1Char('\n'), 0, 0)
-                                  : full;
+        const QString title =
+            full.isEmpty()
+                ? index.data(Qt::DisplayRole).toString().section(QLatin1Char('\n'), 0, 0)
+                : full;
 
         painter->setPen(titleColor);
         QFont titleFont = option.font;
         titleFont.setBold(true);
-        titleFont.setPixelSize(std::clamp(static_cast<int>(std::sqrt(static_cast<double>(icon_size)) * 1.15), 12, 16));
+        titleFont.setPixelSize(std::clamp(
+            static_cast<int>(std::sqrt(static_cast<double>(icon_size)) * 1.15), 12, 16));
         painter->setFont(titleFont);
         QRect titleRect = textRect;
-        titleRect.setBottom(textRect.top() + titleHeight - 20);
-        painter->drawText(titleRect, Qt::AlignHCenter | Qt::AlignVCenter | Qt::TextWordWrap, title);
+        titleRect.setBottom(textRect.top() + titleHeight - 24);
+        painter->drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextWordWrap, title);
 
         QStringList meta_parts;
         const QString size_text = index.sibling(index.row(), GameListModel::COLUMN_SIZE)
@@ -129,11 +190,11 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
             const QString meta = meta_parts.join(QStringLiteral(" \u2022 "));
             painter->setPen(subtitleColor);
             QFont metaFont = option.font;
-            metaFont.setPixelSize(12);
+            metaFont.setPixelSize(11);
             painter->setFont(metaFont);
             QRect metaRect = textRect;
             metaRect.setTop(textRect.bottom() - 18);
-            painter->drawText(metaRect, Qt::AlignHCenter | Qt::AlignVCenter | Qt::TextSingleLine, meta);
+            painter->drawText(metaRect, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine, meta);
         }
     }
 
