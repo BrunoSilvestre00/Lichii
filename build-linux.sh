@@ -149,6 +149,13 @@ detect_distro() {
 #          when available, a warning if not
 declare -a REQ=() REC=() QT_REQ=() QT_REC=()
 
+# The build below passes YUZU_TESTS=OFF, so Catch2 is only fetched when
+# EXTRA_CMAKE_ARGS turns a test suite back on (it is also what a cached
+# YUZU_TESTS/DYNARMIC_TESTS=ON in a reused build dir would need).
+tests_enabled() {
+    [[ "${EXTRA_CMAKE_ARGS:-}" =~ -D(YUZU_TESTS|DYNARMIC_TESTS)=(ON|on|TRUE|true|YES|yes|Y|y|1) ]]
+}
+
 define_packages() {
     case "$FAMILY" in
     debian)
@@ -157,7 +164,7 @@ define_packages() {
             autoconf cmake g++ gcc git glslang-tools libglu1-mesa-dev libhidapi-dev
             libpulse-dev libtool libudev-dev libxcb-icccm4 libxcb-image0
             libxcb-keysyms1 libxcb-render-util0 libxcb-xinerama0 libxcb-xkb1
-            libxext-dev libxkbcommon-x11-0 mesa-common-dev nasm ninja-build catch2
+            libxext-dev libxkbcommon-x11-0 mesa-common-dev nasm ninja-build
             libfmt-dev liblz4-dev nlohmann-json3-dev libzstd-dev libssl-dev
             libavfilter-dev libavcodec-dev libswscale-dev pkg-config zlib1g-dev
             libva-dev libvdpau-dev libvulkan-dev spirv-tools spirv-headers
@@ -192,9 +199,9 @@ define_packages() {
         QT_REC=( qt6-qtwayland )                                       # extra
         ;;
     arch)
-        # Unchanged from the original script / Deps.md Arch list.
+        # Deps.md Arch list; Catch2 is added below only when tests are enabled.
         REQ=(
-            base-devel boost catch2 cmake enet ffmpeg fmt git glslang libzip lz4
+            base-devel boost cmake enet ffmpeg fmt git glslang libzip lz4
             ninja nlohmann-json openssl opus sdl3 zstd zip unzip
             vulkan-headers vulkan-utility-libraries libusb spirv-tools
             spirv-headers ccache clang lld python
@@ -206,6 +213,7 @@ define_packages() {
         pacman -T zlib >/dev/null 2>&1 || REQ+=(zlib)
         ;;
     esac
+    tests_enabled && REQ+=(catch2)   # only when a test suite is enabled
     if [[ "$ENABLE_QT" == ON ]]; then
         REQ+=("${QT_REQ[@]}"); REC+=("${QT_REC[@]}")
     fi
@@ -475,7 +483,22 @@ if [[ -z "$BUILD_DIR" ]]; then
 fi
 log "Building in $SRC_DIR${BRANCH:+ (branch: $BRANCH)}"
 
+# --clean is destructive, so only ever remove a CMake build directory: no
+# --build-dir pointing at the source tree (or a parent of it), and no existing
+# directory that has never been configured by CMake.
+cleanable() {
+    local dir src
+    dir="$(realpath -m "$1")"
+    src="$(realpath -m "$2")"
+    [[ -n "$dir" && "$dir" != "/" ]] || return 1
+    [[ "$dir" == "$src" || "$src" == "$dir"/* ]] && return 1
+    [[ -d "$dir" ]] || return 0          # does not exist yet: nothing to lose
+    [[ -f "$dir/CMakeCache.txt" || -f "$dir/build.ninja" ]] || return 1
+}
+
 if ((CLEAN)); then
+    cleanable "$BUILD_DIR" "$SRC_DIR" \
+        || die "refusing to delete $BUILD_DIR: not a CMake build directory"
     log "Cleaning $BUILD_DIR"
     rm -rf "$BUILD_DIR"
 fi
@@ -505,18 +528,32 @@ CMAKE_ARGS=(
 )
 CMAKE_ARGS+=("${LINK_ARGS[@]+"${LINK_ARGS[@]}"}")
 
-((BUNDLE_VULKAN)) && CMAKE_ARGS+=(
-    -DVulkanHeaders_FORCE_BUNDLED=ON
-    -DVulkanUtilityLibraries_FORCE_BUNDLED=ON
-    -DSPIRV-Headers_FORCE_BUNDLED=ON
-    -DSPIRV-Tools_FORCE_BUNDLED=ON
+((BUNDLE_VULKAN)) && BUNDLE_ON=ON || BUNDLE_ON=OFF
+CMAKE_ARGS+=(
+    -DVulkanHeaders_FORCE_BUNDLED=$BUNDLE_ON
+    -DVulkanUtilityLibraries_FORCE_BUNDLED=$BUNDLE_ON
+    -DSPIRV-Headers_FORCE_BUNDLED=$BUNDLE_ON
+    -DSPIRV-Tools_FORCE_BUNDLED=$BUNDLE_ON
 )
 
-((USE_LTO)) && CMAKE_ARGS+=(-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON)
-command -v ccache >/dev/null && CMAKE_ARGS+=(
-    -DCMAKE_C_COMPILER_LAUNCHER=ccache
-    -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-)
+# Also pass the "off" states: CMake keeps whatever a previous configure cached
+# in a reused build directory, so --no-lto / --system-vulkan would otherwise
+# stay on. EXTRA_CMAKE_ARGS is appended last, so it still wins.
+if ((USE_LTO)); then CMAKE_ARGS+=(-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON)
+else CMAKE_ARGS+=(-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF)
+fi
+if command -v ccache >/dev/null; then
+    CMAKE_ARGS+=(
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+    )
+else
+    # Clear a launcher cached by an earlier run: the ccache binary may be gone
+    CMAKE_ARGS+=(
+        -DCMAKE_C_COMPILER_LAUNCHER=
+        -DCMAKE_CXX_COMPILER_LAUNCHER=
+    )
+fi
 [[ -n "$PREFIX" ]] && CMAKE_ARGS+=(-DCMAKE_INSTALL_PREFIX="$PREFIX")
 
 # shellcheck disable=SC2206
@@ -553,3 +590,6 @@ log "Build complete ($LEVEL_LABEL on $DISTRO_NAME)"
 for bin in lichii eglantine eden eden-cli; do
     [[ -x "$BUILD_DIR/bin/$bin" ]] && echo "  $BUILD_DIR/bin/$bin"
 done
+
+# Optional binaries: listing them must not turn a good build into a failure
+exit 0
