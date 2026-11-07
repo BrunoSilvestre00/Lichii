@@ -98,7 +98,7 @@ LoadingScreen::LoadingScreen(QWidget* parent)
 
     stage_translations = {
         {VideoCore::LoadCallbackStage::Prepare, tr("Preparing")},
-        {VideoCore::LoadCallbackStage::Build, tr("Compiling Shaders")},
+        {VideoCore::LoadCallbackStage::Build, tr("Loading Shaders")},
         {VideoCore::LoadCallbackStage::Complete, tr("Starting Game")},
     };
     progressbar_style = {
@@ -141,6 +141,12 @@ void LoadingScreen::Prepare(Loader::AppLoader& loader) {
         map.loadFromData(buffer.data(), static_cast<uint>(buffer.size()));
         ui->logo->setPixmap(map.scaled(420, 120, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     }
+
+    std::string title;
+    if (loader.ReadTitle(title) != Loader::ResultStatus::Success) {
+        title.clear();
+    }
+    game_title = QString::fromStdString(title);
 
     slow_shader_compile_start = false;
     OnLoadProgress(VideoCore::LoadCallbackStage::Prepare, 0, 0);
@@ -203,7 +209,11 @@ void LoadingScreen::OnLoadProgress(VideoCore::LoadCallbackStage stage, std::size
         estimate = tr("Finalizing launch");
     }
 
-    ui->stage->setText(stage_translations[stage]);
+    QString stage_text = stage_translations[stage];
+    if (stage == VideoCore::LoadCallbackStage::Complete && !game_title.isEmpty()) {
+        stage_text = tr("Starting Game (%1)").arg(game_title);
+    }
+    ui->stage->setText(stage_text);
     ui->value->setText(estimate);
     if (stage == VideoCore::LoadCallbackStage::Build) {
         ui->progress_bar->setValue(static_cast<int>(value));

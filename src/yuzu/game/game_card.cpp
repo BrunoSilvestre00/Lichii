@@ -3,10 +3,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <QFont>
 #include <QPainter>
 #include <QPainterPath>
+#include <QStringList>
 #include "game_card.h"
 #include "qt_common/config/uisettings.h"
+#include "qt_common/game_list/game_list_p.h"
+#include "qt_common/game_list/model.h"
 
 GameCard::GameCard(QObject* parent) : QStyledItemDelegate{parent} {
     setObjectName("GameCard");
@@ -61,7 +65,7 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
     const u32 icon_size = UISettings::values.game_icon_size.GetValue();
     const QPixmap icon_pixmap = index.data(Qt::DecorationRole).value<QPixmap>();
     const int inset = cardMargin + 2;
-    const int titleHeight = UISettings::values.show_game_name.GetValue() ? 44 : 0;
+    const int titleHeight = UISettings::values.show_game_name.GetValue() ? 62 : 0;
     QRect iconArea(cardRect.left() + inset, cardRect.top() + inset, cardRect.width() - inset * 2,
                    cardRect.height() - inset * 2 - titleHeight);
     iconArea.setHeight(std::max(1, iconArea.height()));
@@ -96,16 +100,41 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
         QRect textRect = cardRect.adjusted(inset, 0, -inset, -inset);
         textRect.setTop(cardRect.bottom() - inset - titleHeight + 2);
 
-        const QString full = index.data(Qt::DisplayRole).toString();
-        const QStringList lines = full.split(QLatin1Char('\n'));
-        const QString title = lines.value(0);
+        const QString full = index.data(GameListItemPath::TitleRole).toString();
+        const QString title = full.isEmpty()
+                                  ? index.data(Qt::DisplayRole).toString().section(QLatin1Char('\n'), 0, 0)
+                                  : full;
 
         painter->setPen(titleColor);
         QFont titleFont = option.font;
         titleFont.setBold(true);
         titleFont.setPixelSize(std::clamp(static_cast<int>(std::sqrt(static_cast<double>(icon_size)) * 1.15), 12, 16));
         painter->setFont(titleFont);
-        painter->drawText(textRect, Qt::AlignHCenter | Qt::AlignVCenter | Qt::TextWordWrap, title);
+        QRect titleRect = textRect;
+        titleRect.setBottom(textRect.top() + titleHeight - 20);
+        painter->drawText(titleRect, Qt::AlignHCenter | Qt::AlignVCenter | Qt::TextWordWrap, title);
+
+        QStringList meta_parts;
+        const QString size_text = index.sibling(index.row(), GameListModel::COLUMN_SIZE)
+                                      .data(Qt::DisplayRole)
+                                      .toString();
+        if (!size_text.isEmpty()) {
+            meta_parts.append(size_text);
+        }
+        const QString file_type = index.data(GameListItemPath::FileTypeRole).toString();
+        if (!file_type.isEmpty()) {
+            meta_parts.append(file_type);
+        }
+        if (!meta_parts.isEmpty()) {
+            const QString meta = meta_parts.join(QStringLiteral(" \u2022 "));
+            painter->setPen(subtitleColor);
+            QFont metaFont = option.font;
+            metaFont.setPixelSize(12);
+            painter->setFont(metaFont);
+            QRect metaRect = textRect;
+            metaRect.setTop(textRect.bottom() - 18);
+            painter->drawText(metaRect, Qt::AlignHCenter | Qt::AlignVCenter | Qt::TextSingleLine, meta);
+        }
     }
 
     painter->restore();
