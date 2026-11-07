@@ -35,6 +35,11 @@
 #include <netdb.h>
 #endif
 
+#ifdef __APPLE__
+#include <unordered_set>
+#include <SystemConfiguration/SystemConfiguration.h>
+#endif
+
 #include "common/common_types.h"
 #include "common/logging.h"
 #include "common/settings.h"
@@ -103,6 +108,34 @@ std::vector<Network::NetworkInterface> GetAvailableNetworkInterfaces() {
 
 #else
 
+#ifdef __APPLE__
+/// BSD names of the Wi-Fi interfaces. getifaddrs reports them as IFT_ETHER, so only
+/// SystemConfiguration can tell them apart from wired ones.
+static std::unordered_set<std::string> GetWifiInterfaceNames() {
+    std::unordered_set<std::string> names;
+    const CFArrayRef interfaces = SCNetworkInterfaceCopyAll();
+    if (interfaces == nullptr) {
+        return names;
+    }
+    for (CFIndex i = 0; i < CFArrayGetCount(interfaces); ++i) {
+        const auto iface =
+            static_cast<SCNetworkInterfaceRef>(const_cast<void*>(CFArrayGetValueAtIndex(interfaces, i)));
+        const CFStringRef type = SCNetworkInterfaceGetInterfaceType(iface);
+        const CFStringRef bsd_name = SCNetworkInterfaceGetBSDName(iface);
+        if (type == nullptr || bsd_name == nullptr ||
+            !CFEqual(type, kSCNetworkInterfaceTypeIEEE80211)) {
+            continue;
+        }
+        char name[IFNAMSIZ]{};
+        if (CFStringGetCString(bsd_name, name, sizeof(name), kCFStringEncodingUTF8)) {
+            names.emplace(name);
+        }
+    }
+    CFRelease(interfaces);
+    return names;
+}
+#endif
+
 std::vector<Network::NetworkInterface> GetAvailableNetworkInterfaces() {
 #if defined(__ANDROID__) || defined(__linux__) || defined(__APPLE__)
     struct ifaddrs* ifaddr = nullptr;
@@ -135,6 +168,9 @@ std::vector<Network::NetworkInterface> GetAvailableNetworkInterfaces() {
         LOG_WARNING(Network, "\"/proc/net/route\" not found - using gateway 0");
     }
 #endif
+#ifdef __APPLE__
+    const auto wifi_names = GetWifiInterfaceNames();
+#endif
     std::vector<Network::NetworkInterface> ifaces;
     for (auto ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
         if (ifa->ifa_addr == nullptr || ifa->ifa_netmask == nullptr /* Have a netmask and address */
@@ -153,7 +189,11 @@ std::vector<Network::NetworkInterface> GetAvailableNetworkInterfaces() {
             .name = ifa->ifa_name,
             .ip_address = std::bit_cast<struct sockaddr_in>(*ifa->ifa_addr).sin_addr,
             .subnet_mask = std::bit_cast<struct sockaddr_in>(*ifa->ifa_netmask).sin_addr,
-            .gateway = gw
+            .gateway = gw,
+#ifdef __APPLE__
+            .kind = wifi_names.contains(ifa->ifa_name) ? HostAdapterKind::Wifi
+                                                       : HostAdapterKind::Ethernet,
+#endif
         });
     }
     freeifaddrs(ifaddr);
