@@ -51,6 +51,7 @@ enum class DrainSite : u32 {
     RingFull,       ///< The ring is full: the front waits for the back to make room
     BackRegister,   ///< A register a macro the back ran may have written (Maxwell3D)
     BackCode,       ///< The macro code changes under the macros the back has yet to run
+    ListCopies,     ///< Lists on GPU-written pages: the dispatches and copies before the last sync
     Count,
 };
 
@@ -95,7 +96,7 @@ inline constexpr std::array<const char*, static_cast<size_t>(DrainSite::Count)> 
     "other",           "fetch drain",   "acquire",    "semaphore flush", "fence release",
     "list writers",    "list sync",     "list flush", "macro dma read",  "macro dma writes",
     "macro dma flush", "gp sync fence", "map",        "front start",     "front verify",
-    "ring full",       "back register", "back code",
+    "ring full",       "back register", "back code",  "list copy writers",
 };
 
 // Splits the GPU thread in two (NX2_GPU_THREAD_SPLIT.md). The GPU thread (the front) takes the
@@ -316,8 +317,8 @@ public:
         u64 device_address) const;
     /// Waits until the back executed the compute and copy work sent before the last NoteSync:
     /// the writers a command list fetched now is ordered after. Returns whether any of it was
-    /// still queued.
-    bool WaitForSyncedWriters();
+    /// still queued. `site`: whose wait it is, for EDEN_NX2_GPU_PROFILE.
+    bool WaitForSyncedWriters(DrainSite site = DrainSite::ListWriters);
 
     /// The entry just sent (Writes::Noted) writes [address, address + size) of `memory`.
     void NoteWrite(const Tegra::MemoryManager& memory, GPUVAddr address, u64 size);
