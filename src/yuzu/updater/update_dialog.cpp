@@ -309,7 +309,7 @@ try {
     # Nothing was replaced yet: start the current version.
     Log "Could not back up the current files: $_"
     Start-Process -FilePath $exe -WorkingDirectory $app
-    Start-Process -FilePath notepad.exe -ArgumentList $log
+    Start-Process -FilePath notepad.exe -ArgumentList "`"$log`""
     exit 1
 }
 
@@ -345,7 +345,7 @@ if ($restored) {
     Log "The previous version was restored"
     Start-Process -FilePath $exe -WorkingDirectory $app
 }
-Start-Process -FilePath notepad.exe -ArgumentList $log
+Start-Process -FilePath notepad.exe -ArgumentList "`"$log`""
 exit 1
 )PS";
     out.flush();
