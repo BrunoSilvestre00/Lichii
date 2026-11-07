@@ -285,6 +285,7 @@ private:
     std::optional<std::chrono::steady_clock::time_point> prebuild_load_begin;
 
     GraphicsPipelineCacheKey graphics_key{};
+    u64 vertex_attribute_types{}; ///< graphics_key's attribute types before the program's mask
     GraphicsPipeline* current_pipeline{};
     /// Native mesh draws' vertex input, lent by the first key of each pipeline
     MeshVertexInputs<GraphicsPipelineCacheKey> mesh_vertex_inputs;
