@@ -22,7 +22,8 @@
 #   --gcc              Use GCC instead of clang
 #   --no-lto           Disable LTO
 #   --clean            Wipe the build directory first
-#   --install-deps     Install build dependencies (dnf / apt / pacman)
+#   --install-deps     Install build dependencies (dnf / apt / pacman; on Arch
+#                      this runs pacman -Syu, i.e. a full system upgrade)
 #   --check-deps       Resolve and verify dependencies, then exit
 #   --skip-dep-check   Do not abort if a dependency is not installed
 #   --no-qt            Build without the Qt frontend (CLI only)
@@ -61,12 +62,23 @@ BUNDLE_VULKAN=""        # empty = decide per distro
 PREFIX=""
 JOBS=""
 
+# log MSG... - print a bold progress message to stdout.
 log()  { printf '\033[1m==> %s\033[0m\n' "$*"; }
+# warn MSG... - print a yellow warning to stderr.
 warn() { printf '\033[33mwarning:\033[0m %s\n' "$*" >&2; }
+# die MSG... - print a red error to stderr and exit 1.
 die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+# usage - print the header comment block of this script as help text and exit 0.
 usage() { awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; exit 0; }
 
+# need_value OPTION [VALUE] - die unless OPTION was given a non-empty value.
+need_value() { [[ $# -ge 2 && -n "$2" ]] || die "option $1 requires a value"; }
+
 while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --src|--build-dir|--type|--level|--max-level|--prefix|-j)
+            need_value "$1" "${2-}" ;;
+    esac
     case "$1" in
         --src)            SRC_DIR="$(realpath -m "$2")"; shift 2 ;;
         --build-dir)      BUILD_DIR="$(realpath -m "$2")"; shift 2 ;;
@@ -96,6 +108,11 @@ done
 
 [[ "$LEVEL_REQ" == auto || "$LEVEL_REQ" =~ ^[1-4]$ ]] || die "--level must be auto or 1-4"
 [[ "$MAX_LEVEL" =~ ^[1-4]$ ]] || die "--max-level must be 1-4"
+case "$BUILD_TYPE" in
+    Release|RelWithDebInfo|Debug|MinSizeRel) ;;
+    *) die "--type must be Release, RelWithDebInfo, Debug or MinSizeRel" ;;
+esac
+[[ -z "$JOBS" || "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "-j needs a positive integer"
 [[ "$(uname -m)" == x86_64 ]] || die "this script targets x86_64 only (found $(uname -m))"
 
 SUDO=""
@@ -104,6 +121,7 @@ SUDO=""
 # ------------------------------------------------------------ distro detect
 FAMILY=""; DISTRO_ID=""; DISTRO_VER=""; DISTRO_NAME=""
 
+# detect_distro - read /etc/os-release and set FAMILY, DISTRO_ID, DISTRO_VER, DISTRO_NAME.
 detect_distro() {
     [[ -r /etc/os-release ]] || die "cannot read /etc/os-release"
     # shellcheck disable=SC1091
@@ -149,14 +167,16 @@ detect_distro() {
 #          when available, a warning if not
 declare -a REQ=() REC=() QT_REQ=() QT_REC=()
 
-# The build below passes YUZU_TESTS=OFF, so Catch2 is only fetched when
-# EXTRA_CMAKE_ARGS turns a test suite back on (it is also what a cached
-# YUZU_TESTS/DYNARMIC_TESTS=ON in a reused build dir would need).
+# The build below passes YUZU_TESTS=OFF, so Catch2 is only needed when
+# EXTRA_CMAKE_ARGS turns a test suite back on (EXTRA_CMAKE_ARGS is appended
+# last, so it overrides the OFF). Both -DX=ON and -DX:BOOL=ON are recognised.
 tests_enabled() {
-    [[ "${EXTRA_CMAKE_ARGS:-}" =~ -D(YUZU_TESTS|DYNARMIC_TESTS)=(ON|on|TRUE|true|YES|yes|Y|y|1) ]]
+    [[ "${EXTRA_CMAKE_ARGS:-}" =~ -D(YUZU_TESTS|DYNARMIC_TESTS)(:[A-Za-z]+)?=(ON|on|TRUE|true|YES|yes|Y|y|1)([[:space:]]|$) ]]
 }
 
+# define_packages - fill REQ/REC/QT_REQ/QT_REC for the detected FAMILY (and Qt/test options).
 define_packages() {
+    local catch2_pkg=catch2   # Fedora ships Catch2 as catch-devel
     case "$FAMILY" in
     debian)
         REQ=(
@@ -213,24 +233,31 @@ define_packages() {
         pacman -T zlib >/dev/null 2>&1 || REQ+=(zlib)
         ;;
     esac
-    tests_enabled && REQ+=(catch2)   # only when a test suite is enabled
+    if tests_enabled; then   # only when a test suite is enabled
+        [[ "$FAMILY" == fedora ]] && catch2_pkg=catch-devel
+        REQ+=("$catch2_pkg")
+    fi
     if [[ "$ENABLE_QT" == ON ]]; then
         REQ+=("${QT_REQ[@]}"); REC+=("${QT_REC[@]}")
     fi
 }
 
+# apt_avail PKG - succeed if apt has an installable candidate for PKG.
 apt_avail() {
     local c
     c="$(apt-cache policy "$1" 2>/dev/null | awk '/Candidate:/ {print $2}')" || true
     [[ -n "$c" && "$c" != "(none)" ]]
 }
+# rpm_avail PKG - succeed if PKG (or a provider) is installed or available through dnf.
 rpm_avail() {
     rpm -q --whatprovides "$1" >/dev/null 2>&1 && return 0
     [[ -n "$(dnf -q repoquery --whatprovides "$1" 2>/dev/null | head -n1)" ]]
 }
+# pkg_avail PKG - dispatch to the availability check for the current FAMILY.
 pkg_avail() {
     case "$FAMILY" in debian) apt_avail "$1" ;; fedora) rpm_avail "$1" ;; esac
 }
+# pkg_installed PKG - succeed if PKG (or a provider of it) is already installed.
 pkg_installed() {
     case "$FAMILY" in
         debian) [[ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" == installed ]] ;;
@@ -239,6 +266,7 @@ pkg_installed() {
 }
 
 R_OK=(); R_MISSING=()
+# resolve ENTRY... - pick the first available "a|b" alternative per entry; sets R_OK and R_MISSING.
 resolve() {   # resolve entries -> R_OK (chosen names) / R_MISSING (entries)
     R_OK=(); R_MISSING=()
     local e alt hit
@@ -253,6 +281,7 @@ resolve() {   # resolve entries -> R_OK (chosen names) / R_MISSING (entries)
     done
 }
 
+# refresh_metadata - refresh apt/dnf package metadata for the current FAMILY.
 refresh_metadata() {
     case "$FAMILY" in
         debian) log "Refreshing apt metadata"; $SUDO apt-get update ;;
@@ -260,6 +289,7 @@ refresh_metadata() {
     esac
 }
 
+# missing_hint - print a distro-specific hint for why required packages may be missing.
 missing_hint() {
     case "$FAMILY" in
         fedora) echo "  hint: ffmpeg-devel needs RPM Fusion; other misses usually mean the release is older than Deps.md assumes." ;;
@@ -268,6 +298,7 @@ missing_hint() {
 }
 
 RESOLVED_REQ=(); RESOLVED_REC=()
+# setup_deps - resolve, install (when requested) and verify required/optional packages.
 setup_deps() {
     define_packages
 
@@ -319,8 +350,10 @@ setup_deps() {
 }
 
 # ---------------------------------------------------------------- CPU level
+# cpu_flags - print the CPU feature flags from /proc/cpuinfo.
 cpu_flags() { grep -m1 '^flags' /proc/cpuinfo | cut -d: -f2; }
 
+# has_all FLAGS NAME... - succeed if every NAME is in FLAGS (abm also matches lzcnt).
 has_all() {   # has_all FLAGS name...   (lzcnt is reported as "abm" on many kernels)
     local flags=" $1 " f; shift
     for f in "$@"; do
@@ -332,6 +365,7 @@ has_all() {   # has_all FLAGS name...   (lzcnt is reported as "abm" on many kern
     done
 }
 
+# detect_host_level - print the host x86-64 microarchitecture level (1-4).
 detect_host_level() {
     local ld lvl=0 out
     # glibc's own answer is authoritative (accounts for VMs masking features)
@@ -354,12 +388,14 @@ detect_host_level() {
     echo "$lvl"
 }
 
+# cc_accepts COMPILER FLAG... - succeed if COMPILER compiles a trivial program with FLAG....
 cc_accepts() {   # cc_accepts COMPILER flags...
     local cc="$1"; shift
     echo 'int main(void){return 0;}' | "$cc" "$@" -x c - -o /dev/null >/dev/null 2>&1
 }
 
 ARCH_FLAGS=""; LEVEL_LABEL=""
+# select_arch_flags - set ARCH_FLAGS and LEVEL_LABEL from --level or the detected host level.
 select_arch_flags() {
     local host want tune="generic" march
 
@@ -383,7 +419,10 @@ select_arch_flags() {
             die "host only runs x86-64-v$host; use --no-cpu-check to cross-build for v$want"
         fi
     fi
-    ((want > MAX_LEVEL)) && want="$MAX_LEVEL"
+    if ((want > MAX_LEVEL)); then
+        [[ "$LEVEL_REQ" == auto ]] || warn "--level $want capped to --max-level $MAX_LEVEL"
+        want="$MAX_LEVEL"
+    fi
 
     # Only ask the compiler for what it understands
     while :; do
@@ -403,21 +442,35 @@ select_arch_flags() {
 }
 
 # ---------------------------------------------------------- toolchain / host
+# check_toolchain - verify build tools exist and export CC/CXX for clang or gcc.
 check_toolchain() {
     local tool
     for tool in cmake ninja python3; do
         command -v "$tool" >/dev/null || die "missing required tool: $tool (try --install-deps)"
     done
+    local env_cc="${CC:-}" env_cxx="${CXX:-}"
     if ((USE_CLANG)); then
-        command -v clang >/dev/null || die "clang not found (try --install-deps, or use --gcc)"
-        export CC=clang CXX=clang++
+        # keep a user-supplied clang (e.g. CC=clang-19 CXX=clang++-19)
+        if [[ -n "$env_cc" && -n "$env_cxx" ]] && command -v "$env_cc" >/dev/null \
+            && "$env_cc" --version 2>/dev/null | grep -qi clang; then
+            export CC="$env_cc" CXX="$env_cxx"
+        else
+            command -v clang >/dev/null || die "clang not found (try --install-deps, or use --gcc)"
+            export CC=clang CXX=clang++
+        fi
     else
-        command -v gcc >/dev/null || die "gcc not found (try --install-deps)"
-        export CC="${CC:-gcc}" CXX="${CXX:-g++}"
+        # an inherited CC that is really clang must not leak into a --gcc build
+        if [[ -n "$env_cc" ]] && command -v "$env_cc" >/dev/null \
+            && "$env_cc" --version 2>/dev/null | grep -qi clang; then
+            env_cc=""; env_cxx=""
+        fi
+        command -v "${env_cc:-gcc}" >/dev/null || die "${env_cc:-gcc} not found (try --install-deps)"
+        export CC="${env_cc:-gcc}" CXX="${env_cxx:-g++}"
     fi
 }
 
 LINK_ARGS=()
+# pick_linker - choose lld (with clang) or mold when usable and fill LINK_ARGS.
 pick_linker() {
     local ld="" is_clang=0
     # Ask the compiler itself; names lie (c++ is often GCC). lld cannot read
@@ -438,6 +491,7 @@ pick_linker() {
     fi
 }
 
+# pick_jobs - set JOBS from core count and RAM unless already given with -j.
 pick_jobs() {
     [[ -n "$JOBS" ]] && return
     local cores mem_gb per_job=2 by_mem
@@ -492,7 +546,8 @@ cleanable() {
     src="$(realpath -m "$2")"
     [[ -n "$dir" && "$dir" != "/" ]] || return 1
     [[ "$dir" == "$src" || "$src" == "$dir"/* ]] && return 1
-    [[ -d "$dir" ]] || return 0          # does not exist yet: nothing to lose
+    [[ -e "$dir" || -L "$dir" ]] || return 0   # does not exist yet
+    [[ -d "$dir" && ! -L "$dir" ]] || return 1 # a file, a link, or something else
     [[ -f "$dir/CMakeCache.txt" || -f "$dir/build.ninja" ]] || return 1
 }
 
@@ -540,7 +595,7 @@ CMAKE_ARGS+=(
 # in a reused build directory, so --no-lto / --system-vulkan would otherwise
 # stay on. EXTRA_CMAKE_ARGS is appended last, so it still wins.
 if ((USE_LTO)); then CMAKE_ARGS+=(-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON)
-else CMAKE_ARGS+=(-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF)
+else CMAKE_ARGS+=(-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF -DENABLE_LTO=OFF)
 fi
 if command -v ccache >/dev/null; then
     CMAKE_ARGS+=(
@@ -556,8 +611,11 @@ else
 fi
 [[ -n "$PREFIX" ]] && CMAKE_ARGS+=(-DCMAKE_INSTALL_PREFIX="$PREFIX")
 
-# shellcheck disable=SC2206
-[[ -n "${EXTRA_CMAKE_ARGS:-}" ]] && CMAKE_ARGS+=(${EXTRA_CMAKE_ARGS})
+# Split on whitespace only (no globbing); quoting inside the string is not parsed.
+if [[ -n "${EXTRA_CMAKE_ARGS:-}" ]]; then
+    read -r -a EXTRA_ARGV <<<"$EXTRA_CMAKE_ARGS"
+    CMAKE_ARGS+=("${EXTRA_ARGV[@]}")
+fi
 
 # CMake caches the compiler on the first configure and ignores CC/CXX after
 # that. If this build dir was configured with a different compiler (e.g. GCC
