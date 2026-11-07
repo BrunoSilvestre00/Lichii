@@ -231,7 +231,7 @@ bool UpdateDialog::InstallAndRestart(const QString& package_path) {
 
     // Windows 10 1803 and later ship bsdtar, which extracts zip archives.
     const QString tar = QDir::toNativeSeparators(
-        QDir(qEnvironmentVariable("SystemRoot", QStringLiteral("C:\Windows")))
+        QDir(qEnvironmentVariable("SystemRoot", QStringLiteral("C:/Windows")))
             .filePath(QStringLiteral("System32/tar.exe")));
     if (!QFileInfo::exists(tar)) {
         return fail(tr("%1 was not found, so the package can't be extracted.").arg(tar));
@@ -245,7 +245,9 @@ bool UpdateDialog::InstallAndRestart(const QString& package_path) {
         progress->close();
         return fail(tr("Could not run %1.").arg(tar));
     }
-    while (!extract.waitForFinished(100)) {
+    // waitForFinished() returns false once the process has exited, so poll the state instead.
+    while (extract.state() != QProcess::NotRunning) {
+        extract.waitForFinished(100);
         QGuiApplication::processEvents();
     }
     progress->close();
