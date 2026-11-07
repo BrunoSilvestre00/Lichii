@@ -19,6 +19,16 @@
 
 #include <QDesktopServices>
 
+#ifdef _WIN32
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QProcess>
+#include <QStringConverter>
+#include <QTextStream>
+#endif
+
 #undef GetSaveFileName
 
 UpdateDialog::UpdateDialog(const Common::Net::Release& release, QWidget* parent)
@@ -76,10 +86,21 @@ UpdateDialog::~UpdateDialog() {
 
 // TODO: migrate to a net.cpp wrapper
 void UpdateDialog::Download() {
+#ifdef _WIN32
+    // The package is installed in place: download it to a scratch folder, no questions asked.
+    const QString update_dir =
+        QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
+            .filePath(QStringLiteral("lichii-update"));
+    QDir(update_dir).removeRecursively();
+    QDir().mkpath(update_dir);
+    const QString filename =
+        QDir(update_dir).filePath(QString::fromStdString(m_asset.filename));
+#else
     const auto filename = QtCommon::Frontend::GetSaveFileName(
         tr("New Version Location"),
         qApp->applicationDirPath() % QStringLiteral("/") % QString::fromStdString(m_asset.filename),
         tr("All Files (*.*)"));
+#endif
 
     if (filename.isEmpty())
         return;
@@ -170,6 +191,17 @@ void UpdateDialog::Download() {
         return;
     }
 
+#ifdef _WIN32
+    const auto install = QtCommon::Frontend::Question(
+        tr("Download Complete"),
+        tr("The update was downloaded. Install it now?\n\nLichii will close, replace its files "
+           "(your user folder, saves and settings are kept) and open again."),
+        QtCommon::Frontend::Yes | QtCommon::Frontend::No);
+    if (install == QtCommon::Frontend::Yes && InstallAndRestart(filename)) {
+        return;
+    }
+#endif
+
     // Download is complete. User may choose to open in the file manager.
     auto button =
         QtCommon::Frontend::Question(tr("Download Complete"),
@@ -181,3 +213,101 @@ void UpdateDialog::Download() {
         QDesktopServices::openUrl(QUrl::fromLocalFile(filename));
     }
 }
+
+#ifdef _WIN32
+bool UpdateDialog::InstallAndRestart(const QString& package_path) {
+    const QString app_dir = QDir::toNativeSeparators(QCoreApplication::applicationDirPath());
+    const QString app_exe = QDir::toNativeSeparators(QCoreApplication::applicationFilePath());
+    const QDir update_dir = QFileInfo(package_path).absoluteDir();
+    const QString staging = QDir::toNativeSeparators(update_dir.filePath(QStringLiteral("staging")));
+    QDir(staging).removeRecursively();
+    QDir().mkpath(staging);
+
+    const auto fail = [](const QString& reason) {
+        LOG_ERROR(Frontend, "Update install failed: {}", reason.toStdString());
+        QtCommon::Frontend::Critical(tr("Failed to install update"), reason);
+        return false;
+    };
+
+    // Windows 10 1803 and later ship bsdtar, which extracts zip archives.
+    const QString tar = QDir::toNativeSeparators(
+        QDir(qEnvironmentVariable("SystemRoot", QStringLiteral("C:\Windows")))
+            .filePath(QStringLiteral("System32/tar.exe")));
+    if (!QFileInfo::exists(tar)) {
+        return fail(tr("%1 was not found, so the package can't be extracted.").arg(tar));
+    }
+    auto progress = QtCommon::Frontend::newProgressDialog(tr("Extracting update..."), QString(), 0, 0);
+    progress->show();
+    QProcess extract;
+    extract.start(tar, {QStringLiteral("-xf"), QDir::toNativeSeparators(package_path),
+                        QStringLiteral("-C"), staging});
+    if (!extract.waitForStarted()) {
+        progress->close();
+        return fail(tr("Could not run %1.").arg(tar));
+    }
+    while (!extract.waitForFinished(100)) {
+        QGuiApplication::processEvents();
+    }
+    progress->close();
+    const QString new_exe = QDir(staging).filePath(QFileInfo(app_exe).fileName());
+    if (extract.exitStatus() != QProcess::NormalExit || extract.exitCode() != 0 ||
+        !QFileInfo::exists(new_exe)) {
+        return fail(tr("The downloaded package could not be extracted:\n%1")
+                        .arg(QString::fromLocal8Bit(extract.readAllStandardError())));
+    }
+
+    // A running executable and its DLLs can't be overwritten, so a helper waits for this process
+    // to exit, copies the new files over the install (robocopy retries locked files) and starts
+    // the emulator again. It inherits this process's environment, launcher variables included.
+    const auto quote = [](QString path) {
+        return QStringLiteral("'") + path.replace(QStringLiteral("'"), QStringLiteral("''")) +
+               QStringLiteral("'");
+    };
+    const QString script_path = update_dir.filePath(QStringLiteral("install_update.ps1"));
+    const QString log_path = QDir::toNativeSeparators(update_dir.filePath(QStringLiteral("install_update.log")));
+    QFile script(script_path);
+    if (!script.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        return fail(tr("Could not write %1.").arg(script_path));
+    }
+    QTextStream out(&script);
+    out.setEncoding(QStringConverter::Utf8);
+    out.setGenerateByteOrderMark(true); // Windows PowerShell reads BOM-less scripts as ANSI
+    out << "$staging = " << quote(staging) << "\n"
+        << "$app = " << quote(app_dir) << "\n"
+        << "$exe = " << quote(app_exe) << "\n"
+        << "$log = " << quote(log_path) << "\n"
+        << "Wait-Process -Id " << QCoreApplication::applicationPid()
+        << " -ErrorAction SilentlyContinue\n"
+        << "robocopy $staging $app /E /R:30 /W:1 /NP /NJH /NJS > $log\n"
+        << "$code = $LASTEXITCODE\n"
+        << "if ($code -lt 8) {\n"
+        << "    Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue\n"
+        << "    Remove-Item -LiteralPath " << quote(QDir::toNativeSeparators(package_path))
+        << " -Force -ErrorAction SilentlyContinue\n"
+        << "    Start-Process -FilePath $exe -WorkingDirectory $app\n"
+        << "} else {\n"
+        << "    Add-Content -Path $log -Value \"robocopy failed with exit code $code\"\n"
+        << "    Start-Process -FilePath $exe -WorkingDirectory $app\n"
+        << "    Start-Process -FilePath notepad.exe -ArgumentList $log\n"
+        << "}\n";
+    out.flush();
+    script.close();
+
+    if (!QProcess::startDetached(QStringLiteral("powershell.exe"),
+                                 {QStringLiteral("-NoProfile"), QStringLiteral("-ExecutionPolicy"),
+                                  QStringLiteral("Bypass"), QStringLiteral("-WindowStyle"),
+                                  QStringLiteral("Hidden"), QStringLiteral("-File"),
+                                  QDir::toNativeSeparators(script_path)})) {
+        return fail(tr("Could not start the update helper."));
+    }
+    LOG_INFO(Frontend, "Update extracted to {}, installing after exit", staging.toStdString());
+
+    // Close through the main window so settings are saved; the helper installs once we exit.
+    if (QWidget* const main = parentWidget() ? parentWidget()->window() : nullptr) {
+        QMetaObject::invokeMethod(main, "close", Qt::QueuedConnection);
+    } else {
+        QMetaObject::invokeMethod(qApp, "quit", Qt::QueuedConnection);
+    }
+    return true;
+}
+#endif
