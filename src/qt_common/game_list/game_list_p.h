@@ -123,12 +123,16 @@ public:
         if (!has_icon) {
             picture = GetDefaultIcon(size);
         }
-        const QPixmap card_picture = has_icon && size > 0
-                                         ? picture.scaled(std::max<u32>(size, u32{128}),
-                                                          std::max<u32>(size, u32{128}),
-                                                          Qt::KeepAspectRatio,
-                                                          Qt::SmoothTransformation)
-                                         : QPixmap{};
+        QPixmap card_picture;
+        if (has_icon) {
+            const u32 card_target = std::max<u32>(size, u32{384});
+            if (std::max(picture.width(), picture.height()) > static_cast<int>(card_target)) {
+                card_picture = picture.scaled(card_target, card_target, Qt::KeepAspectRatio,
+                                              Qt::SmoothTransformation);
+            } else {
+                card_picture = picture;
+            }
+        }
         picture = picture.scaled(size, size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
 
         setData(picture, Qt::DecorationRole);

@@ -142,6 +142,7 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
     artwork_clip.addRoundedRect(artworkRect, radius - 1, radius - 1);
     painter->save();
     painter->setClipPath(artwork_clip);
+    painter->setRenderHint(QPainter::SmoothPixmapTransform, true);
 
     if (has_icon && !icon_pixmap.isNull()) {
         QSize scaled = icon_pixmap.size();
