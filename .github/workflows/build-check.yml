@@ -53,7 +53,7 @@ jobs:
           host: linux
           target: desktop
           arch: linux_gcc_64
-          modules: qtcharts qtsvg
+          modules: qtcharts
           cache: true
 
       - name: Cache dependencies and compiler objects

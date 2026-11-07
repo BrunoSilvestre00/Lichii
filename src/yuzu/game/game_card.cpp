@@ -18,7 +18,7 @@
 namespace {
 
 void DrawSwitch2Placeholder(QPainter* painter, const QRect& bounds) {
-    static const QSvgRenderer switch2_logo(QStringLiteral(":/img/switch2_logo.svg"));
+    static QSvgRenderer switch2_logo(QStringLiteral(":/img/switch2_logo.svg"));
     if (switch2_logo.isValid()) {
         painter->fillRect(bounds, QColor(230, 0, 18));
         const int side = std::min(bounds.width(), bounds.height());
