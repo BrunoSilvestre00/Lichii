@@ -289,22 +289,24 @@ void QueryCacheBase<Traits>::CounterReport(GPUVAddr addr, QueryType counter_type
     // Written later: the buffer cache keeps GPU writes over it until then (NoteReportPending).
     const bool report_noted =
         !immediate && impl->rasterizer.NoteReportPending(cpu_addr, report_size);
+    // FlushQueryResults waits for these: completed on every way out of the operation, written or
+    // discarded, and when the operation is dropped without running.
+    auto report = std::make_shared<Tegra::Nx2AsyncReport>(cpu_addr);
     std::function<void()> operation([this, streamer, query_base = query, query_location,
                                      pointer, pointer_timestamp, cpu_addr, addr,
                                      asid = gpu_memory->GetID(), counter_type, mirrored,
-                                     report_size, report_noted] {
+                                     report_size, report_noted, report] {
         SCOPE_EXIT {
             if (report_noted) {
                 impl->rasterizer.FinishReport(cpu_addr, report_size);
             }
         };
-        // Counted on every way out, written or discarded: FlushQueryResults waits for these.
-        struct Settle {
-            DAddr address;
-            ~Settle() {
-                Tegra::Nx2CompleteAsyncReport(address);
+        struct Complete {
+            Tegra::Nx2AsyncReport& report;
+            ~Complete() {
+                report.Complete();
             }
-        } const settle{cpu_addr};
+        } const complete{*report};
         if (True(query_base->flags & QueryFlagBits::IsInvalidated)) {
             if (const u64 trace = QueryTrace::Sample(QueryTrace::Event::Discard)) {
                 LOG_INFO(HW_GPU,
@@ -361,7 +363,7 @@ void QueryCacheBase<Traits>::CounterReport(GPUVAddr addr, QueryType counter_type
         impl->pending_unregister.push_back(query_location);
     });
     if (is_fence) {
-        Tegra::Nx2IssueAsyncReport(cpu_addr);
+        report->Issue();
         VideoCore::g_signaling_query_report_fence = true;
         impl->rasterizer.SignalFence(std::move(operation));
         VideoCore::g_signaling_query_report_fence = false;
@@ -396,7 +398,7 @@ void QueryCacheBase<Traits>::CounterReport(GPUVAddr addr, QueryType counter_type
             streamer->Free(new_query_id);
             return;
         }
-        Tegra::Nx2IssueAsyncReport(cpu_addr);
+        report->Issue();
         impl->rasterizer.SyncOperation(std::move(operation));
     }
     auto [cont_addr, base] = gen_caching_indexing(cpu_addr);
