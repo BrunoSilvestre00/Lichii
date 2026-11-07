@@ -90,7 +90,7 @@ void UpdateDialog::Download() {
     // The package is installed in place: download it to a scratch folder, no questions asked.
     const QString update_dir =
         QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
-            .filePath(QStringLiteral("lichii-update"));
+            .filePath(QStringLiteral("lichii-update-%1").arg(QCoreApplication::applicationPid()));
     QDir(update_dir).removeRecursively();
     QDir().mkpath(update_dir);
     const QString filename =
@@ -261,9 +261,14 @@ bool UpdateDialog::InstallAndRestart(const QString& package_path) {
     // A running executable and its DLLs can't be overwritten, so a helper waits for this process
     // to exit, copies the new files over the install (robocopy retries locked files) and starts
     // the emulator again. It inherits this process's environment, launcher variables included.
+    // It first saves the files the update replaces and notes the ones it adds: if the copy fails,
+    // they are put back so the previous version starts, not a mix of both.
     const auto quote = [](QString path) {
-        return QStringLiteral("'") + path.replace(QStringLiteral("'"), QStringLiteral("''")) +
-               QStringLiteral("'");
+        // PowerShell also takes these typographic quotes as single quotes.
+        for (const char16_t q : {u'\'', u'‘', u'’', u'‚', u'‛'}) {
+            path.replace(QChar(q), QString(2, QChar(q)));
+        }
+        return QStringLiteral("'") + path + QStringLiteral("'");
     };
     const QString script_path = update_dir.filePath(QStringLiteral("install_update.ps1"));
     const QString log_path = QDir::toNativeSeparators(update_dir.filePath(QStringLiteral("install_update.log")));
@@ -275,23 +280,74 @@ bool UpdateDialog::InstallAndRestart(const QString& package_path) {
     out.setEncoding(QStringConverter::Utf8);
     out.setGenerateByteOrderMark(true); // Windows PowerShell reads BOM-less scripts as ANSI
     out << "$staging = " << quote(staging) << "\n"
+        << "$backup = " << quote(QDir::toNativeSeparators(update_dir.filePath(QStringLiteral("backup")))) << "\n"
+        << "$package = " << quote(QDir::toNativeSeparators(package_path)) << "\n"
         << "$app = " << quote(app_dir) << "\n"
         << "$exe = " << quote(app_exe) << "\n"
         << "$log = " << quote(log_path) << "\n"
-        << "Wait-Process -Id " << QCoreApplication::applicationPid()
-        << " -ErrorAction SilentlyContinue\n"
-        << "robocopy $staging $app /E /R:30 /W:1 /NP /NJH /NJS > $log\n"
-        << "$code = $LASTEXITCODE\n"
-        << "if ($code -lt 8) {\n"
-        << "    Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue\n"
-        << "    Remove-Item -LiteralPath " << quote(QDir::toNativeSeparators(package_path))
-        << " -Force -ErrorAction SilentlyContinue\n"
-        << "    Start-Process -FilePath $exe -WorkingDirectory $app\n"
-        << "} else {\n"
-        << "    Add-Content -Path $log -Value \"robocopy failed with exit code $code\"\n"
-        << "    Start-Process -FilePath $exe -WorkingDirectory $app\n"
-        << "    Start-Process -FilePath notepad.exe -ArgumentList $log\n"
-        << "}\n";
+        << "$target = " << QCoreApplication::applicationPid() << "\n";
+    out << R"PS(function Log([string]$message) {
+    Add-Content -LiteralPath $log -Value $message -Encoding UTF8
+}
+Wait-Process -Id $target -ErrorAction SilentlyContinue
+
+# Save what the update overwrites and note what it adds.
+$added = New-Object System.Collections.Generic.List[string]
+try {
+    Get-ChildItem -LiteralPath $staging -Recurse -File | ForEach-Object {
+        $relative = $_.FullName.Substring($staging.Length).TrimStart('\')
+        $destination = Join-Path $app $relative
+        if (Test-Path -LiteralPath $destination) {
+            $saved = Join-Path $backup $relative
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $saved) | Out-Null
+            Copy-Item -LiteralPath $destination -Destination $saved -Force -ErrorAction Stop
+        } else {
+            $added.Add($destination)
+        }
+    }
+} catch {
+    # Nothing was replaced yet: start the current version.
+    Log "Could not back up the current files: $_"
+    Start-Process -FilePath $exe -WorkingDirectory $app
+    Start-Process -FilePath notepad.exe -ArgumentList $log
+    exit 1
+}
+
+robocopy $staging $app /E /R:30 /W:1 /NP /NJH /NJS | Out-File -LiteralPath $log -Append -Encoding UTF8
+$code = $LASTEXITCODE
+if ($code -lt 8) {
+    Remove-Item -LiteralPath $staging, $backup -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $package -Force -ErrorAction SilentlyContinue
+    Start-Process -FilePath $exe -WorkingDirectory $app
+    exit 0
+}
+
+Log "robocopy failed with exit code $code; restoring the previous version"
+$restored = $true
+if (Test-Path -LiteralPath $backup) {
+    robocopy $backup $app /E /R:30 /W:1 /NP /NJH /NJS | Out-File -LiteralPath $log -Append -Encoding UTF8
+    if ($LASTEXITCODE -ge 8) {
+        $restored = $false
+        Log "Restoring the previous files failed with exit code $LASTEXITCODE"
+    }
+}
+foreach ($file in $added) {
+    if (Test-Path -LiteralPath $file) {
+        try {
+            Remove-Item -LiteralPath $file -Force -ErrorAction Stop
+        } catch {
+            $restored = $false
+            Log "Could not remove ${file}: $_"
+        }
+    }
+}
+if ($restored) {
+    Log "The previous version was restored"
+    Start-Process -FilePath $exe -WorkingDirectory $app
+}
+Start-Process -FilePath notepad.exe -ArgumentList $log
+exit 1
+)PS";
     out.flush();
     script.close();
 
