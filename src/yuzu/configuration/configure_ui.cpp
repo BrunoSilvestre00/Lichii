@@ -112,6 +112,13 @@ ConfigureUi::ConfigureUi(Core::System& system_, QWidget* parent)
 
     SetConfiguration();
 
+    connect(ui->game_library_style_combobox, QOverload<int>::of(&QComboBox::activated), this,
+            [this](int index) {
+                emit GameLibraryStyleChanged(
+                    ui->game_library_style_combobox->itemData(index).toUInt() ==
+                    static_cast<u8>(UISettings::GameLibraryStyle::Modern));
+            });
+
     // Force game list reload if any of the relevant settings are changed.
     connect(ui->show_add_ons, &QCheckBox::STATE_CHANGED, this, &ConfigureUi::RequestGameListUpdate);
     connect(ui->show_size, &QCheckBox::STATE_CHANGED, this, &ConfigureUi::RequestGameListUpdate);
