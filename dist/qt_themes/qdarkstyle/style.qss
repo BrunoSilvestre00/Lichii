@@ -2038,6 +2038,10 @@ QDialog#ConfigureDialog[modernLibrary="true"] {
     color: #e4e5e7;
 }
 
+QDialog#ConfigureDialog[modernLibrary="true"] QWidget {
+    background-color: transparent;
+}
+
 QDialog#ConfigureDialog[modernLibrary="true"] QListWidget#selectorList {
     background-color: #1d1e20;
     border: 1px solid #2c2d30;
@@ -2092,7 +2096,6 @@ QDialog#ConfigureDialog[modernLibrary="true"] QGroupBox {
     border: 1px solid #2c2d30;
     border-radius: 8px;
     margin-top: 12px;
-    padding: 12px 10px 8px;
 }
 
 QDialog#ConfigureDialog[modernLibrary="true"] QGroupBox::title {
@@ -2115,7 +2118,8 @@ QDialog#ConfigureDialog[modernLibrary="true"] QPlainTextEdit {
     border: 1px solid #3c3d40;
     border-radius: 5px;
     color: #e4e5e7;
-    padding: 4px 7px;
+    padding-left: 7px;
+    padding-right: 7px;
     selection-background-color: #4a4c50;
 }
 
@@ -2134,8 +2138,8 @@ QDialog#ConfigureDialog[modernLibrary="true"] QToolButton {
     border: 1px solid #3c3d40;
     border-radius: 6px;
     color: #e4e5e7;
-    min-height: 26px;
-    padding: 4px 10px;
+    padding-left: 10px;
+    padding-right: 10px;
 }
 
 QDialog#ConfigureDialog[modernLibrary="true"] QPushButton:hover,

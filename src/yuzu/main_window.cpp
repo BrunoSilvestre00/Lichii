@@ -363,7 +363,7 @@ QString GetTranslatedGameIconSize(size_t index) {
 
 bool SelectGameLibraryStyle(QWidget* parent, UISettings::GameLibraryStyle& selected_style) {
     QDialog dialog(parent);
-    dialog.setWindowTitle(QObject::tr("Choose your game library"));
+    dialog.setWindowTitle(QObject::tr("Choose a game list style"));
     dialog.setMinimumWidth(430);
 
     auto* layout = new QVBoxLayout(&dialog);
@@ -377,20 +377,21 @@ bool SelectGameLibraryStyle(QWidget* parent, UISettings::GameLibraryStyle& selec
     title->setFont(title_font);
     title->setWordWrap(true);
 
-    auto* modern = new QRadioButton(QObject::tr("Modern library — browse by folder"), &dialog);
-    auto* modern_description =
-        new QLabel(QObject::tr("Choose a folder card to see the games inside it."), &dialog);
+    auto* modern = new QRadioButton(QObject::tr("Modern Style (Recommended)"), &dialog);
+    auto* modern_description = new QLabel(QObject::tr("Browse your games in folder cards."), &dialog);
     modern_description->setWordWrap(true);
     modern_description->setContentsMargins(24, 0, 0, 4);
 
-    auto* classic = new QRadioButton(QObject::tr("Classic list — show games in groups"), &dialog);
+    auto* classic = new QRadioButton(QObject::tr("Legacy Style"), &dialog);
     auto* classic_description =
-        new QLabel(QObject::tr("See all games in the familiar expandable directory list."), &dialog);
+        new QLabel(QObject::tr("Browse your games in the familiar expandable list."), &dialog);
     classic_description->setWordWrap(true);
     classic_description->setContentsMargins(24, 0, 0, 4);
 
-    auto* note = new QLabel(QObject::tr("You can change this choice at any time in Settings."),
-                            &dialog);
+    auto* note = new QLabel(
+        QObject::tr(
+            "Change it under Emulation → Configure... → General → UI → Game List → Style."),
+        &dialog);
     note->setWordWrap(true);
     note->setStyleSheet(QStringLiteral("color: palette(mid);"));
 

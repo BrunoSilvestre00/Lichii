@@ -81,7 +81,7 @@
           <item>
            <widget class="QLabel" name="game_library_style_label">
             <property name="text">
-             <string>Game library design:</string>
+             <string>Style:</string>
             </property>
            </widget>
           </item>
@@ -93,7 +93,7 @@
         <item>
          <widget class="QLabel" name="game_library_style_note">
           <property name="text">
-           <string>You can change this at any time in Settings.</string>
+           <string>Change it under Emulation → Configure... → General → UI → Game List → Style.</string>
           </property>
           <property name="wordWrap">
            <bool>true</bool>

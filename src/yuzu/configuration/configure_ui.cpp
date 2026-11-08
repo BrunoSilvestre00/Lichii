@@ -100,9 +100,9 @@ ConfigureUi::ConfigureUi(Core::System& system_, QWidget* parent)
                                     QString::fromUtf8(theme.second));
     }
 
-    ui->game_library_style_combobox->addItem(tr("Modern — folder cards"),
+    ui->game_library_style_combobox->addItem(tr("Modern Style (Recommended)"),
                                              static_cast<u8>(UISettings::GameLibraryStyle::Modern));
-    ui->game_library_style_combobox->addItem(tr("Classic — grouped list"),
+    ui->game_library_style_combobox->addItem(tr("Legacy Style"),
                                              static_cast<u8>(UISettings::GameLibraryStyle::Classic));
 
     InitializeIconSizeComboBox();
