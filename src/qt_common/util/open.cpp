@@ -19,6 +19,138 @@ namespace QtCommon {
 
 namespace {
 
+/// Unescapes one systemd shell-escaped environment value, i.e. the $'...'
+/// ANSI-C quoting used by `systemctl show-environment`. Plain values pass
+/// through unchanged so the comparison below also works where no shell is
+/// involved.
+QString UnescapeSystemdValue(const QString& value) {
+    static const QString prefix = QStringLiteral("$'");
+    if (value.size() < 4 || !value.startsWith(prefix) ||
+        !value.endsWith(QLatin1Char('\''))) {
+        return value;
+    }
+    const QString inner = value.mid(2, value.size() - 3);
+    auto hex_value = [](QChar c) -> int {
+        const uint u = c.unicode();
+        if (u >= '0' && u <= '9') {
+            return int(u - '0');
+        }
+        if (u >= 'a' && u <= 'f') {
+            return int(u - 'a' + 10);
+        }
+        if (u >= 'A' && u <= 'F') {
+            return int(u - 'A' + 10);
+        }
+        return -1;
+    };
+    QString out;
+    out.reserve(inner.size());
+    for (qsizetype i = 0; i < inner.size();) {
+        const QChar c = inner[i];
+        if (c != QLatin1Char('\\') || i + 1 >= inner.size()) {
+            out.append(c);
+            ++i;
+            continue;
+        }
+        const QChar e = inner[i + 1];
+        const auto take = [&](QChar ch) {
+            out.append(ch);
+            i += 2;
+        };
+        switch (e.unicode()) {
+        case 'a':
+            take(QLatin1Char('\a'));
+            break;
+        case 'b':
+            take(QLatin1Char('\b'));
+            break;
+        case 'f':
+            take(QLatin1Char('\f'));
+            break;
+        case 'n':
+            take(QLatin1Char('\n'));
+            break;
+        case 'r':
+            take(QLatin1Char('\r'));
+            break;
+        case 't':
+            take(QLatin1Char('\t'));
+            break;
+        case 'v':
+            take(QLatin1Char('\v'));
+            break;
+        case 's':
+            take(QLatin1Char(' '));
+            break;
+        case '\\':
+            take(QLatin1Char('\\'));
+            break;
+        case '\'':
+            take(QLatin1Char('\''));
+            break;
+        case '"':
+            take(QLatin1Char('"'));
+            break;
+        case 'x': {
+            const int hi = (i + 2 < inner.size()) ? hex_value(inner[i + 2]) : -1;
+            const int lo = (i + 3 < inner.size()) ? hex_value(inner[i + 3]) : -1;
+            if (hi >= 0 && lo >= 0) {
+                out.append(QChar(char16_t(hi * 16 + lo)));
+                i += 4;
+            } else {
+                out.append(c);
+                ++i;
+            }
+            break;
+        }
+        case 'u':
+        case 'U': {
+            const int digits = (e.unicode() == 'u') ? 4 : 8;
+            uint v = 0;
+            bool ok = (i + 2 + digits <= inner.size());
+            for (int k = 0; ok && k < digits; ++k) {
+                const int h = hex_value(inner[i + 2 + k]);
+                if (h < 0) {
+                    ok = false;
+                } else {
+                    v = v * 16 + uint(h);
+                }
+            }
+            if (ok) {
+                out.append(QString::fromUcs4(reinterpret_cast<const char32_t*>(&v), 1));
+                i += 2 + digits;
+            } else {
+                out.append(c);
+                ++i;
+            }
+            break;
+        }
+        default: {
+            // Octal \ooo (up to 3 digits); anything else passes through.
+            uint v = 0;
+            int k = 0;
+            while (k < 3 && i + 1 + k < inner.size()) {
+                const uint d = inner[i + 1 + k].unicode();
+                if (d < '0' || d > '7') {
+                    break;
+                }
+                v = v * 8 + (d - '0');
+                ++k;
+            }
+            if (k > 0) {
+                out.append(QChar(char16_t(v)));
+                i += 1 + k;
+            } else {
+                out.append(c);
+                ++i;
+            }
+            break;
+        }
+        }
+    }
+    return out;
+}
+
 /// Queries the systemd user manager for its session-wide XDG_CONFIG_HOME.
 /// Returns nullopt when the manager is unreachable (non-systemd session,
 /// sandbox, query failure). The result is cached: the manager environment
@@ -37,7 +169,7 @@ std::optional<QString> SessionConfigHome() {
         const QString output = QString::fromLocal8Bit(proc.readAllStandardOutput());
         for (const QString& line : output.split(QLatin1Char('\n'))) {
             if (line.startsWith(prefix)) {
-                return line.mid(prefix.size());
+                return UnescapeSystemdValue(line.mid(prefix.size()));
             }
         }
         return QString{};
