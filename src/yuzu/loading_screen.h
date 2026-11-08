@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <memory>
+#include <QPoint>
 #include <QString>
 #include <QWidget>
 #include <QtGlobal>
@@ -30,9 +31,12 @@ enum class LoadCallbackStage;
 
 class QBuffer;
 class QByteArray;
+class QGraphicsDropShadowEffect;
 class QGraphicsOpacityEffect;
+class QHideEvent;
 class QMovie;
 class QPropertyAnimation;
+class QShowEvent;
 
 class LoadingScreen : public QWidget {
     Q_OBJECT
@@ -58,6 +62,9 @@ public:
     /// Hides the LoadingScreen with a fade out effect
     void OnLoadComplete();
 
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
+
     // In order to use a custom widget with a stylesheet, you need to override the paintEvent
     // See https://wiki.qt.io/How_to_Change_the_Background_Color_of_QWidget
     void paintEvent(QPaintEvent* event) override;
@@ -78,8 +85,12 @@ private:
     std::size_t previous_total = 0;
     VideoCore::LoadCallbackStage previous_stage;
 
+    QGraphicsDropShadowEffect* logo_glow = nullptr;
     QGraphicsOpacityEffect* opacity_effect = nullptr;
     std::unique_ptr<QPropertyAnimation> fadeout_animation;
+    std::unique_ptr<QPropertyAnimation> logo_float_animation;
+    QPoint logo_rest_position;
+    bool logo_rest_position_valid = false;
 
     // Definitions for the differences in text and styling for each stage
     ::Common::unordered_map<VideoCore::LoadCallbackStage, const char*> progressbar_style;

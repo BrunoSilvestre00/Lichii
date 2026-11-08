@@ -8,12 +8,16 @@
 #include <QBuffer>
 #include <QByteArray>
 #include <QColor>
+#include <QGraphicsDropShadowEffect>
 #include <QGraphicsOpacityEffect>
+#include <QHideEvent>
 #include <QIODevice>
 #include <QImage>
 #include <QPainter>
+#include <QPoint>
 #include <QPixmap>
 #include <QPropertyAnimation>
+#include <QShowEvent>
 #include <QStyleOption>
 #include <QTime>
 #include "common/container/unordered_map.h"
@@ -112,8 +116,8 @@ void SetLogoBackground(QWidget* widget, const QPixmap& logo) {
     widget->setStyleSheet(
         QStringLiteral(
             "QWidget#LoadingScreen { background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, "
-            "stop:0 #08090b, stop:0.34 rgba(%1, %2, %3, 68), "
-            "stop:0.68 rgba(%4, %5, %6, 54), stop:1 #08090b); } "
+            "stop:0 #08090b, stop:0.34 rgba(%1, %2, %3, 86), "
+            "stop:0.68 rgba(%4, %5, %6, 68), stop:1 #08090b); } "
             "QWidget#fade_parent { background-color: transparent; }")
             .arg(left.red())
             .arg(left.green())
@@ -130,9 +134,18 @@ LoadingScreen::LoadingScreen(QWidget* parent)
       previous_stage(VideoCore::LoadCallbackStage::Complete) {
     ui->setupUi(this);
     setMinimumSize(Layout::MinimumSize::Width, Layout::MinimumSize::Height);
-    ui->verticalLayout->insertWidget(0, ui->logo, 0, Qt::AlignHCenter);
     ui->logo->setMaximumSize(360, 100);
     ui->value->setMinimumHeight(20);
+
+    logo_glow = new QGraphicsDropShadowEffect(ui->logo);
+    logo_glow->setBlurRadius(18);
+    logo_glow->setColor(QColor(166, 168, 171, 96));
+    logo_glow->setOffset(0, 0);
+    ui->logo->setGraphicsEffect(logo_glow);
+    logo_float_animation = std::make_unique<QPropertyAnimation>(ui->logo, "pos");
+    logo_float_animation->setDuration(4200);
+    logo_float_animation->setLoopCount(-1);
+    logo_float_animation->setEasingCurve(QEasingCurve::InOutSine);
 
     // Create a fade out effect to hide this loading screen widget.
     // When fading opacity, it will fade to the parent widgets background color, which is why we
@@ -172,6 +185,8 @@ LoadingScreen::LoadingScreen(QWidget* parent)
 LoadingScreen::~LoadingScreen() = default;
 
 void LoadingScreen::Prepare(Loader::AppLoader& loader) {
+    logo_float_animation->stop();
+    logo_rest_position_valid = false;
     closing_screen = false;
     ui->banner->clear();
     ui->logo->clear();
@@ -207,6 +222,9 @@ void LoadingScreen::Prepare(Loader::AppLoader& loader) {
             ui->logo->setPixmap(map.scaled(360, 100, Qt::KeepAspectRatio,
                                            Qt::SmoothTransformation));
             ui->logo->setVisible(true);
+            QColor logo_color = SampleLogoColor(map.toImage(), 0, 100);
+            logo_color.setAlpha(112);
+            logo_glow->setColor(logo_color);
             SetLogoBackground(this, map);
         }
     }
@@ -308,6 +326,29 @@ void LoadingScreen::OnLoadProgress(VideoCore::LoadCallbackStage stage, std::size
         ui->progress_bar->setValue(static_cast<int>(value));
     }
     previous_time = now;
+}
+
+void LoadingScreen::showEvent(QShowEvent* event) {
+    QWidget::showEvent(event);
+    if (ui->logo->isHidden()) {
+        return;
+    }
+
+    logo_rest_position = ui->logo->pos();
+    logo_rest_position_valid = true;
+    logo_float_animation->setStartValue(logo_rest_position);
+    logo_float_animation->setKeyValueAt(0.5, logo_rest_position + QPoint(0, -7));
+    logo_float_animation->setEndValue(logo_rest_position);
+    logo_float_animation->start();
+}
+
+void LoadingScreen::hideEvent(QHideEvent* event) {
+    logo_float_animation->stop();
+    if (logo_rest_position_valid) {
+        ui->logo->move(logo_rest_position);
+        logo_rest_position_valid = false;
+    }
+    QWidget::hideEvent(event);
 }
 
 void LoadingScreen::paintEvent(QPaintEvent* event) {

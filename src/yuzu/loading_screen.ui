@@ -53,33 +53,6 @@ QWidget#fade_parent {
        <number>36</number>
       </property>
       <item>
-       <layout class="QHBoxLayout" name="headerLayout">
-        <item alignment="Qt::AlignLeft|Qt::AlignTop">
-         <widget class="QLabel" name="logo">
-          <property name="text">
-           <string/>
-          </property>
-          <property name="alignment">
-           <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <spacer name="headerSpacer">
-          <property name="orientation">
-           <enum>Qt::Horizontal</enum>
-          </property>
-          <property name="sizeHint" stdset="0">
-           <size>
-            <width>40</width>
-            <height>20</height>
-           </size>
-          </property>
-         </spacer>
-        </item>
-       </layout>
-      </item>
-      <item>
        <spacer name="topSpacer">
         <property name="orientation">
          <enum>Qt::Vertical</enum>
@@ -132,6 +105,21 @@ QWidget#fade_parent {
          <property name="bottomMargin">
           <number>28</number>
          </property>
+         <item alignment="Qt::AlignHCenter">
+          <widget class="QLabel" name="logo">
+           <property name="styleSheet">
+            <string notr="true">QLabel#logo {
+    background-color: transparent;
+}</string>
+           </property>
+           <property name="text">
+            <string/>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignCenter</set>
+           </property>
+          </widget>
+         </item>
          <item alignment="Qt::AlignHCenter">
           <widget class="QLabel" name="stage">
            <property name="styleSheet">
