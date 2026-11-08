@@ -187,6 +187,15 @@ bool IsGameDirectory(GameListItemType type) {
 
 }
 
+QPixmap GameListFallbackIcon(int size) {
+    QPixmap pixmap(size, size);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    DrawSwitch2Placeholder(&painter, pixmap.rect());
+    return pixmap;
+}
+
 GameCard::GameCard(QObject* parent) : QStyledItemDelegate{parent} {
     setObjectName("GameCard");
 }

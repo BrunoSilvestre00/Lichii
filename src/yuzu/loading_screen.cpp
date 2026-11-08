@@ -25,6 +25,7 @@
 #include "core/loader/loader.h"
 #include "ui_loading_screen.h"
 #include "video_core/rasterizer_interface.h"
+#include "yuzu/game/game_card.h"
 #include "yuzu/loading_screen.h"
 
 // Mingw seems to not have QMovie at all. If QMovie is missing then use a single frame instead of an
@@ -205,16 +206,9 @@ void LoadingScreen::Prepare(Loader::AppLoader& loader) {
     previous_stage = VideoCore::LoadCallbackStage::Complete;
 
     QColor logo_accent{166, 168, 171};
-    QPixmap banner_fallback;
     bool logo_loaded = false;
     std::vector<u8> buffer;
     if (loader.ReadBanner(buffer) == Loader::ResultStatus::Success) {
-        const QImage banner_image =
-            QImage::fromData(buffer.data(), static_cast<int>(buffer.size()));
-        if (!banner_image.isNull()) {
-            banner_fallback = QPixmap::fromImage(banner_image);
-            logo_accent = LiftLogoAccent(SampleLogoColor(banner_image, 0, 100));
-        }
 #ifdef YUZU_QT_MOVIE_MISSING
         QPixmap map;
         map.loadFromData(buffer.data(), buffer.size());
@@ -253,9 +247,11 @@ void LoadingScreen::Prepare(Loader::AppLoader& loader) {
     game_title = QString::fromStdString(title);
 
     if (!logo_loaded) {
-        if (!banner_fallback.isNull()) {
-            ui->logo->setPixmap(banner_fallback.scaled(360, 100, Qt::KeepAspectRatio,
-                                                       Qt::SmoothTransformation));
+        const QPixmap fallback = GameListFallbackIcon(100);
+        if (!fallback.isNull()) {
+            ui->logo->setPixmap(
+                fallback.scaled(360, 100, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+            logo_accent = LiftLogoAccent(SampleLogoColor(fallback.toImage(), 0, 100));
         } else {
             const QString wordmark = game_title.isEmpty() ? tr("Lichii") : game_title;
             ui->logo->setText(wordmark);
