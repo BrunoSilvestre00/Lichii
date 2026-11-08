@@ -17,6 +17,7 @@
 #include <QPoint>
 #include <QPixmap>
 #include <QPropertyAnimation>
+#include <QPushButton>
 #include <QShowEvent>
 #include <QStyleOption>
 #include "common/container/unordered_map.h"
@@ -24,6 +25,7 @@
 #include "core/loader/loader.h"
 #include "ui_loading_screen.h"
 #include "video_core/rasterizer_interface.h"
+#include "video_core/shader_warm/shader_warm_builder.h"
 #include "yuzu/game/game_card.h"
 #include "yuzu/loading_screen.h"
 
@@ -57,6 +59,20 @@ QProgressBar {
 QProgressBar::chunk {
   background-color: #a6a8ab;
   border-radius: 5px;
+})";
+
+constexpr char SKIP_BUTTON_STYLE[] = R"(
+QPushButton {
+  background-color: black;
+  color: white;
+  border: 2px solid white;
+  border-radius: 6px;
+  padding: 6px 24px;
+  font: 12pt "Arial";
+}
+QPushButton:disabled {
+  color: gray;
+  border-color: gray;
 })";
 
 constexpr char PROGRESSBAR_STYLE_COMPLETE[] = R"(
@@ -173,17 +189,31 @@ LoadingScreen::LoadingScreen(QWidget* parent)
     });
     connect(this, &LoadingScreen::LoadProgress, this, &LoadingScreen::OnLoadProgress,
             Qt::QueuedConnection);
+
+    // Shown while shaders are precached: starts the game without waiting for the rest.
+    skip_button = new QPushButton(tr("Skip"), this);
+    skip_button->setStyleSheet(QString::fromUtf8(SKIP_BUTTON_STYLE));
+    skip_button->setToolTip(tr("Start the game now. The shaders not precached yet are precached "
+                               "on a later launch."));
+    skip_button->hide();
+    ui->verticalLayout->insertWidget(2, skip_button, 0, Qt::AlignHCenter | Qt::AlignTop);
+    connect(skip_button, &QPushButton::clicked, this, [this] {
+        VideoCommon::ShaderWarm::RequestSkipWarm();
+        skip_button->setEnabled(false);
+    });
     qRegisterMetaType<VideoCore::LoadCallbackStage>();
 
     stage_translations = {
         {VideoCore::LoadCallbackStage::Prepare, tr("Preparing")},
         {VideoCore::LoadCallbackStage::Build, tr("Loading Shaders")},
         {VideoCore::LoadCallbackStage::Complete, tr("Starting Game")},
+        {VideoCore::LoadCallbackStage::Warm, tr("Precaching shaders %1 / %2")},
     };
     progressbar_style = {
         {VideoCore::LoadCallbackStage::Prepare, PROGRESSBAR_STYLE_PREPARE},
         {VideoCore::LoadCallbackStage::Build, PROGRESSBAR_STYLE_BUILD},
         {VideoCore::LoadCallbackStage::Complete, PROGRESSBAR_STYLE_COMPLETE},
+        {VideoCore::LoadCallbackStage::Warm, PROGRESSBAR_STYLE_BUILD},
     };
 }
 
@@ -332,6 +362,8 @@ void LoadingScreen::OnLoadProgress(VideoCore::LoadCallbackStage stage, std::size
             ui->progress_bar->setRange(0, 0);
             ui->progress_bar->show();
         }
+        skip_button->setVisible(stage == VideoCore::LoadCallbackStage::Warm);
+        skip_button->setEnabled(true);
         previous_stage = stage;
         slow_shader_compile_start = false;
     }
@@ -341,7 +373,8 @@ void LoadingScreen::OnLoadProgress(VideoCore::LoadCallbackStage stage, std::size
     }
 
     QString estimate;
-    if (stage == VideoCore::LoadCallbackStage::Build) {
+    if (stage == VideoCore::LoadCallbackStage::Build ||
+        stage == VideoCore::LoadCallbackStage::Warm) {
         if (now - previous_time > milliseconds{50} || slow_shader_compile_start) {
             if (!slow_shader_compile_start) {
                 slow_shader_start = now;
@@ -358,16 +391,16 @@ void LoadingScreen::OnLoadProgress(VideoCore::LoadCallbackStage stage, std::size
                 const long remaining_mseconds = std::max<long>(eta_mseconds - diff.count() + 1000, 1000);
                 // Format as an elapsed duration, not a clock time: mm:ss wraps every hour.
                 const long seconds_total = remaining_mseconds / 1000;
-                estimate = tr("%1 remaining")
-                               .arg(seconds_total >= 3600
-                                        ? QStringLiteral("%1:%2:%3")
-                                              .arg(seconds_total / 3600)
-                                              .arg((seconds_total % 3600) / 60, 2, 10,
-                                                   QLatin1Char('0'))
-                                              .arg(seconds_total % 60, 2, 10, QLatin1Char('0'))
-                                        : QStringLiteral("%1:%2")
-                                              .arg(seconds_total / 60, 2, 10, QLatin1Char('0'))
-                                              .arg(seconds_total % 60, 2, 10, QLatin1Char('0')));
+                estimate =
+                    tr("%1 remaining")
+                        .arg(seconds_total >= 3600
+                                 ? QStringLiteral("%1:%2:%3")
+                                       .arg(seconds_total / 3600)
+                                       .arg((seconds_total % 3600) / 60, 2, 10, QLatin1Char('0'))
+                                       .arg(seconds_total % 60, 2, 10, QLatin1Char('0'))
+                                 : QStringLiteral("%1:%2")
+                                       .arg(seconds_total / 60, 2, 10, QLatin1Char('0'))
+                                       .arg(seconds_total % 60, 2, 10, QLatin1Char('0')));
             }
         }
     } else if (stage == VideoCore::LoadCallbackStage::Prepare) {
@@ -381,6 +414,9 @@ void LoadingScreen::OnLoadProgress(VideoCore::LoadCallbackStage stage, std::size
         stage_text = tr("Loading Shaders (%1 / %2)")
                          .arg(static_cast<int>(value))
                          .arg(static_cast<int>(total));
+    } else if (stage == VideoCore::LoadCallbackStage::Warm) {
+        stage_text =
+            stage_text.arg(static_cast<qulonglong>(value)).arg(static_cast<qulonglong>(total));
     } else if (stage == VideoCore::LoadCallbackStage::Complete && !game_title.isEmpty()) {
         stage_text = tr("Starting Game (%1)").arg(game_title);
     }

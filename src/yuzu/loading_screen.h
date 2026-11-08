@@ -38,6 +38,7 @@ class QHideEvent;
 class QMovie;
 class QPropertyAnimation;
 class QShowEvent;
+class QPushButton;
 
 class LoadingScreen : public QWidget {
     Q_OBJECT
@@ -106,6 +107,7 @@ private:
 
     QGraphicsDropShadowEffect* logo_glow = nullptr;
     QGraphicsOpacityEffect* opacity_effect = nullptr;
+    QPushButton* skip_button = nullptr;
     std::unique_ptr<QPropertyAnimation> fadeout_animation;
     std::unique_ptr<QPropertyAnimation> logo_float_animation;
     QPoint logo_rest_position;
