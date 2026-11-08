@@ -17,6 +17,9 @@ namespace QtCommon {
 
 namespace {
 
+/// Builds the environment for spawned external handlers (browsers, file
+/// managers). Starts from the current process environment and drops
+/// variables that must not leak into programs outside the emulator.
 QProcessEnvironment CleanedEnvironmentForExternalProcess() {
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
 
@@ -34,6 +37,8 @@ QProcessEnvironment CleanedEnvironmentForExternalProcess() {
     return env;
 }
 
+/// Opens a local path or URL string with the host default handler via
+/// xdg-open. Returns true when the handler process was started.
 bool OpenWithXdgOpen(const QString& target) {
     QProcess proc;
     proc.setProgram(QStringLiteral("xdg-open"));
