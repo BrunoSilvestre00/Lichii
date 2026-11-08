@@ -1041,13 +1041,10 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
         GraphicsPipelineCacheKey key;
         file.read(reinterpret_cast<char*>(&key), sizeof(key));
 
-        if (!device.IsExtMeshShaderSupported() &&
-            std::ranges::any_of(envs, [](const FileEnvironment& env) {
-                return env.ShaderStage() == Shader::Stage::Task ||
-                       env.ShaderStage() == Shader::Stage::Mesh;
-            })) {
-            return;
-        }
+        // Task/mesh pipelines load without VK_EXT_mesh_shader too: CreateGraphicsPipeline draws
+        // the ones it can through compute and skips the rest, as at run time. Skipping them here
+        // rebuilt each one when a game reached it, and wrote it to this file again (it was never
+        // in disk_pipelines), so the file grew on every launch.
 
         if ((key.state.extended_dynamic_state != 0) !=
                 dynamic_features.has_extended_dynamic_state ||
