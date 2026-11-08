@@ -162,7 +162,7 @@ QString GameList::GetLastFilterResultItem() const {
         if (root.isValid()) {
             for (int row = 0; row < item_model->rowCount(root); ++row) {
                 const QModelIndex game = item_model->index(row, 0, root);
-                if (!grid_view->isRowHidden(row, root) &&
+                if (!grid_view->isRowHidden(row) &&
                     game.data(GameListItem::TypeRole).value<GameListItemType>() ==
                         GameListItemType::Game) {
                     return game.data(GameListItemPath::FullPathRole).toString();
@@ -172,7 +172,7 @@ QString GameList::GetLastFilterResultItem() const {
             const QString filter = search_field->filterText().toLower();
             for (int row = 1; row < item_model->rowCount() - 1; ++row) {
                 const auto* directory = item_model->item(row, 0);
-                if (grid_view->isRowHidden(row, QModelIndex())) {
+                if (grid_view->isRowHidden(row)) {
                     continue;
                 }
                 for (int game_row = 0; game_row < directory->rowCount(); ++game_row) {
@@ -311,7 +311,7 @@ void GameList::ResetViewMode() {
 
     if (mode == Settings::GameListMode::GridView) {
         grid_view->setRootIndex(QModelIndex{});
-        grid_view->setRowHidden(0, QModelIndex(), true);
+        grid_view->setRowHidden(0, true);
         UpdateFolderNavigation();
     } else {
         folder_navigation->hide();
@@ -338,7 +338,7 @@ void GameList::OnTextChanged(const QString& new_text) {
         if (root.isValid()) {
             total = item_model->rowCount(root);
             for (int row = 0; row < total; ++row) {
-                matches += !grid_view->isRowHidden(row, root);
+                matches += !grid_view->isRowHidden(row);
             }
         } else {
             for (int row = 1; row < item_model->rowCount() - 1; ++row) {
@@ -385,7 +385,7 @@ void GameList::OnPopulatingCompleted(const QStringList& watch_list) {
 
     if (game_list_mode == Settings::GameListMode::GridView) {
         grid_view->setRootIndex(QModelIndex{});
-        grid_view->setRowHidden(0, QModelIndex(), true);
+        grid_view->setRowHidden(0, true);
         UpdateFolderNavigation();
         for (int i = 1; i < item_model->rowCount() - 1; ++i) {
             if (auto* directory = item_model->item(i, 0)) {

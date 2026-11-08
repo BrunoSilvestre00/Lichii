@@ -65,11 +65,11 @@ void GameGrid::ApplyFilter(const QString& edit_filter_text, GameListModel* model
 
         const auto type = item->data(GameListItem::TypeRole).value<GameListItemType>();
         if (!root.isValid() && type == GameListItemType::Favorites) {
-            setRowHidden(i, true, root);
+            setRowHidden(i, true);
             continue;
         }
         if (!root.isValid() && type == GameListItemType::AddDir) {
-            setRowHidden(i, false, root);
+            setRowHidden(i, false);
             continue;
         }
 
@@ -81,7 +81,7 @@ void GameGrid::ApplyFilter(const QString& edit_filter_text, GameListModel* model
                 matches = Yuzu::FilterMatches(edit_filter_text, item->child(child, 0));
             }
         }
-        setRowHidden(i, !matches, root);
+        setRowHidden(i, !matches);
     }
 }
 
