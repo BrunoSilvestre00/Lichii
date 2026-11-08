@@ -56,9 +56,13 @@ def read_intervals(path, first_frame=None, end_frame=None):
                for count in counts):
             raise ValueError('interval count differs from the declared window; recent-only arrays are insufficient')
         return values
+    native_csv = path.suffix.lower() == '.csv'
+    interval_column = 'interval_ns' if native_csv else 'interval_ms'
+    divisor = 1_000_000 if native_csv else 1
     with path.open(encoding='utf-8-sig') as stream:
-        rows = csv.DictReader((line for line in stream if not line.startswith('#')), delimiter='\t')
-        selected = [(int(row['frame']), float(row['interval_ms'])) for row in rows
+        rows = csv.DictReader((line for line in stream if not line.startswith('#')),
+                              delimiter=',' if native_csv else '\t')
+        selected = [(int(row['frame']), float(row[interval_column]) / divisor) for row in rows
                     if (first_frame is None or int(row['frame']) >= first_frame)
                     and (end_frame is None or int(row['frame']) < end_frame)]
     if not selected:

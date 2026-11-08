@@ -69,6 +69,14 @@ class FrameMetricsTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 read_intervals(path)
 
+    def test_native_csv_nanoseconds_and_bounds(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)/'presents.csv'
+            path.write_text('frame,return_ns,interval_ns\n1,100,0\n2,10000100,10000000\n3,30000100,20000000\n')
+            self.assertEqual(read_intervals(path, 2, 4), [10, 20])
+            with self.assertRaises(ValueError):
+                summarize(read_intervals(path))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -8,6 +8,8 @@ For complete JSON interval arrays, supply `intervals_ms` and an explicit interva
 
 For a tab-separated recorder file with `frame` and `interval_ms` columns, select both bounds to exclude menus and loading and detect missing endpoints. The ending frame is exclusive. Comment lines beginning with `#` are supported.
 
+Native present-call traces in `.csv` files may instead supply `frame` and `interval_ns`; nanoseconds are converted to milliseconds. Exclude the first record when it has no preceding interval. These return timestamps do not measure GPU completion or scanout.
+
 ```powershell
 python tools/nx2/frame_time_metrics.py gameplay.tsv --domain "game present, frame generation off" --first-frame 3000 --end-frame 4200 --output run-1.json
 python -m unittest discover -s tools/nx2 -p test_frame_time_metrics.py
