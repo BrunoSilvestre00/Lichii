@@ -19,7 +19,6 @@
 #include <QPropertyAnimation>
 #include <QShowEvent>
 #include <QStyleOption>
-#include <QTime>
 #include "common/container/unordered_map.h"
 #include "core/frontend/framebuffer_layout.h"
 #include "core/loader/loader.h"
@@ -190,10 +189,28 @@ LoadingScreen::LoadingScreen(QWidget* parent)
 
 LoadingScreen::~LoadingScreen() = default;
 
-void LoadingScreen::Prepare(Loader::AppLoader& loader) {
+LoadingScreen::Snapshot LoadingScreen::SnapshotLoader(Loader::AppLoader& loader) {
+    Snapshot snapshot;
+    std::vector<u8> buffer;
+    if (loader.ReadBanner(buffer) == Loader::ResultStatus::Success) {
+        snapshot.banner = buffer;
+        buffer.clear();
+    }
+    if (loader.ReadLogo(buffer) == Loader::ResultStatus::Success) {
+        snapshot.logo = buffer;
+    }
+
+    std::string title;
+    if (loader.ReadTitle(title) != Loader::ResultStatus::Success) {
+        title.clear();
+    }
+    snapshot.title = QString::fromStdString(title);
+    return snapshot;
+}
+
+void LoadingScreen::ResetDisplay() {
     logo_float_animation->stop();
     logo_rest_position_valid = false;
-    closing_screen = false;
     ui->banner->clear();
     ui->logo->clear();
     ui->logo->setWordWrap(false);
@@ -205,29 +222,30 @@ void LoadingScreen::Prepare(Loader::AppLoader& loader) {
     Clear();
     previous_total = 0;
     previous_stage = VideoCore::LoadCallbackStage::Complete;
+}
 
+void LoadingScreen::ApplyArtwork(const Snapshot& snapshot) {
     QColor logo_accent{166, 168, 171};
     bool logo_loaded = false;
-    std::vector<u8> buffer;
-    if (loader.ReadBanner(buffer) == Loader::ResultStatus::Success) {
+    if (!snapshot.banner.empty()) {
 #ifdef YUZU_QT_MOVIE_MISSING
         QPixmap map;
-        map.loadFromData(buffer.data(), buffer.size());
+        map.loadFromData(snapshot.banner.data(), static_cast<uint>(snapshot.banner.size()));
         ui->banner->setPixmap(map.scaled(360, 140, Qt::KeepAspectRatio, Qt::SmoothTransformation));
 #else
-        backing_mem = std::make_unique<QByteArray>(reinterpret_cast<char*>(buffer.data()),
-                                                   static_cast<int>(buffer.size()));
+        backing_mem = std::make_unique<QByteArray>(
+            reinterpret_cast<const char*>(snapshot.banner.data()),
+            static_cast<int>(snapshot.banner.size()));
         backing_buf = std::make_unique<QBuffer>(backing_mem.get());
         backing_buf->open(QIODevice::ReadOnly);
         animation = std::make_unique<QMovie>(backing_buf.get(), QByteArray());
         animation->start();
         ui->banner->setMovie(animation.get());
 #endif
-        buffer.clear();
     }
-    if (loader.ReadLogo(buffer) == Loader::ResultStatus::Success) {
+    if (!snapshot.logo.empty()) {
         QPixmap map;
-        map.loadFromData(buffer.data(), static_cast<uint>(buffer.size()));
+        map.loadFromData(snapshot.logo.data(), static_cast<uint>(snapshot.logo.size()));
         if (!map.isNull()) {
             ui->logo->setPixmap(map.scaled(360, 100, Qt::KeepAspectRatio,
                                            Qt::SmoothTransformation));
@@ -241,11 +259,7 @@ void LoadingScreen::Prepare(Loader::AppLoader& loader) {
         }
     }
 
-    std::string title;
-    if (loader.ReadTitle(title) != Loader::ResultStatus::Success) {
-        title.clear();
-    }
-    game_title = QString::fromStdString(title);
+    game_title = snapshot.title;
 
     if (!logo_loaded) {
         const QPixmap fallback = GameListFallbackIcon(100);
@@ -268,16 +282,23 @@ void LoadingScreen::Prepare(Loader::AppLoader& loader) {
         logo_glow->setColor(glow_color);
         SetLogoBackground(this, logo_accent, logo_accent);
     }
+}
+
+void LoadingScreen::Prepare(Loader::AppLoader& loader) {
+    ResetDisplay();
+    ApplyArtwork(SnapshotLoader(loader));
 
     slow_shader_compile_start = false;
     OnLoadProgress(VideoCore::LoadCallbackStage::Prepare, 0, 0);
 }
 
-void LoadingScreen::PrepareClosing(Loader::AppLoader& loader) {
+void LoadingScreen::PrepareClosing(const Snapshot& snapshot) {
     fadeout_animation->stop();
     opacity_effect->setOpacity(1);
-    Prepare(loader);
+    ResetDisplay();
+    OnLoadProgress(VideoCore::LoadCallbackStage::Prepare, 0, 0);
     closing_screen = true;
+    ApplyArtwork(snapshot);
     ui->stage->setText(game_title.isEmpty() ? tr("Closing software…")
                                             : tr("Closing %1…").arg(game_title));
     ui->value->clear();
@@ -315,7 +336,7 @@ void LoadingScreen::OnLoadProgress(VideoCore::LoadCallbackStage stage, std::size
         slow_shader_compile_start = false;
     }
     if (stage == VideoCore::LoadCallbackStage::Build && total != previous_total) {
-        ui->progress_bar->setMaximum(static_cast<int>(total));
+        ui->progress_bar->setMaximum(std::max<int>(1, static_cast<int>(total)));
         previous_total = total;
     }
 
@@ -332,11 +353,21 @@ void LoadingScreen::OnLoadProgress(VideoCore::LoadCallbackStage stage, std::size
                 const auto eta_mseconds =
                     static_cast<long>(static_cast<double>(total - slow_shader_first_value) /
                                       (value - slow_shader_first_value) * diff.count());
+                // The +1000 ms bias rounds a partial second up, so the ETA never claims to be
+                // finished while the last shaders are still compiling.
+                const long remaining_mseconds = std::max<long>(eta_mseconds - diff.count() + 1000, 1000);
+                // Format as an elapsed duration, not a clock time: mm:ss wraps every hour.
+                const long seconds_total = remaining_mseconds / 1000;
                 estimate = tr("%1 remaining")
-                               .arg(QTime(0, 0, 0, 0)
-                                        .addMSecs(std::max<long>(eta_mseconds - diff.count() + 1000,
-                                                                 1000))
-                                        .toString(QStringLiteral("mm:ss")));
+                               .arg(seconds_total >= 3600
+                                        ? QStringLiteral("%1:%2:%3")
+                                              .arg(seconds_total / 3600)
+                                              .arg((seconds_total % 3600) / 60, 2, 10,
+                                                   QLatin1Char('0'))
+                                              .arg(seconds_total % 60, 2, 10, QLatin1Char('0'))
+                                        : QStringLiteral("%1:%2")
+                                              .arg(seconds_total / 60, 2, 10, QLatin1Char('0'))
+                                              .arg(seconds_total % 60, 2, 10, QLatin1Char('0')));
             }
         }
     } else if (stage == VideoCore::LoadCallbackStage::Prepare) {

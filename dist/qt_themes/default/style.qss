@@ -780,8 +780,8 @@ QListView#gameGridView {
 }
 
 QMainWindow[modernLibrary="true"] QMenuBar {
-    min-height: 32px;
-    padding: 0 8px;
+    min-height: 26px;
+    padding: 0 6px;
 }
 
 QWidget#gameFolderNavigation[modernLibrary="true"] QPushButton#gameFolderBackButton:hover {

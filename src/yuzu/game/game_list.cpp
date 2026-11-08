@@ -322,6 +322,15 @@ void GameList::ResetViewMode() {
             tree_view->setRowHidden(0, item_model->invisibleRootItem()->index(), true);
         }
     }
+
+    // Refresh the placeholder after a View menu mode change: with an empty library only the
+    // grid view shows the empty state, the other views rely on the placeholder widget. Harmless
+    // during construction, before anything is connected to ShowList. During a populate the
+    // callback re-emits the correct state, so only surface an update when idle.
+    if (!m_populating) {
+        emit ShowList(game_list_mode == Settings::GameListMode::GridView ||
+                      !item_model->IsEmpty());
+    }
 }
 
 void GameList::OnTextChanged(const QString& new_text) {
@@ -564,6 +573,8 @@ void GameList::ReturnToGameDirectories() {
     grid_view->setRootIndex(QModelIndex{});
     grid_view->UpdateIconSize();
     grid_view->clearSelection();
+    // Hide the favorites row again; it is only added when a folder root is displayed.
+    grid_view->setRowHidden(0, true);
     UpdateFolderNavigation();
     grid_view->scrollToTop();
     if (!search_field->filterText().isEmpty()) {

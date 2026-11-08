@@ -151,7 +151,7 @@ jobs:
           host: linux
           target: desktop
           arch: linux_gcc_64
-          modules: qtcharts
+          modules: qtcharts qtsvg
           cache: true
 
       - name: Install Qt on Linux ARM64
@@ -162,7 +162,7 @@ jobs:
           host: linux_arm64
           target: desktop
           arch: linux_gcc_arm64
-          modules: qtcharts
+          modules: qtcharts qtsvg
           cache: true
 
       # Ubuntu's own clang 18 cannot read a profile from a current LLVM, so take clang from the LLVM
@@ -210,7 +210,7 @@ jobs:
           host: windows
           target: desktop
           arch: win64_msvc2022_64
-          modules: qtcharts
+          modules: qtcharts qtsvg
           cache: true
 
       # ccache does not handle MSVC-style command lines well, so the clang-cl job uses sccache. The

@@ -139,10 +139,11 @@ void GameListSearchField::SetModernMode(bool modern) {
         return;
     }
 
-    layout_filter->setContentsMargins(8, 4, 8, 4);
+    // Compact modern search bar: keep the whole field around 36px tall.
+    layout_filter->setContentsMargins(8, 3, 8, 3);
     layout_filter->setSpacing(8);
     label_filter->setObjectName(QStringLiteral("gameListFilterLabel"));
-    edit_filter->setMinimumHeight(30);
+    edit_filter->setMinimumHeight(26);
     edit_filter->setObjectName(QStringLiteral("gameListFilterEdit"));
     label_filter_result->setObjectName(QStringLiteral("gameListFilterResult"));
     button_filter_close->setObjectName(QStringLiteral("gameListFilterClose"));
@@ -157,7 +158,7 @@ void GameListSearchField::SetModernMode(bool modern) {
         "QLineEdit#gameListFilterEdit {"
         "  border: 1px solid palette(mid);"
         "  border-radius: 10px;"
-        "  padding: 6px 12px;"
+        "  padding: 4px 10px;"
         "  selection-background-color: palette(highlight);"
         "}"
         "QLineEdit#gameListFilterEdit:focus {"

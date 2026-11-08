@@ -279,13 +279,19 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
         const QColor accent = selected ? palette.highlightedText().color()
                                        : palette.highlight().color();
         DrawGameFolderArtwork(painter, artworkRect, accent, dark);
-    } else if (has_icon && !icon_pixmap.isNull()) {
-        QSize scaled = icon_pixmap.size();
-        scaled.scale(artworkRect.size(), Qt::KeepAspectRatioByExpanding);
-        const QRect imageRect(artworkRect.center().x() - scaled.width() / 2,
-                              artworkRect.center().y() - scaled.height() / 2, scaled.width(),
-                              scaled.height());
-        painter->drawPixmap(imageRect, icon_pixmap);
+    } else if (has_icon) {
+        // Fall back to the small icon when no card artwork is available, so the card is never
+        // left blank for a game that does have an icon.
+        const QPixmap artwork =
+            icon_pixmap.isNull() ? index.data(Qt::DecorationRole).value<QPixmap>() : icon_pixmap;
+        if (!artwork.isNull()) {
+            QSize scaled = artwork.size();
+            scaled.scale(artworkRect.size(), Qt::KeepAspectRatioByExpanding);
+            const QRect imageRect(artworkRect.center().x() - scaled.width() / 2,
+                                  artworkRect.center().y() - scaled.height() / 2, scaled.width(),
+                                  scaled.height());
+            painter->drawPixmap(imageRect, artwork);
+        }
     } else if (!has_icon) {
         DrawSwitch2Placeholder(painter, artworkRect);
     }

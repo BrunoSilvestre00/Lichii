@@ -86,10 +86,9 @@ void GameGrid::ApplyFilter(const QString& edit_filter_text, GameListModel* model
 }
 
 void GameGrid::UpdateIconSize() {
-    const u32 icon_size = UISettings::values.game_icon_size.GetValue();
     const bool show_game_name =
         UISettings::values.show_game_name.GetValue() || !rootIndex().isValid();
-    const u32 display_icon_size = show_game_name ? std::max<u32>(icon_size, u32{128}) : icon_size;
+    const u32 display_icon_size = Yuzu::CardIconDisplaySize(show_game_name);
 
     int heightMargin = 0;
     int widthMargin = 72;

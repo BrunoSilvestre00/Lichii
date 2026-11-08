@@ -538,21 +538,30 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     if (Settings::values.use_dev_keys.GetValue()) {
         Core::Crypto::KeyManager::Instance().ReloadKeys();
     }
+    // Parse launch arguments once, before the first-run chooser: a direct game launch must boot
+    // without being blocked by a modal dialog.
+    Core::LaunchParams startup_lp{};
+    if (QStringList args = QApplication::arguments(); args.size() >= 2) {
+        QList<QByteArray> qba{};
+        for (auto const& e : args)
+            qba.push_back(e.toUtf8());
+        std::vector<char*> args_cstr{};
+        for (auto& e : qba)
+            args_cstr.push_back(e.data());
+
+        startup_lp = Core::ParseLaunchParams(*QtCommon::system, args_cstr.size(),
+                                             args_cstr.data(), nullptr);
+    }
+    const bool direct_launch = !startup_lp.filepath.empty() || startup_lp.launch_setup ||
+                               startup_lp.launch_qlaunch || startup_lp.launch_hlaunch;
+
     if (!UISettings::values.has_selected_game_library_style.GetValue()) {
-        UISettings::GameLibraryStyle style = UISettings::GameLibraryStyle::Modern;
-        if (SelectGameLibraryStyle(this, style)) {
-            UISettings::values.game_library_style = static_cast<u8>(style);
-            UISettings::values.has_selected_game_library_style = true;
-            UISettings::values.game_list_mode =
-                style == UISettings::GameLibraryStyle::Modern ? Settings::GameListMode::GridView
-                                                              : Settings::GameListMode::TreeView;
-            config->SaveAllValues();
+        if (direct_launch) {
+            // Defer the first-run choice until the interactive library session comes back after
+            // this launch; do not record a style while the user never picked one.
+            deferred_library_style_prompt = true;
         } else {
-            UISettings::values.game_library_style =
-                static_cast<u8>(
-                    UISettings::values.game_list_mode.GetValue() == Settings::GameListMode::TreeView
-                        ? UISettings::GameLibraryStyle::Classic
-                        : UISettings::GameLibraryStyle::Modern);
+            PromptGameLibraryStyle();
         }
     }
 
@@ -613,36 +622,42 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     // to prevent the UI from blowing up.
     UpdateUITheme();
 
-    if (QStringList args = QApplication::arguments(); args.size() >= 2) {
-        QList<QByteArray> qba{};
-        for (auto const& e : args)
-            qba.push_back(e.toUtf8());
-        std::vector<char*> args_cstr{};
-        for (auto& e : qba)
-            args_cstr.push_back(e.data());
-
-        auto const lp = Core::ParseLaunchParams(*QtCommon::system, args_cstr.size(), args_cstr.data(), nullptr);
-
-        // Override fullscreen setting if gamepath or argument is provided
-        if (!lp.filepath.empty() || lp.fullscreen) {
-            ui->action_Fullscreen->setChecked(lp.fullscreen);
-        }
-
-        if (!lp.filepath.empty()) {
-            BootGame(QString::fromStdString(lp.filepath), ApplicationAppletParameters());
-        } else if (lp.launch_setup) {
-            LaunchFirmwareApplet(u64(Service::AM::AppletProgramId::Starter), std::nullopt);
-        } else if (lp.launch_qlaunch) {
-            LaunchFirmwareApplet(u64(Service::AM::AppletProgramId::QLaunch), std::nullopt);
-        } else if (lp.launch_hlaunch) {
-            std::filesystem::path const sd_dir =
-                Common::FS::GetEdenPathString(Common::FS::EdenPath::SDMCDir);
-            auto const hbl_path = (sd_dir / "atmosphere" / "hbl.nsp").string();
-            BootGame(
-                QString::fromStdString(hbl_path),
-                LibraryAppletParameters(0x010000000000100Dull, Service::AM::AppletId::QLaunch));
-        }
+    // Handle launch arguments parsed at the top of this constructor.
+    if (!startup_lp.filepath.empty() || startup_lp.fullscreen) {
+        ui->action_Fullscreen->setChecked(startup_lp.fullscreen);
     }
+
+    if (!startup_lp.filepath.empty()) {
+        BootGame(QString::fromStdString(startup_lp.filepath), ApplicationAppletParameters());
+    } else if (startup_lp.launch_setup) {
+        LaunchFirmwareApplet(u64(Service::AM::AppletProgramId::Starter), std::nullopt);
+    } else if (startup_lp.launch_qlaunch) {
+        LaunchFirmwareApplet(u64(Service::AM::AppletProgramId::QLaunch), std::nullopt);
+    } else if (startup_lp.launch_hlaunch) {
+        std::filesystem::path const sd_dir =
+            Common::FS::GetEdenPathString(Common::FS::EdenPath::SDMCDir);
+        auto const hbl_path = (sd_dir / "atmosphere" / "hbl.nsp").string();
+        BootGame(
+            QString::fromStdString(hbl_path),
+            LibraryAppletParameters(0x010000000000100Dull, Service::AM::AppletId::QLaunch));
+    }
+}
+
+void MainWindow::PromptGameLibraryStyle() {
+    UISettings::GameLibraryStyle style = UISettings::GameLibraryStyle::Modern;
+    if (!SelectGameLibraryStyle(this, style)) {
+        // Dismissing the chooser with Escape or the window close button is a completed choice
+        // too, so persist the fallback instead of asking again on the next start.
+        style = UISettings::values.game_list_mode.GetValue() == Settings::GameListMode::TreeView
+                    ? UISettings::GameLibraryStyle::Classic
+                    : UISettings::GameLibraryStyle::Modern;
+    }
+    UISettings::values.game_library_style = static_cast<u8>(style);
+    UISettings::values.game_list_mode = style == UISettings::GameLibraryStyle::Modern
+                                            ? Settings::GameListMode::GridView
+                                            : Settings::GameListMode::TreeView;
+    UISettings::values.has_selected_game_library_style = true;
+    config->SaveAllValues();
 }
 
 MainWindow::~MainWindow() {
@@ -2341,6 +2356,11 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     connect(
         QtCommon::emu_thread.get(), &EmuThread::ShaderCacheReloadStarted, this,
         [this] {
+            // A queued reload callback that arrives after shutdown must not touch the loader the
+            // emulation thread is already tearing down.
+            if (QtCommon::system->IsShuttingDown()) {
+                return;
+            }
             loading_screen->Prepare(QtCommon::system->GetAppLoader());
             loading_screen->show();
             render_window->hide();
@@ -2461,6 +2481,10 @@ bool MainWindow::OnShutdownBegin() {
     LOG_INFO(Frontend, "Shutdown requested; waiting for emulation thread");
     discord_rpc->Pause();
 
+    // Capture the closing screen artwork now: System::Shutdown resets the loader from the
+    // emulation thread while this preparation is still running.
+    closing_snapshot = LoadingScreen::SnapshotLoader(QtCommon::system->GetAppLoader());
+
     RequestGameExit();
     QtCommon::emu_thread->disconnect();
     QtCommon::emu_thread->SetRunning(true);
@@ -2490,7 +2514,7 @@ bool MainWindow::OnShutdownBegin() {
 }
 
 void MainWindow::OnShutdownBeginDialog() {
-    loading_screen->PrepareClosing(QtCommon::system->GetAppLoader());
+    loading_screen->PrepareClosing(closing_snapshot);
     game_list->hide();
     game_list_placeholder->hide();
     render_window->hide();
@@ -2557,6 +2581,13 @@ void MainWindow::OnEmulationStopped() {
         game_list->show();
     }
     game_list->SetFilterFocus();
+
+    // A direct launch that skipped the first-run library style chooser asks for it now, once the
+    // interactive library session is back.
+    if (deferred_library_style_prompt && isVisible()) {
+        deferred_library_style_prompt = false;
+        PromptGameLibraryStyle();
+    }
     tas_label->clear();
     input_subsystem->GetTas()->Stop();
     OnTasStateChanged();
@@ -3888,6 +3919,8 @@ void MainWindow::OnConfigure() {
             &MainWindow::OnGameListRefresh);
 
     const auto result = configure_dialog.exec();
+    // `Reset to Defaults` clears the flag during Apply, so remember it before comparing styles.
+    const bool reset_requested = UISettings::values.reset_to_defaults;
     if (result != QDialog::Accepted && !UISettings::values.configuration_applied &&
         !UISettings::values.reset_to_defaults) {
         // Runs if the user hit Cancel or closed the window, and did not ever press the Apply button
@@ -3930,8 +3963,13 @@ void MainWindow::OnConfigure() {
         SetDefaultUIGeometry();
         RestoreUIState();
     }
-    if (UISettings::values.game_library_style.GetValue() != old_library_style) {
-        UISettings::values.has_selected_game_library_style = true;
+    if (UISettings::values.game_library_style.GetValue() != old_library_style || reset_requested) {
+        if (reset_requested) {
+            // Defaults return to the first-run state, so the library style chooser asks again.
+            UISettings::values.has_selected_game_library_style = false;
+        } else {
+            UISettings::values.has_selected_game_library_style = true;
+        }
         SetGameListMode(static_cast<UISettings::GameLibraryStyle>(
                                 UISettings::values.game_library_style.GetValue()) ==
                                 UISettings::GameLibraryStyle::Modern
