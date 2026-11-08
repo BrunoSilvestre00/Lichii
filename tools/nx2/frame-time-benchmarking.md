@@ -26,3 +26,20 @@ Collect thread CPU time as a percentage of one logical processor; total process 
 Verify populated internal scene color and depth targets after gameplay has settled. Window size, final output size, a resolution percentage and an enabled fixed-resolution variable can all disagree with the scene's actual dimensions. Inspect the complete frame-dump manifest or render-pass capture, including the passes containing scene geometry; the first clear target or a limited debug-response preview is insufficient. Keep capture overhead outside timed comparison windows.
 
 For example, a local Ocarina 1.1.1 evaluation on 2026-11-08 observed Hookshot 2.0.3 at 2560x1440 output with fixed resolution enabled and scale 1.0, while its populated scene color/depth targets were 1536x864 and later composition was 2048x1152. Three warmed active routes pooled to 52.39 native game presents/s, but that did not establish matched-quality improvement over the reference's captured 2560x1440 scene or sustained real 60 FPS. Increasing the scale and enabling the game's dynamic-resolution path did not establish the required scene dimensions in those tests. Such results belong in an explicitly unmatched-quality row, not a successful replacement recommendation.
+
+A later local Hookshot v2.0.4 integration of the public fixed-scale/base-scale proposals verified main color/depth, later composition and output at 2560x1440. Three warmed 1200-interval movement routes measured 45.75, 44.31 and 44.65 native present-call returns/s, pooling to 44.89. The pooled p95/p99 were 28.40/32.32 ms, maximum 423.68 ms, and only 5.53% of intervals met 16.67 ms. Correcting scene dimensions did not establish the performance target or complete visual equivalence. The reference and native capture points remain different, so this is not a same-instrument causal speedup claim.
+
+## Physical input during automated routes
+
+Keep normal launchers free of inherited `HOS_INPUT_*` test variables. An exclusive-input benchmark launch can deliberately suppress a correctly connected physical controller; that launch policy must not become the user's normal play setup. Controller recognition in a log alone does not prove that input routing allows it through.
+
+An instrumented native producer may supply `input_interference_count` and `input_audit_enabled` beside each present timestamp. These columns are an evaluation extension, not a feature claimed for the stock Hookshot v2.0.4 release. The opt-in producer observes manual input before merging it with the script, so a physical button identical to the script is still detected. Direct native mouse camera mode must be disabled or conservatively excluded because its camera writes bypass Npad input.
+
+`native_input_audit.validate_input_window()` requires every selected frame plus its preceding counter boundary, enabled auditing throughout and nondecreasing counters. Any counter increase excludes the window. Activity before or after those boundaries does not alter its timing statistics; route reset/starting-state validation remains a separate requirement. The route reader may use a wider quiet guard including the prelude while retaining only gameplay intervals for FPS.
+
+Native CSV inputs with either audit column automatically undergo this validation before `read_intervals()` returns comparison samples. JSON with `valid_for_comparison: false` is rejected as excluded evidence. Keep excluded raw records for diagnosis; do not remove their audit metadata to turn them into successful comparisons. Legacy files without audit columns remain readable and do not acquire a claim of verified input isolation.
+
+```powershell
+python -m unittest discover -s tools/nx2 -p test_native_input_audit.py
+python -m unittest discover -s tools/nx2 -p test_frame_time_metrics.py
+```

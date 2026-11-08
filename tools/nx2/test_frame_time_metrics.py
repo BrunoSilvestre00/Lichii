@@ -42,6 +42,14 @@ class FrameMetricsTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 read_intervals(path)
 
+    def test_input_contaminated_window_cannot_enter_comparison(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)/'frames.json'
+            path.write_text(json.dumps({'valid_for_comparison': False,
+                                        'frames': 2, 'intervals_ms': [10, 20]}))
+            with self.assertRaisesRegex(ValueError, 'excluded'):
+                read_intervals(path)
+
     def test_missing_or_conflicting_counts_fail(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder)/'frames.json'
@@ -76,6 +84,24 @@ class FrameMetricsTests(unittest.TestCase):
             self.assertEqual(read_intervals(path, 2, 4), [10, 20])
             with self.assertRaises(ValueError):
                 summarize(read_intervals(path))
+
+    def test_audited_native_csv_rejects_manual_interference(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)/'presents.csv'
+            path.write_text('frame,interval_ns,input_interference_count,input_audit_enabled\n'
+                            '1,0,0,1\n2,10000000,0,1\n3,20000000,1,1\n')
+            with self.assertRaisesRegex(ValueError, 'excluded'):
+                read_intervals(path, 2, 4)
+
+    def test_audited_native_csv_keeps_quiet_stalls_and_requires_boundary(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)/'presents.csv'
+            header = 'frame,interval_ns,input_interference_count,input_audit_enabled\n'
+            path.write_text(header + '1,0,7,1\n2,10000000,7,1\n3,200000000,7,1\n')
+            self.assertEqual(read_intervals(path, 2, 4), [10, 200])
+            path.write_text(header + '2,10000000,7,1\n3,200000000,7,1\n')
+            with self.assertRaisesRegex(ValueError, 'complete'):
+                read_intervals(path, 2, 4)
 
 
 if __name__ == '__main__':

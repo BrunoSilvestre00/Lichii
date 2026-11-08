@@ -6,6 +6,7 @@ import csv
 import json
 import math
 from pathlib import Path
+from native_input_audit import validate_input_window
 
 
 def summarize(intervals):
@@ -42,6 +43,8 @@ def read_intervals(path, first_frame=None, end_frame=None):
         if first_frame is not None or end_frame is not None:
             raise ValueError('frame bounds require a TSV with explicit frame numbers')
         data = json.loads(path.read_text(encoding='utf-8-sig'))
+        if data.get('valid_for_comparison') is False:
+            raise ValueError('timing window was excluded from comparisons by its recorder')
         if data.get('truncated') or data.get('frame_times', {}).get('truncated'):
             raise ValueError('refusing a truncated timing window')
         values = data.get('intervals_ms')
@@ -60,8 +63,8 @@ def read_intervals(path, first_frame=None, end_frame=None):
     interval_column = 'interval_ns' if native_csv else 'interval_ms'
     divisor = 1_000_000 if native_csv else 1
     with path.open(encoding='utf-8-sig') as stream:
-        rows = csv.DictReader((line for line in stream if not line.startswith('#')),
-                              delimiter=',' if native_csv else '\t')
+        rows = list(csv.DictReader((line for line in stream if not line.startswith('#')),
+                                  delimiter=',' if native_csv else '\t'))
         selected = [(int(row['frame']), float(row[interval_column]) / divisor) for row in rows
                     if (first_frame is None or int(row['frame']) >= first_frame)
                     and (end_frame is None or int(row['frame']) < end_frame)]
@@ -74,6 +77,10 @@ def read_intervals(path, first_frame=None, end_frame=None):
         raise ValueError('requested first frame is missing')
     if end_frame is not None and numbers[-1] != end_frame - 1:
         raise ValueError('requested final frame is missing')
+    if native_csv and any(key in rows[0] for key in ('input_interference_count', 'input_audit_enabled')):
+        audit = validate_input_window(rows, numbers[0], numbers[-1] + 1)
+        if not audit['valid_for_comparison']:
+            raise ValueError('native timing window was excluded because input interference was recorded')
     return [value for _, value in selected]
 
 
