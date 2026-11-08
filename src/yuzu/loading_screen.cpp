@@ -172,6 +172,7 @@ LoadingScreen::LoadingScreen(QWidget* parent)
 LoadingScreen::~LoadingScreen() = default;
 
 void LoadingScreen::Prepare(Loader::AppLoader& loader) {
+    closing_screen = false;
     ui->banner->clear();
     ui->logo->clear();
     ui->stage->clear();
@@ -220,12 +221,30 @@ void LoadingScreen::Prepare(Loader::AppLoader& loader) {
     OnLoadProgress(VideoCore::LoadCallbackStage::Prepare, 0, 0);
 }
 
+void LoadingScreen::PrepareClosing(Loader::AppLoader& loader) {
+    fadeout_animation->stop();
+    opacity_effect->setOpacity(1);
+    Prepare(loader);
+    closing_screen = true;
+    ui->stage->setText(game_title.isEmpty() ? tr("Closing software…")
+                                            : tr("Closing %1…").arg(game_title));
+    ui->value->clear();
+    ui->value->hide();
+    ui->progress_bar->setRange(0, 0);
+}
+
 void LoadingScreen::OnLoadComplete() {
+    if (closing_screen) {
+        return;
+    }
     fadeout_animation->start(QPropertyAnimation::KeepWhenStopped);
 }
 
 void LoadingScreen::OnLoadProgress(VideoCore::LoadCallbackStage stage, std::size_t value,
                                    std::size_t total) {
+    if (closing_screen) {
+        return;
+    }
     using namespace std::chrono;
     const auto now = steady_clock::now();
     if (stage != previous_stage) {
@@ -300,6 +319,7 @@ void LoadingScreen::paintEvent(QPaintEvent* event) {
 }
 
 void LoadingScreen::Clear() {
+    closing_screen = false;
 #ifndef YUZU_QT_MOVIE_MISSING
     animation.reset();
     backing_buf.reset();

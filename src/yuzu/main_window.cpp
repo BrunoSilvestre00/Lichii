@@ -2489,10 +2489,11 @@ bool MainWindow::OnShutdownBegin() {
 }
 
 void MainWindow::OnShutdownBeginDialog() {
-    shutdown_dialog =
-        new OverlayDialog(this, *QtCommon::system, QString{}, tr("Closing software..."), QString{},
-                          QString{}, Qt::AlignHCenter | Qt::AlignVCenter);
-    shutdown_dialog->open();
+    loading_screen->PrepareClosing(QtCommon::system->GetAppLoader());
+    game_list->hide();
+    game_list_placeholder->hide();
+    render_window->hide();
+    loading_screen->show();
 }
 
 void MainWindow::OnEmulationStopTimeExpired() {
@@ -2531,11 +2532,6 @@ void MainWindow::OnEmulationStopped() {
         QtCommon::emu_thread->disconnect();
         QtCommon::emu_thread->wait();
         QtCommon::emu_thread.reset();
-    }
-
-    if (shutdown_dialog) {
-        shutdown_dialog->deleteLater();
-        shutdown_dialog = nullptr;
     }
 
     emulation_running = false;

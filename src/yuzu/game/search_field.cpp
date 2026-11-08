@@ -158,7 +158,6 @@ void GameListSearchField::SetModernMode(bool modern) {
         "  border: 1px solid palette(mid);"
         "  border-radius: 10px;"
         "  padding: 6px 12px;"
-        "  background-color: palette(base);"
         "  selection-background-color: palette(highlight);"
         "}"
         "QLineEdit#gameListFilterEdit:focus {"

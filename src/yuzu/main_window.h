@@ -516,7 +516,6 @@ private:
     LoadingScreen* loading_screen = nullptr;
     QTimer shutdown_timer;
     QTimer emu_terminate_timer;
-    OverlayDialog* shutdown_dialog{};
     PerformanceOverlay* perf_overlay = nullptr;
 #ifdef HAS_RESHADE
     ConfigurePostProcessing* post_processing_dialog = nullptr;

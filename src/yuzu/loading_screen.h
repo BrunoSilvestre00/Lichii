@@ -46,6 +46,9 @@ public:
     /// currently loaded application.
     void Prepare(Loader::AppLoader& loader);
 
+    /// Prepares the same artwork and progress presentation for a graceful game shutdown.
+    void PrepareClosing(Loader::AppLoader& loader);
+
     /// After the loading screen is hidden, the owner of this class can call this to clean up any
     /// used resources such as the logo and banner.
     void Clear();
@@ -84,6 +87,7 @@ private:
     ::Common::unordered_map<VideoCore::LoadCallbackStage, QString> stage_translations;
 
     QString game_title;
+    bool closing_screen = false;
 
     // newly generated shaders are added to the end of the file, so when loading and compiling
     // shaders, it will start quickly but end slow if new shaders were added since previous launch.
