@@ -87,32 +87,71 @@ void GameListSearchField::setFocus() {
 GameListSearchField::GameListSearchField(GameList* parent) : QWidget{parent} {
     auto* const key_release_eater = new KeyReleaseEater(parent, this);
     layout_filter = new QHBoxLayout;
-    layout_filter->setContentsMargins(8, 4, 8, 4);
-    layout_filter->setSpacing(8);
+    layout_filter->setContentsMargins(8, 8, 8, 8);
     label_filter = new QLabel;
-    label_filter->setObjectName(QStringLiteral("gameListFilterLabel"));
     edit_filter = new QLineEdit;
     edit_filter->clear();
     edit_filter->installEventFilter(key_release_eater);
     edit_filter->setClearButtonEnabled(true);
-    edit_filter->setMinimumHeight(30);
-    edit_filter->setObjectName(QStringLiteral("gameListFilterEdit"));
     connect(edit_filter, &QLineEdit::textChanged, parent, &GameList::OnTextChanged);
     label_filter_result = new QLabel;
-    label_filter_result->setObjectName(QStringLiteral("gameListFilterResult"));
     button_filter_close = new QToolButton(this);
+    button_filter_close->setText(QStringLiteral("X"));
+    button_filter_close->setCursor(Qt::ArrowCursor);
+    button_filter_close->setStyleSheet(
+        QStringLiteral("QToolButton{ border: none; padding: 0px; color: "
+                       "#000000; font-weight: bold; background: #F0F0F0; }"
+                       "QToolButton:hover{ border: none; padding: 0px; color: "
+                       "#EEEEEE; font-weight: bold; background: #E81123}"));
+    connect(button_filter_close, &QToolButton::clicked, parent, &GameList::OnFilterCloseClicked);
+    layout_filter->setSpacing(10);
+    layout_filter->addWidget(label_filter);
+    layout_filter->addWidget(edit_filter);
+    layout_filter->addWidget(label_filter_result);
+    layout_filter->addWidget(button_filter_close);
+    setLayout(layout_filter);
+    RetranslateUI();
+}
+
+void GameListSearchField::SetModernMode(bool modern) {
+    setProperty("modernLibrary", modern);
+    if (!modern) {
+        layout_filter->setContentsMargins(8, 8, 8, 8);
+        layout_filter->setSpacing(10);
+        edit_filter->setMinimumHeight(0);
+        label_filter->setObjectName(QString{});
+        edit_filter->setObjectName(QString{});
+        label_filter_result->setObjectName(QString{});
+        button_filter_close->setObjectName(QString{});
+        button_filter_close->setText(QStringLiteral("X"));
+        button_filter_close->setCursor(Qt::ArrowCursor);
+        button_filter_close->setAutoRaise(false);
+        button_filter_close->setMinimumSize(0, 0);
+        button_filter_close->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+        button_filter_close->setToolTip(QString{});
+        setObjectName(QString{});
+        setStyleSheet(QString{});
+        button_filter_close->setStyleSheet(
+            QStringLiteral("QToolButton{ border: none; padding: 0px; color: "
+                           "#000000; font-weight: bold; background: #F0F0F0; }"
+                           "QToolButton:hover{ border: none; padding: 0px; color: "
+                           "#EEEEEE; font-weight: bold; background: #E81123}"));
+        return;
+    }
+
+    layout_filter->setContentsMargins(8, 4, 8, 4);
+    layout_filter->setSpacing(8);
+    label_filter->setObjectName(QStringLiteral("gameListFilterLabel"));
+    edit_filter->setMinimumHeight(30);
+    edit_filter->setObjectName(QStringLiteral("gameListFilterEdit"));
+    label_filter_result->setObjectName(QStringLiteral("gameListFilterResult"));
     button_filter_close->setObjectName(QStringLiteral("gameListFilterClose"));
     button_filter_close->setText(QStringLiteral("×"));
     button_filter_close->setCursor(Qt::PointingHandCursor);
     button_filter_close->setAutoRaise(true);
     button_filter_close->setFixedSize(26, 26);
     button_filter_close->setToolTip(tr("Close filter"));
-    connect(button_filter_close, &QToolButton::clicked, parent, &GameList::OnFilterCloseClicked);
-    layout_filter->addWidget(label_filter);
-    layout_filter->addWidget(edit_filter, 1);
-    layout_filter->addWidget(label_filter_result);
-    layout_filter->addWidget(button_filter_close);
-    setLayout(layout_filter);
+    button_filter_close->setStyleSheet({});
     setObjectName(QStringLiteral("gameListSearchField"));
     setStyleSheet(QStringLiteral(
         "QLineEdit#gameListFilterEdit {"
@@ -140,7 +179,6 @@ GameListSearchField::GameListSearchField(GameList* parent) : QWidget{parent} {
         "QToolButton#gameListFilterClose:pressed {"
         "  background-color: palette(midlight);"
         "}"));
-    RetranslateUI();
 }
 
 void GameListSearchField::changeEvent(QEvent* event) {

@@ -72,10 +72,12 @@ GameList::GameList(FileSys::VirtualFilesystem vfs_, FileSys::ManualContentProvid
 
     folder_navigation = new QWidget(this);
     folder_navigation->setObjectName(QStringLiteral("gameFolderNavigation"));
+    folder_navigation->setProperty("modernLibrary", true);
     auto* folder_layout = new QHBoxLayout(folder_navigation);
     folder_layout->setContentsMargins(8, 4, 8, 4);
     folder_layout->setSpacing(10);
     folder_back_button = new QPushButton(tr("All folders"), folder_navigation);
+    folder_back_button->setObjectName(QStringLiteral("gameFolderBackButton"));
     folder_back_button->setFixedHeight(30);
     folder_back_button->setCursor(Qt::PointingHandCursor);
     folder_title_label = new QLabel(folder_navigation);
@@ -282,7 +284,8 @@ void GameList::ResetViewMode() {
     // MainWindow switches the view right after starting the first populate; keep it disabled
     // until that finishes, as OnPopulate does for every other populate.
     m_currentView->setEnabled(!m_populating);
-    layout->insertWidget(2, m_currentView);
+    search_field->SetModernMode(mode == Settings::GameListMode::GridView);
+    layout->insertWidget(mode == Settings::GameListMode::GridView ? 2 : 0, m_currentView);
 
     auto view = m_currentView->viewport();
     view->installEventFilter(this);
@@ -360,20 +363,8 @@ void GameList::OnFilterCloseClicked() {
 }
 
 void GameList::OnPopulatingCompleted(const QStringList& watch_list) {
-    bool has_games = false;
-    for (int row = 0; row < item_model->rowCount(); ++row) {
-        const auto* item = item_model->item(row, 0);
-        const auto type = item->data(GameListItem::TypeRole).value<GameListItemType>();
-        if (type == GameListItemType::Game ||
-            (type == GameListItemType::Favorites && item->rowCount() > 0) ||
-            (IsGameDirectoryType(type) && item->rowCount() > 0)) {
-            has_games = true;
-            break;
-        }
-    }
-    const bool show_list = has_games || game_list_mode == Settings::GameListMode::GridView ||
-                           game_list_mode == Settings::GameListMode::CarouselView;
-    emit ShowList(show_list);
+    emit ShowList(game_list_mode == Settings::GameListMode::GridView ||
+                  !item_model->IsEmpty());
 
     // favorites row
     if (m_isTreeMode) {
@@ -1017,31 +1008,14 @@ GameListPlaceholder::GameListPlaceholder(MainWindow* parent) : QWidget{parent} {
     image = new QLabel;
     text = new QLabel;
     layout->setAlignment(Qt::AlignCenter);
-    layout->setContentsMargins(32, 32, 32, 48);
-    layout->setSpacing(18);
-    image->setPixmap(QIcon::fromTheme(QStringLiteral("plus_folder")).pixmap(168));
-    image->setAlignment(Qt::AlignHCenter);
-    image->setObjectName(QStringLiteral("gameListPlaceholderImage"));
+    image->setPixmap(QIcon::fromTheme(QStringLiteral("plus_folder")).pixmap(200));
 
     RetranslateUI();
     QFont font = text->font();
-    font.setPointSize(18);
-    font.setWeight(QFont::Medium);
+    font.setPointSize(20);
     text->setFont(font);
     text->setAlignment(Qt::AlignHCenter);
-    text->setWordWrap(true);
-    text->setObjectName(QStringLiteral("gameListPlaceholderText"));
-    text->setMaximumWidth(520);
-
-    setObjectName(QStringLiteral("gameListPlaceholder"));
-    setCursor(Qt::PointingHandCursor);
-    setStyleSheet(QStringLiteral(
-        "QWidget#gameListPlaceholder QLabel#gameListPlaceholderText {"
-        "  color: palette(text);"
-        "}"
-        "QWidget#gameListPlaceholder QLabel#gameListPlaceholderImage {"
-        "  opacity: 0.9;"
-        "}"));
+    image->setAlignment(Qt::AlignHCenter);
 
     layout->addWidget(image);
     layout->addWidget(text);

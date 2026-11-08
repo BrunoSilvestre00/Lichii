@@ -94,7 +94,9 @@
 #include <QRadioButton>
 #include <QScreen>
 #include <QShortcut>
+#include <QStyle>
 #include <QStatusBar>
+#include <QToolBar>
 #include <QVBoxLayout>
 #include <QtConcurrentRun>
 
@@ -3788,6 +3790,23 @@ void MainWindow::SetGameListMode(Settings::GameListMode mode, bool update_librar
     ui->action_Carousel_View->setChecked(mode == Settings::GameListMode::CarouselView);
 
     UISettings::values.game_list_mode = mode;
+    const bool modern_library = mode == Settings::GameListMode::GridView;
+    if (property("modernLibrary").toBool() != modern_library) {
+        setProperty("modernLibrary", modern_library);
+        ui->centralwidget->setProperty("modernLibrary", modern_library);
+        const auto repolish = [](QWidget* widget) {
+            widget->style()->unpolish(widget);
+            widget->style()->polish(widget);
+            widget->update();
+        };
+        repolish(this);
+        repolish(ui->centralwidget);
+        repolish(ui->menubar);
+        repolish(statusBar());
+        for (auto* toolbar : findChildren<QToolBar*>()) {
+            repolish(toolbar);
+        }
+    }
     if (update_library_style && mode != Settings::GameListMode::CarouselView) {
         UISettings::values.game_library_style =
             static_cast<u8>(mode == Settings::GameListMode::GridView

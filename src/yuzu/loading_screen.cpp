@@ -51,7 +51,7 @@ QProgressBar {
   max-height: 14px;
 }
 QProgressBar::chunk {
-  background-color: #e60012;
+  background-color: #a6a8ab;
   border-radius: 5px;
 })";
 
@@ -250,7 +250,6 @@ void LoadingScreen::OnLoadProgress(VideoCore::LoadCallbackStage stage, std::size
 
     QString estimate;
     if (stage == VideoCore::LoadCallbackStage::Build) {
-        estimate = tr("%1 / %2").arg(static_cast<int>(value)).arg(static_cast<int>(total));
         if (now - previous_time > milliseconds{50} || slow_shader_compile_start) {
             if (!slow_shader_compile_start) {
                 slow_shader_start = now;
@@ -262,13 +261,11 @@ void LoadingScreen::OnLoadProgress(VideoCore::LoadCallbackStage stage, std::size
                 const auto eta_mseconds =
                     static_cast<long>(static_cast<double>(total - slow_shader_first_value) /
                                       (value - slow_shader_first_value) * diff.count());
-                estimate =
-                    tr("%1 / %2 — %3 remaining")
-                        .arg(static_cast<int>(value))
-                        .arg(static_cast<int>(total))
-                        .arg(QTime(0, 0, 0, 0)
-                                 .addMSecs(std::max<long>(eta_mseconds - diff.count() + 1000, 1000))
-                                 .toString(QStringLiteral("mm:ss")));
+                estimate = tr("%1 remaining")
+                               .arg(QTime(0, 0, 0, 0)
+                                        .addMSecs(std::max<long>(eta_mseconds - diff.count() + 1000,
+                                                                 1000))
+                                        .toString(QStringLiteral("mm:ss")));
             }
         }
     } else if (stage == VideoCore::LoadCallbackStage::Prepare) {
@@ -278,11 +275,16 @@ void LoadingScreen::OnLoadProgress(VideoCore::LoadCallbackStage stage, std::size
     }
 
     QString stage_text = stage_translations[stage];
-    if (stage == VideoCore::LoadCallbackStage::Complete && !game_title.isEmpty()) {
+    if (stage == VideoCore::LoadCallbackStage::Build) {
+        stage_text = tr("Loading Shaders (%1 / %2)")
+                         .arg(static_cast<int>(value))
+                         .arg(static_cast<int>(total));
+    } else if (stage == VideoCore::LoadCallbackStage::Complete && !game_title.isEmpty()) {
         stage_text = tr("Starting Game (%1)").arg(game_title);
     }
     ui->stage->setText(stage_text);
     ui->value->setText(estimate);
+    ui->value->setVisible(!estimate.isEmpty());
     if (stage == VideoCore::LoadCallbackStage::Build) {
         ui->progress_bar->setValue(static_cast<int>(value));
     }

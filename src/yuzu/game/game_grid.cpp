@@ -26,7 +26,7 @@ GameGrid::GameGrid(QWidget* parent) : QListView{parent} {
     setMouseTracking(true);
 
     QPalette grid_palette = palette();
-    grid_palette.setColor(QPalette::Highlight, QColor(230, 0, 18));
+    grid_palette.setColor(QPalette::Highlight, QColor(102, 104, 108));
     grid_palette.setColor(QPalette::HighlightedText, Qt::white);
     setPalette(grid_palette);
 
