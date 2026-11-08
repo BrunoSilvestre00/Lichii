@@ -434,6 +434,7 @@ jobs:
             printf 'machine github.com login oauth2 password %s\n' "$GITHUB_TOKEN" > "$netrc"
             netrc_args=(--netrc-file "$netrc")
           fi
+          umask 022
           curl -fsSL "${netrc_args[@]}" --retry 8 --retry-all-errors --retry-delay 5 --retry-max-time 300 \
             --connect-timeout 30 --max-time 120 -o "$tools/linuxdeploy-$arch.AppImage" \
           https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-$arch.AppImage
@@ -456,6 +457,7 @@ jobs:
           export ARCH="$arch"
           mkdir -p AppDir/usr/bin
           cp build/release/bin/nx2_switches.txt AppDir/usr/bin/
+          chmod -R a+rX,go-w AppDir
           "$tools/linuxdeploy-$arch.AppImage" --appdir AppDir \
             --executable build/release/bin/lichii \
             --executable build/release/bin/eden-cli \
