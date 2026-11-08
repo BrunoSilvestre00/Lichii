@@ -46,7 +46,6 @@ public:
     /// currently loaded application.
     void Prepare(Loader::AppLoader& loader);
 
-    /// Prepares the same artwork and progress presentation for a graceful game shutdown.
     void PrepareClosing(Loader::AppLoader& loader);
 
     /// After the loading screen is hidden, the owner of this class can call this to clean up any
