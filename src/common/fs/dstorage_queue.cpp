@@ -4,6 +4,7 @@
 
 #ifdef LICHII_DIRECTSTORAGE
 
+#include <algorithm>
 #include <mutex>
 
 // INITGUID before any Windows header: defines the DirectStorage IIDs in this translation unit,
@@ -101,7 +102,7 @@ bool IsAvailable() {
 bool ReadFileAt(const std::filesystem::path& path, u64 offset, void* dst, size_t size) {
     auto& runtime = GetRuntime();
     std::call_once(runtime.init_once, Initialize);
-    if (!runtime.available || size == 0 || size > UINT32_MAX) {
+    if (!runtime.available || size == 0) {
         return false;
     }
     // One synchronous read at a time: the queue has a fixed capacity and EnqueueRequest blocks
@@ -114,41 +115,55 @@ bool ReadFileAt(const std::filesystem::path& path, u64 offset, void* dst, size_t
         return false;
     }
     IDStorageStatusArray* status = nullptr;
-    HRESULT hr = runtime.factory->CreateStatusArray(1, "lichii-read", __uuidof(IDStorageStatusArray),
-                                                    reinterpret_cast<void**>(&status));
+    if (FAILED(runtime.factory->CreateStatusArray(1, "lichii-read", __uuidof(IDStorageStatusArray),
+                                                  reinterpret_cast<void**>(&status)))) {
+        file->Release();
+        return false;
+    }
     HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (FAILED(hr) || !status || !event) {
-        if (status) {
-            status->Release();
-        }
-        if (event) {
-            CloseHandle(event);
-        }
+    if (!event) {
+        status->Release();
         file->Release();
         return false;
     }
 
-    DSTORAGE_REQUEST request{};
-    request.Options.CompressionFormat = DSTORAGE_COMPRESSION_FORMAT_NONE;
-    request.Options.SourceType = DSTORAGE_REQUEST_SOURCE_FILE;
-    request.Options.DestinationType = DSTORAGE_REQUEST_DESTINATION_MEMORY;
-    request.Source.File.Source = file;
-    request.Source.File.Offset = offset;
-    request.Source.File.Size = static_cast<UINT32>(size);
-    request.Destination.Memory.Buffer = dst;
-    request.Destination.Memory.Size = static_cast<UINT32>(size);
-    request.Name = "lichii-read";
+    // Large reads are split into small requests: single requests above a few tens of MiB were
+    // rejected by the runtime (observed failures at 42 MiB and 64 MiB), and small requests let
+    // it pipeline. A failed chunk aborts the whole read; the caller then re-reads the full
+    // range with std::fread, which overwrites any partial data.
+    constexpr u64 kMaxRequestSize = 16 * 1024 * 1024;
+    u8* out = static_cast<u8*>(dst);
+    bool ok = true;
+    HRESULT request_hr = S_OK;
+    for (u64 done = 0; done < size; done += kMaxRequestSize) {
+        const u32 chunk = static_cast<u32>(std::min<u64>(kMaxRequestSize, size - done));
+        DSTORAGE_REQUEST request{};
+        request.Options.CompressionFormat = DSTORAGE_COMPRESSION_FORMAT_NONE;
+        request.Options.SourceType = DSTORAGE_REQUEST_SOURCE_FILE;
+        request.Options.DestinationType = DSTORAGE_REQUEST_DESTINATION_MEMORY;
+        request.Source.File.Source = file;
+        request.Source.File.Offset = offset + done;
+        request.Source.File.Size = chunk;
+        request.Destination.Memory.Buffer = out + done;
+        request.Destination.Memory.Size = chunk;
+        request.Name = "lichii-read";
 
-    runtime.queue->EnqueueRequest(&request);
-    runtime.queue->EnqueueStatus(status, 0);
-    runtime.queue1->EnqueueSetEvent(event);
-    runtime.queue->Submit();
+        ResetEvent(event);
+        runtime.queue->EnqueueRequest(&request);
+        runtime.queue->EnqueueStatus(status, 0);
+        runtime.queue1->EnqueueSetEvent(event);
+        runtime.queue->Submit();
 
-    const bool ok = WaitForSingleObject(event, INFINITE) == WAIT_OBJECT_0 && status->IsComplete(0) &&
-                    SUCCEEDED(status->GetHResult(0));
+        if (WaitForSingleObject(event, INFINITE) != WAIT_OBJECT_0 || !status->IsComplete(0) ||
+            FAILED(request_hr = status->GetHResult(0))) {
+            ok = false;
+            break;
+        }
+    }
     if (!ok) {
-        LOG_WARNING(Common_Filesystem, "DirectStorage: read of {} bytes at {:#x} in \"{}\" failed",
-                    size, offset, Common::FS::PathToUTF8String(path));
+        LOG_WARNING(Common_Filesystem,
+                    "DirectStorage: read of {} bytes at {:#x} in \"{}\" failed (hr={:#x})", size,
+                    offset, Common::FS::PathToUTF8String(path), static_cast<u32>(request_hr));
     }
 
     CloseHandle(event);
