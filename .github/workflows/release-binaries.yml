@@ -368,6 +368,7 @@ jobs:
           key: ${{ steps.cpm-cache.outputs.cache-primary-key }}
 
       - name: Build
+        id: build
         shell: bash
         run: |
           if command -v ccache > /dev/null; then ccache --zero-stats; else sccache --zero-stats; fi
@@ -377,7 +378,7 @@ jobs:
           if command -v ccache > /dev/null; then ccache --show-stats; else sccache --show-stats; fi
 
       - name: Stop sccache on Windows
-        if: always() && startsWith(matrix.platform, 'windows') && steps.compiler-cache.outcome == 'success'
+        if: always() && startsWith(matrix.platform, 'windows') && steps.compiler-cache.outcome == 'success' && steps.build.outcome != 'skipped'
         shell: pwsh
         run: sccache --stop-server
 
@@ -417,9 +418,11 @@ jobs:
           tools="$RUNNER_TEMP/linuxdeploy"
           mkdir -p "$tools"
           arch=$(uname -m)   # aarch64 or x86_64
-          curl -fsSL -o "$tools/linuxdeploy-$arch.AppImage" \
+          curl -fsSL --retry 8 --retry-all-errors --retry-delay 5 --retry-max-time 300 \
+            --connect-timeout 30 --max-time 120 -o "$tools/linuxdeploy-$arch.AppImage" \
           https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-$arch.AppImage
-          curl -fsSL -o "$tools/linuxdeploy-plugin-qt-$arch.AppImage" \
+          curl -fsSL --retry 8 --retry-all-errors --retry-delay 5 --retry-max-time 300 \
+            --connect-timeout 30 --max-time 120 -o "$tools/linuxdeploy-plugin-qt-$arch.AppImage" \
           https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-$arch.AppImage
           chmod +x "$tools"/*.AppImage
           # The desktop file names its icon io.github.zortos293.lichii.

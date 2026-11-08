@@ -175,7 +175,7 @@ function(get_cache_path package key out)
 endfunction()
 
 # Download a URL to file, with a sha512 hash
-# And retry 5 times
+# And retry transient failures
 function(cpm_download url file)
     echo("Downloading ${url} to ${file}")
     list(LENGTH ARGN argn_len)
@@ -186,23 +186,32 @@ function(cpm_download url file)
         unset(args)
     endif()
 
-    foreach(i RANGE 5)
-        file(DOWNLOAD ${url} ${file}
+    foreach(attempt RANGE 1 8)
+        file(DOWNLOAD "${url}" "${file}"
             ${args}
-            STATUS ret)
+            STATUS ret
+            TIMEOUT 300
+            INACTIVITY_TIMEOUT 60)
 
         list(GET ret 0 code)
+        list(GET ret 1 error_message)
         if (code EQUAL 0)
             break()
         endif()
 
-        echo_error("Download failed. Trying again in 5 seconds")
-        sleep(5)
+        file(REMOVE "${file}")
+        if(attempt LESS 8)
+            math(EXPR retry_delay "${attempt} * 5")
+            if(retry_delay GREATER 30)
+                set(retry_delay 30)
+            endif()
+            echo_error("Download failed: ${error_message}. Retrying in ${retry_delay} seconds")
+            sleep(${retry_delay})
+        endif()
     endforeach()
 
-    # TODO: use return code or something
     if (NOT code EQUAL 0)
-        fatal("Download for ${pkg_url} failed after 5 tries")
+        fatal("Download for ${url} failed after 8 tries: ${error_message}")
     endif()
 endfunction()
 
@@ -1052,7 +1061,7 @@ function(AddCIPackage)
 
         set(sha512sum_error 1)
         set(sha512sum_error_message "download did not complete")
-        foreach(attempt RANGE 1 5)
+        foreach(attempt RANGE 1 8)
             file(DOWNLOAD "${sha512sum_url}" "${sha512sum_file}"
                 STATUS sha512sum_status
                 TIMEOUT 60
@@ -1064,8 +1073,11 @@ function(AddCIPackage)
             endif()
 
             file(REMOVE "${sha512sum_file}")
-            if(attempt LESS 5)
+            if(attempt LESS 8)
                 math(EXPR retry_delay "${attempt} * 5")
+                if(retry_delay GREATER 30)
+                    set(retry_delay 30)
+                endif()
                 message(WARNING "Retrying ${ARTIFACT_NAME} checksum download after: "
                     "${sha512sum_error_message}")
                 execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep ${retry_delay})
