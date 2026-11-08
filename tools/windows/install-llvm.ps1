@@ -11,9 +11,12 @@ $sha256 = '16e5709785fef73c854646241c4a92c5cd574318d1b33c63330dd7721903e55c'
 
 $installer = Join-Path $env:RUNNER_TEMP 'llvm.exe'
 $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$version/LLVM-$version-win64.exe"
+# Authenticated download: GitHub release assets throttle unauthenticated clients.
+$headers = @{ }
+if ($env:GITHUB_TOKEN) { $headers.Authorization = "token $env:GITHUB_TOKEN" }
 for ($attempt = 1; $attempt -le 5; $attempt++) {
     try {
-        Invoke-WebRequest -Uri $url -OutFile $installer -TimeoutSec 300
+        Invoke-WebRequest -Uri $url -OutFile $installer -TimeoutSec 300 -Headers $headers
         break
     } catch {
         Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue

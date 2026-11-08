@@ -71,6 +71,11 @@ jobs:
     needs: prepare-release
     runs-on: ${{ matrix.runner }}
     env:
+      # Lets CMake, curl and PowerShell authenticate GitHub release-asset
+      # downloads (CPM checksums, LLVM, sccache, linuxdeploy AppImages).
+      # Authenticated requests do not hit the rate limits behind
+      # "timeout for some unauthenticated users" incidents.
+      GITHUB_TOKEN: ${{ github.token }}
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 3000M
       CCACHE_COMPILERCHECK: content
@@ -217,9 +222,11 @@ jobs:
         run: |
           $zip = Join-Path $env:RUNNER_TEMP 'sccache.zip'
           $url = 'https://github.com/mozilla/sccache/releases/download/v0.19.0/sccache-v0.19.0-x86_64-pc-windows-msvc.zip'
+          $headers = @{ }
+          if ($env:GITHUB_TOKEN) { $headers.Authorization = "token $env:GITHUB_TOKEN" }
           for ($attempt = 1; $attempt -le 5; $attempt++) {
             try {
-              Invoke-WebRequest -OutFile $zip -Uri $url -TimeoutSec 60
+              Invoke-WebRequest -OutFile $zip -Uri $url -TimeoutSec 60 -Headers $headers
               break
             } catch {
               if ($attempt -eq 5) { throw }
@@ -418,10 +425,19 @@ jobs:
           tools="$RUNNER_TEMP/linuxdeploy"
           mkdir -p "$tools"
           arch=$(uname -m)   # aarch64 or x86_64
-          curl -fsSL --retry 8 --retry-all-errors --retry-delay 5 --retry-max-time 300 \
+          # netrc keeps the token out of sight and stops curl from replaying
+          # credentials to the redirect host (a presigned asset URL).
+          netrc="$RUNNER_TEMP/curl.netrc"
+          netrc_args=()
+          if [ -n "$GITHUB_TOKEN" ]; then
+            umask 077
+            printf 'machine github.com login oauth2 password %s\n' "$GITHUB_TOKEN" > "$netrc"
+            netrc_args=(--netrc-file "$netrc")
+          fi
+          curl -fsSL "${netrc_args[@]}" --retry 8 --retry-all-errors --retry-delay 5 --retry-max-time 300 \
             --connect-timeout 30 --max-time 120 -o "$tools/linuxdeploy-$arch.AppImage" \
           https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-$arch.AppImage
-          curl -fsSL --retry 8 --retry-all-errors --retry-delay 5 --retry-max-time 300 \
+          curl -fsSL "${netrc_args[@]}" --retry 8 --retry-all-errors --retry-delay 5 --retry-max-time 300 \
             --connect-timeout 30 --max-time 120 -o "$tools/linuxdeploy-plugin-qt-$arch.AppImage" \
           https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-$arch.AppImage
           chmod +x "$tools"/*.AppImage

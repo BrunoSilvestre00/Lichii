@@ -120,6 +120,25 @@ macro(sleep time)
     execute_process(COMMAND ${CMAKE_COMMAND} -E sleep ${time})
 endmacro()
 
+# Github release assets throttle unauthenticated clients; authenticate the
+# handful of hosts CPMUtil fetches from when the CI token is in GITHUB_TOKEN.
+# NETRC_FILE tells curl to send the credentials only to matching hosts, so the
+# presigned asset URL after the redirect keeps working.
+function(cpmutil_netrc_args out_args)
+    if(DEFINED ENV{GITHUB_TOKEN})
+        if(NOT "${CPMUTIL_NETRC}")
+            set(CPMUTIL_NETRC "${CMAKE_BINARY_DIR}/.cpmutil_netrc" CACHE INTERNAL
+                "Path to a netrc file for GitHub downloads" FORCE)
+            file(WRITE "${CPMUTIL_NETRC}"
+                "machine github.com login oauth2 password $ENV{GITHUB_TOKEN}\n")
+        endif()
+        set(result NETRC_FILE "${CPMUTIL_NETRC}")
+    else()
+        unset(result)
+    endif()
+    return(PROPAGATE result)
+endfunction()
+
 # Get a package's effective URL.
 function(get_package_url)
     set(oneValueArgs
@@ -186,9 +205,12 @@ function(cpm_download url file)
         unset(args)
     endif()
 
+    cpmutil_netrc_args(netrc_args)
+
     foreach(attempt RANGE 1 8)
         file(DOWNLOAD "${url}" "${file}"
             ${args}
+            ${netrc_args}
             STATUS ret
             TIMEOUT 300
             INACTIVITY_TIMEOUT 60)
@@ -1067,8 +1089,10 @@ function(AddCIPackage)
         set(sha512sum_error 1)
         set(sha512sum_error_message "checksum not cached")
         if(NOT EXISTS "${sha512sum_file}")
+            cpmutil_netrc_args(sha512sum_netrc_args)
             foreach(attempt RANGE 1 8)
                 file(DOWNLOAD "${sha512sum_url}" "${sha512sum_file}"
+                    ${sha512sum_netrc_args}
                     STATUS sha512sum_status
                     TIMEOUT 60
                     INACTIVITY_TIMEOUT 30)
