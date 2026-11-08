@@ -6,6 +6,8 @@
 #include <QDesktopServices>
 #include <QDir>
 
+#include <optional>
+
 #ifdef __unix__
 #include <QProcess>
 #include <QProcessEnvironment>
@@ -17,6 +19,32 @@ namespace QtCommon {
 
 namespace {
 
+/// Queries the systemd user manager for its session-wide XDG_CONFIG_HOME.
+/// Returns nullopt when the manager is unreachable (non-systemd session,
+/// sandbox, query failure). The result is cached: the manager environment
+/// does not change for the lifetime of this process, so the subprocess
+/// cost is paid at most once (a fast local D-Bus call, ~20ms).
+std::optional<QString> SessionConfigHome() {
+    static const std::optional<QString> cached = []() -> std::optional<QString> {
+        QProcess proc;
+        proc.setProgram(QStringLiteral("systemctl"));
+        proc.setArguments({QStringLiteral("--user"), QStringLiteral("show-environment")});
+        proc.start();
+        if (!proc.waitForFinished(2000) || proc.exitCode() != 0) {
+            return std::nullopt;
+        }
+        static const QString prefix = QStringLiteral("XDG_CONFIG_HOME=");
+        const QString output = QString::fromLocal8Bit(proc.readAllStandardOutput());
+        for (const QString& line : output.split(QLatin1Char('\n'))) {
+            if (line.startsWith(prefix)) {
+                return line.mid(prefix.size());
+            }
+        }
+        return QString{};
+    }();
+    return cached;
+}
+
 /// Builds the environment for spawned external handlers (browsers, file
 /// managers). Starts from the current process environment and drops
 /// variables that must not leak into programs outside the emulator.
@@ -24,14 +52,23 @@ QProcessEnvironment CleanedEnvironmentForExternalProcess() {
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
 
     // External handlers are not part of the emulator, so never hand them
-    // an overridden config home (e.g. per-source homes set by launchers).
-    // A file manager started with a foreign config home reads the wrong
-    // dolphinrc without the user's kdeglobals and falls back to a broken
-    // default theme. Session default (~/.config) applies when unset.
+    // a config home that was overridden for this process (e.g. per-source
+    // homes set by launchers). A file manager started with a foreign
+    // config home reads the wrong dolphinrc without the user's kdeglobals
+    // and falls back to a broken default theme. A value matching the
+    // session manager's is the user's own and is preserved; with no
+    // manager to compare against, anything but the default (~/.config)
+    // is treated as an override. Session default applies when unset.
     const QString config_home = env.value(QStringLiteral("XDG_CONFIG_HOME"));
-    if (!config_home.isEmpty() &&
-        config_home != QDir::homePath() + QStringLiteral("/.config")) {
-        env.remove(QStringLiteral("XDG_CONFIG_HOME"));
+    if (!config_home.isEmpty()) {
+        const std::optional<QString> session_home = SessionConfigHome();
+        if (!session_home.has_value()) {
+            if (config_home != QDir::homePath() + QStringLiteral("/.config")) {
+                env.remove(QStringLiteral("XDG_CONFIG_HOME"));
+            }
+        } else if (config_home != session_home.value()) {
+            env.remove(QStringLiteral("XDG_CONFIG_HOME"));
+        }
     }
 
     return env;
