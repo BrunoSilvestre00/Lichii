@@ -1,8 +1,10 @@
 # Hookshot Windows SDL runtime packaging fix
 
 Upstream v2.0.3, released on 2026-11-08, includes this dependency in the final
-installation. Prefer that release over applying this v2.0.2 companion patch:
-https://github.com/NotRexed/Hookshot/releases/tag/v2.0.3.
+installation. The subsequent v2.0.4 retains it and reverts a v2.0.3 shader
+translation change associated with dark characters and incorrect lighting.
+Prefer that release over applying this v2.0.2 companion patch:
+https://github.com/NotRexed/Hookshot/releases/tag/v2.0.4.
 
 This companion patch applies to **Hookshot**, not Lichii. It changes no emulator
 rendering behavior. Upstream source: https://github.com/NotRexed/Hookshot at
