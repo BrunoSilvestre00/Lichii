@@ -142,6 +142,7 @@ LoadingScreen::LoadingScreen(QWidget* parent)
       previous_stage(VideoCore::LoadCallbackStage::Complete) {
     ui->setupUi(this);
     setMinimumSize(Layout::MinimumSize::Width, Layout::MinimumSize::Height);
+    ui->logo->setMinimumSize(100, 100);
     ui->logo->setMaximumSize(360, 100);
     ui->value->setMinimumHeight(20);
 
