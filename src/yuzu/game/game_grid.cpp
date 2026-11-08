@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <QColor>
+#include <QPalette>
 #include <QScroller>
 #include <QScrollerProperties>
 
@@ -22,6 +24,11 @@ GameGrid::GameGrid(QWidget* parent) : QListView{parent} {
     setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
     setMouseTracking(true);
+
+    QPalette grid_palette = palette();
+    grid_palette.setColor(QPalette::Highlight, QColor(230, 0, 18));
+    grid_palette.setColor(QPalette::HighlightedText, Qt::white);
+    setPalette(grid_palette);
 
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
@@ -47,32 +54,48 @@ void GameGrid::SetModel(GameListModel* model) {
 }
 
 void GameGrid::ApplyFilter(const QString& edit_filter_text, GameListModel* model) {
-    int row_count = model->rowCount();
+    const QModelIndex root = rootIndex();
+    const int row_count = model->rowCount(root);
 
     for (int i = 0; i < row_count; ++i) {
-        QStandardItem* item = model->item(i, 0);
+        QStandardItem* item = root.isValid() ? model->itemFromIndex(model->index(i, 0, root))
+                                             : model->item(i, 0);
         if (!item)
             continue;
 
-        if (Yuzu::FilterMatches(edit_filter_text, item)) {
-            setRowHidden(i, false);
-        } else {
-            setRowHidden(i, true);
+        const auto type = item->data(GameListItem::TypeRole).value<GameListItemType>();
+        if (!root.isValid() && type == GameListItemType::Favorites) {
+            setRowHidden(i, true, root);
+            continue;
         }
+        if (!root.isValid() && type == GameListItemType::AddDir) {
+            setRowHidden(i, false, root);
+            continue;
+        }
+
+        bool matches = Yuzu::FilterMatches(edit_filter_text, item);
+        if (!root.isValid() &&
+            (type == GameListItemType::CustomDir || type == GameListItemType::SdmcDir ||
+             type == GameListItemType::UserNandDir || type == GameListItemType::SysNandDir)) {
+            for (int child = 0; !matches && child < item->rowCount(); ++child) {
+                matches = Yuzu::FilterMatches(edit_filter_text, item->child(child, 0));
+            }
+        }
+        setRowHidden(i, !matches, root);
     }
 }
 
 void GameGrid::UpdateIconSize() {
     const u32 icon_size = UISettings::values.game_icon_size.GetValue();
-    const bool show_game_name = UISettings::values.show_game_name.GetValue();
+    const bool show_game_name =
+        UISettings::values.show_game_name.GetValue() || !rootIndex().isValid();
     const u32 display_icon_size = show_game_name ? std::max<u32>(icon_size, u32{128}) : icon_size;
 
     int heightMargin = 0;
-    int widthMargin = 80;
+    int widthMargin = 72;
 
     if (show_game_name) {
-        widthMargin = 110;
-        heightMargin = 155;
+        heightMargin = 92;
     } else {
         widthMargin = 24;
         heightMargin = 24;

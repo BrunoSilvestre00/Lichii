@@ -87,15 +87,15 @@ void GameListSearchField::setFocus() {
 GameListSearchField::GameListSearchField(GameList* parent) : QWidget{parent} {
     auto* const key_release_eater = new KeyReleaseEater(parent, this);
     layout_filter = new QHBoxLayout;
-    layout_filter->setContentsMargins(12, 12, 12, 10);
-    layout_filter->setSpacing(10);
+    layout_filter->setContentsMargins(8, 4, 8, 4);
+    layout_filter->setSpacing(8);
     label_filter = new QLabel;
     label_filter->setObjectName(QStringLiteral("gameListFilterLabel"));
     edit_filter = new QLineEdit;
     edit_filter->clear();
     edit_filter->installEventFilter(key_release_eater);
     edit_filter->setClearButtonEnabled(true);
-    edit_filter->setMinimumHeight(34);
+    edit_filter->setMinimumHeight(30);
     edit_filter->setObjectName(QStringLiteral("gameListFilterEdit"));
     connect(edit_filter, &QLineEdit::textChanged, parent, &GameList::OnTextChanged);
     label_filter_result = new QLabel;
@@ -105,7 +105,7 @@ GameListSearchField::GameListSearchField(GameList* parent) : QWidget{parent} {
     button_filter_close->setText(QStringLiteral("×"));
     button_filter_close->setCursor(Qt::PointingHandCursor);
     button_filter_close->setAutoRaise(true);
-    button_filter_close->setFixedSize(28, 28);
+    button_filter_close->setFixedSize(26, 26);
     button_filter_close->setToolTip(tr("Close filter"));
     connect(button_filter_close, &QToolButton::clicked, parent, &GameList::OnFilterCloseClicked);
     layout_filter->addWidget(label_filter);

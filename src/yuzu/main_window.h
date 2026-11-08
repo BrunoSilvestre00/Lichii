@@ -419,7 +419,7 @@ private slots:
     void ResetWindowSize900();
     void ResetWindowSize1080();
 
-    void SetGameListMode(Settings::GameListMode mode);
+    void SetGameListMode(Settings::GameListMode mode, bool update_library_style = true);
     void SetGridView();
     void SetTreeView();
     void SetCarouselView();

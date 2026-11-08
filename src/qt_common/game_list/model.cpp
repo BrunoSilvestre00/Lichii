@@ -100,7 +100,9 @@ void GameListModel::DonePopulating(const QStringList& watch_list) {
         invisibleRootItem()->appendRow(new GameListAddDir());
         emit ShowList(true);
     } else {
-        emit ShowList(!IsEmpty());
+        const bool has_games = !IsEmpty();
+        emit ShowList(has_games ||
+                      UISettings::values.game_list_mode.GetValue() == Settings::GameListMode::GridView);
         invisibleRootItem()->appendRow(new GameListAddDir());
         invisibleRootItem()->insertRow(0, new GameListFavorites());
 

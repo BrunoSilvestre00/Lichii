@@ -74,6 +74,8 @@
 #include <QActionGroup>
 #include <QCheckBox>
 #include <QClipboard>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDesktopServices>
 #include <QDir>
 #include <QElapsedTimer>
@@ -81,14 +83,19 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFutureWatcher>
+#include <QFont>
 #include <QGuiApplication>
 #include <QInputDialog>
+#include <QLabel>
 #include <QMimeData>
 #include <QPalette>
 #include <QProgressDialog>
+#include <QPushButton>
+#include <QRadioButton>
 #include <QScreen>
 #include <QShortcut>
 #include <QStatusBar>
+#include <QVBoxLayout>
 #include <QtConcurrentRun>
 
 #ifdef __APPLE__
@@ -352,6 +359,64 @@ QString GetTranslatedGameIconSize(size_t index) {
     return QCoreApplication::translate("MainWindow", default_game_icon_sizes[index].second);
 }
 
+bool SelectGameLibraryStyle(QWidget* parent, UISettings::GameLibraryStyle& selected_style) {
+    QDialog dialog(parent);
+    dialog.setWindowTitle(QObject::tr("Choose your game library"));
+    dialog.setMinimumWidth(430);
+
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(24, 22, 24, 18);
+    layout->setSpacing(10);
+
+    auto* title = new QLabel(QObject::tr("How would you like to browse your games?"), &dialog);
+    QFont title_font = title->font();
+    title_font.setPointSize(title_font.pointSize() + 3);
+    title_font.setWeight(QFont::DemiBold);
+    title->setFont(title_font);
+    title->setWordWrap(true);
+
+    auto* modern = new QRadioButton(QObject::tr("Modern library — browse by folder"), &dialog);
+    auto* modern_description =
+        new QLabel(QObject::tr("Choose a folder card to see the games inside it."), &dialog);
+    modern_description->setWordWrap(true);
+    modern_description->setContentsMargins(24, 0, 0, 4);
+
+    auto* classic = new QRadioButton(QObject::tr("Classic list — show games in groups"), &dialog);
+    auto* classic_description =
+        new QLabel(QObject::tr("See all games in the familiar expandable directory list."), &dialog);
+    classic_description->setWordWrap(true);
+    classic_description->setContentsMargins(24, 0, 0, 4);
+
+    auto* note = new QLabel(QObject::tr("You can change this choice at any time in Settings."),
+                            &dialog);
+    note->setWordWrap(true);
+    note->setStyleSheet(QStringLiteral("color: palette(mid);"));
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok, &dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(QObject::tr("Continue"));
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+
+    modern->setChecked(true);
+    layout->addWidget(title);
+    layout->addSpacing(6);
+    layout->addWidget(modern);
+    layout->addWidget(modern_description);
+    layout->addSpacing(4);
+    layout->addWidget(classic);
+    layout->addWidget(classic_description);
+    layout->addSpacing(4);
+    layout->addWidget(note);
+    layout->addSpacing(6);
+    layout->addWidget(buttons);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return false;
+    }
+    selected_style = modern->isChecked() ? UISettings::GameLibraryStyle::Modern
+                                         : UISettings::GameLibraryStyle::Classic;
+    return true;
+}
+
 } // namespace
 
 #ifndef _WIN32
@@ -470,10 +535,26 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     if (Settings::values.use_dev_keys.GetValue()) {
         Core::Crypto::KeyManager::Instance().ReloadKeys();
     }
-    game_list->PopulateAsync(UISettings::values.game_dirs);
+    if (!UISettings::values.has_selected_game_library_style.GetValue()) {
+        UISettings::GameLibraryStyle style = UISettings::GameLibraryStyle::Modern;
+        if (SelectGameLibraryStyle(this, style)) {
+            UISettings::values.game_library_style = static_cast<u8>(style);
+            UISettings::values.has_selected_game_library_style = true;
+            UISettings::values.game_list_mode =
+                style == UISettings::GameLibraryStyle::Modern ? Settings::GameListMode::GridView
+                                                              : Settings::GameListMode::TreeView;
+            config->SaveAllValues();
+        } else {
+            UISettings::values.game_library_style =
+                static_cast<u8>(
+                    UISettings::values.game_list_mode.GetValue() == Settings::GameListMode::TreeView
+                        ? UISettings::GameLibraryStyle::Classic
+                        : UISettings::GameLibraryStyle::Modern);
+        }
+    }
 
-    // Set up game list mode checkboxes.
-    SetGameListMode(UISettings::values.game_list_mode.GetValue());
+    SetGameListMode(UISettings::values.game_list_mode.GetValue(), false);
+    game_list->PopulateAsync(UISettings::values.game_dirs);
 
     // make sure menubar has the arrow cursor instead of inheriting from this
     ui->menubar->setCursor(QCursor());
@@ -3701,12 +3782,19 @@ void MainWindow::ResetWindowSize1080() {
     ResetWindowSize(Layout::ScreenDocked::Width, Layout::ScreenDocked::Height);
 }
 
-void MainWindow::SetGameListMode(Settings::GameListMode mode) {
+void MainWindow::SetGameListMode(Settings::GameListMode mode, bool update_library_style) {
     ui->action_Grid_View->setChecked(mode == Settings::GameListMode::GridView);
     ui->action_Tree_View->setChecked(mode == Settings::GameListMode::TreeView);
     ui->action_Carousel_View->setChecked(mode == Settings::GameListMode::CarouselView);
 
     UISettings::values.game_list_mode = mode;
+    if (update_library_style && mode != Settings::GameListMode::CarouselView) {
+        UISettings::values.game_library_style =
+            static_cast<u8>(mode == Settings::GameListMode::GridView
+                                ? UISettings::GameLibraryStyle::Modern
+                                : UISettings::GameLibraryStyle::Classic);
+        UISettings::values.has_selected_game_library_style = true;
+    }
     ui->action_Show_Game_Name->setEnabled(mode != Settings::GameListMode::TreeView);
 
     CheckIconSize();
@@ -3766,6 +3854,7 @@ void MainWindow::ToggleShowGameName() {
 
 void MainWindow::OnConfigure() {
     const auto old_theme = UISettings::values.theme;
+    const auto old_library_style = UISettings::values.game_library_style.GetValue();
     const bool old_discord_presence = UISettings::values.enable_discord_presence.GetValue();
     const auto old_language_index = Settings::values.language_index.GetValue();
     const bool old_gamemode = UISettings::values.enable_gamemode.GetValue();
@@ -3825,6 +3914,15 @@ void MainWindow::OnConfigure() {
         SetDefaultUIGeometry();
         RestoreUIState();
     }
+    if (UISettings::values.game_library_style.GetValue() != old_library_style) {
+        UISettings::values.has_selected_game_library_style = true;
+        SetGameListMode(static_cast<UISettings::GameLibraryStyle>(
+                                UISettings::values.game_library_style.GetValue()) ==
+                                UISettings::GameLibraryStyle::Modern
+                            ? Settings::GameListMode::GridView
+                            : Settings::GameListMode::TreeView);
+    }
+
     InitializeHotkeys();
 
     if (UISettings::values.theme != old_theme) {

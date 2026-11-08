@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <QBuffer>
 #include <QByteArray>
+#include <QColor>
 #include <QGraphicsOpacityEffect>
 #include <QIODevice>
 #include <QImage>
@@ -30,48 +31,108 @@
 
 constexpr char PROGRESSBAR_STYLE_PREPARE[] = R"(
 QProgressBar {
-  background-color: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 7px;
+  background-color: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
   min-height: 14px;
   max-height: 14px;
 }
 QProgressBar::chunk {
-  background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #4aa8ff, stop:1 #7d7bff);
-  border-radius: 6px;
+  background-color: #a6a8ab;
+  border-radius: 5px;
 })";
 
 constexpr char PROGRESSBAR_STYLE_BUILD[] = R"(
 QProgressBar {
-  background-color: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 7px;
+  background-color: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
   min-height: 14px;
   max-height: 14px;
 }
 QProgressBar::chunk {
-  background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #33c6ff, stop:0.55 #5f8cff, stop:1 #8a7dff);
-  border-radius: 6px;
+  background-color: #e60012;
+  border-radius: 5px;
 })";
 
 constexpr char PROGRESSBAR_STYLE_COMPLETE[] = R"(
 QProgressBar {
-  background-color: rgba(88, 214, 160, 0.12);
-  border: 1px solid rgba(88, 214, 160, 0.28);
-  border-radius: 7px;
+  background-color: rgba(88, 160, 112, 0.12);
+  border: 1px solid rgba(88, 160, 112, 0.28);
+  border-radius: 6px;
   min-height: 14px;
   max-height: 14px;
 }
 QProgressBar::chunk {
-  background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #43d17a, stop:1 #35c4a1);
-  border-radius: 6px;
+  background-color: #58a070;
+  border-radius: 5px;
 })";
+
+namespace {
+
+QColor SampleLogoColor(const QImage& image, int begin, int end) {
+    if (image.isNull()) {
+        return QColor(64, 68, 76);
+    }
+
+    const QImage sample = image.scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation)
+                              .convertToFormat(QImage::Format_ARGB32);
+    qreal red = 0;
+    qreal green = 0;
+    qreal blue = 0;
+    qreal weight_total = 0;
+    const int start_x = sample.width() * begin / 100;
+    const int end_x = sample.width() * end / 100;
+
+    for (int y = 0; y < sample.height(); ++y) {
+        for (int x = start_x; x < end_x; ++x) {
+            const QColor color = sample.pixelColor(x, y);
+            if (color.alpha() < 64 || color.saturationF() < 0.18 || color.lightnessF() < 0.08 ||
+                color.lightnessF() > 0.9) {
+                continue;
+            }
+            const qreal weight = color.saturationF();
+            red += color.redF() * weight;
+            green += color.greenF() * weight;
+            blue += color.blueF() * weight;
+            weight_total += weight;
+        }
+    }
+
+    if (weight_total == 0) {
+        return QColor(64, 68, 76);
+    }
+    return QColor::fromRgbF(red / weight_total, green / weight_total, blue / weight_total);
+}
+
+void SetLogoBackground(QWidget* widget, const QPixmap& logo) {
+    const QImage image = logo.toImage();
+    const QColor left = SampleLogoColor(image, 0, 50);
+    const QColor right = SampleLogoColor(image, 50, 100);
+    widget->setStyleSheet(
+        QStringLiteral(
+            "QWidget#LoadingScreen { background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            "stop:0 #08090b, stop:0.34 rgba(%1, %2, %3, 68), "
+            "stop:0.68 rgba(%4, %5, %6, 54), stop:1 #08090b); } "
+            "QWidget#fade_parent { background-color: transparent; }")
+            .arg(left.red())
+            .arg(left.green())
+            .arg(left.blue())
+            .arg(right.red())
+            .arg(right.green())
+            .arg(right.blue()));
+}
+
+} // namespace
 
 LoadingScreen::LoadingScreen(QWidget* parent)
     : QWidget(parent), ui(std::make_unique<Ui::LoadingScreen>()),
       previous_stage(VideoCore::LoadCallbackStage::Complete) {
     ui->setupUi(this);
     setMinimumSize(Layout::MinimumSize::Width, Layout::MinimumSize::Height);
+    ui->verticalLayout->insertWidget(0, ui->logo, 0, Qt::AlignHCenter);
+    ui->logo->setMaximumSize(360, 100);
+    ui->value->setMinimumHeight(20);
 
     // Create a fade out effect to hide this loading screen widget.
     // When fading opacity, it will fade to the parent widgets background color, which is why we
@@ -115,6 +176,8 @@ void LoadingScreen::Prepare(Loader::AppLoader& loader) {
     ui->logo->clear();
     ui->stage->clear();
     ui->value->clear();
+    ui->logo->setVisible(false);
+    SetLogoBackground(this, QPixmap{});
     Clear();
     previous_total = 0;
     previous_stage = VideoCore::LoadCallbackStage::Complete;
@@ -139,7 +202,12 @@ void LoadingScreen::Prepare(Loader::AppLoader& loader) {
     if (loader.ReadLogo(buffer) == Loader::ResultStatus::Success) {
         QPixmap map;
         map.loadFromData(buffer.data(), static_cast<uint>(buffer.size()));
-        ui->logo->setPixmap(map.scaled(420, 120, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        if (!map.isNull()) {
+            ui->logo->setPixmap(map.scaled(360, 100, Qt::KeepAspectRatio,
+                                           Qt::SmoothTransformation));
+            ui->logo->setVisible(true);
+            SetLogoBackground(this, map);
+        }
     }
 
     std::string title;
@@ -181,27 +249,27 @@ void LoadingScreen::OnLoadProgress(VideoCore::LoadCallbackStage stage, std::size
     }
 
     QString estimate;
-    if (stage == VideoCore::LoadCallbackStage::Build &&
-        (now - previous_time > milliseconds{50} || slow_shader_compile_start)) {
-        if (!slow_shader_compile_start) {
-            slow_shader_start = steady_clock::now();
-            slow_shader_compile_start = true;
-            slow_shader_first_value = value;
-        }
-        const auto diff = duration_cast<milliseconds>(now - slow_shader_start);
-        if (diff > seconds{1} && value > slow_shader_first_value && total > value) {
-            const auto eta_mseconds =
-                static_cast<long>(static_cast<double>(total - slow_shader_first_value) /
-                                  (value - slow_shader_first_value) * diff.count());
-            estimate =
-                tr("%1 / %2 • %3 remaining")
-                    .arg(static_cast<int>(value))
-                    .arg(static_cast<int>(total))
-                    .arg(QTime(0, 0, 0, 0)
-                             .addMSecs(std::max<long>(eta_mseconds - diff.count() + 1000, 1000))
-                             .toString(QStringLiteral("mm:ss")));
-        } else if (total > 0) {
-            estimate = tr("%1 / %2").arg(static_cast<int>(value)).arg(static_cast<int>(total));
+    if (stage == VideoCore::LoadCallbackStage::Build) {
+        estimate = tr("%1 / %2").arg(static_cast<int>(value)).arg(static_cast<int>(total));
+        if (now - previous_time > milliseconds{50} || slow_shader_compile_start) {
+            if (!slow_shader_compile_start) {
+                slow_shader_start = now;
+                slow_shader_compile_start = true;
+                slow_shader_first_value = value;
+            }
+            const auto diff = duration_cast<milliseconds>(now - slow_shader_start);
+            if (diff > seconds{1} && value > slow_shader_first_value && total > value) {
+                const auto eta_mseconds =
+                    static_cast<long>(static_cast<double>(total - slow_shader_first_value) /
+                                      (value - slow_shader_first_value) * diff.count());
+                estimate =
+                    tr("%1 / %2 — %3 remaining")
+                        .arg(static_cast<int>(value))
+                        .arg(static_cast<int>(total))
+                        .arg(QTime(0, 0, 0, 0)
+                                 .addMSecs(std::max<long>(eta_mseconds - diff.count() + 1000, 1000))
+                                 .toString(QStringLiteral("mm:ss")));
+            }
         }
     } else if (stage == VideoCore::LoadCallbackStage::Prepare) {
         estimate = tr("Setting up emulation session");
