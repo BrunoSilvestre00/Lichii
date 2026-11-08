@@ -22,7 +22,9 @@ namespace {
 /// Unescapes one systemd shell-escaped environment value, i.e. the $'...'
 /// ANSI-C quoting used by `systemctl show-environment`. Plain values pass
 /// through unchanged so the comparison below also works where no shell is
-/// involved.
+/// involved. Escape bytes (\xHH, octal) are collected as raw bytes and
+/// decoded together as UTF-8 at the end, so a multi-byte sequence split
+/// across escapes keeps its intended code points.
 QString UnescapeSystemdValue(const QString& value) {
     static const QString prefix = QStringLiteral("$'");
     if (value.size() < 4 || !value.startsWith(prefix) ||
@@ -43,63 +45,85 @@ QString UnescapeSystemdValue(const QString& value) {
         }
         return -1;
     };
-    QString out;
-    out.reserve(inner.size());
+    QByteArray bytes;
+    bytes.reserve(inner.size());
+    const auto append_code_point = [&](uint v) {
+        if (v < 0x80) {
+            bytes.append(char(v));
+        } else if (v < 0x800) {
+            bytes.append(char(0xC0 | (v >> 6)));
+            bytes.append(char(0x80 | (v & 0x3F)));
+        } else if (v < 0x10000) {
+            bytes.append(char(0xE0 | (v >> 12)));
+            bytes.append(char(0x80 | ((v >> 6) & 0x3F)));
+            bytes.append(char(0x80 | (v & 0x3F)));
+        } else if (v <= 0x10FFFF) {
+            bytes.append(char(0xF0 | (v >> 18)));
+            bytes.append(char(0x80 | ((v >> 12) & 0x3F)));
+            bytes.append(char(0x80 | ((v >> 6) & 0x3F)));
+            bytes.append(char(0x80 | (v & 0x3F)));
+        }
+    };
+    const auto append_byte = [&](uint b) { bytes.append(char(b & 0xFF)); };
     for (qsizetype i = 0; i < inner.size();) {
         const QChar c = inner[i];
         if (c != QLatin1Char('\\') || i + 1 >= inner.size()) {
-            out.append(c);
+            bytes.append(QString(c).toUtf8());
             ++i;
             continue;
         }
         const QChar e = inner[i + 1];
-        const auto take = [&](QChar ch) {
-            out.append(ch);
+        const auto take_byte = [&](char b) {
+            bytes.append(b);
             i += 2;
+        };
+        // A lone backslash is kept literally; parsing resumes after it.
+        const auto take_literally = [&]() {
+            bytes.append('\\');
+            ++i;
         };
         switch (e.unicode()) {
         case 'a':
-            take(QLatin1Char('\a'));
+            take_byte('\a');
             break;
         case 'b':
-            take(QLatin1Char('\b'));
+            take_byte('\b');
             break;
         case 'f':
-            take(QLatin1Char('\f'));
+            take_byte('\f');
             break;
         case 'n':
-            take(QLatin1Char('\n'));
+            take_byte('\n');
             break;
         case 'r':
-            take(QLatin1Char('\r'));
+            take_byte('\r');
             break;
         case 't':
-            take(QLatin1Char('\t'));
+            take_byte('\t');
             break;
         case 'v':
-            take(QLatin1Char('\v'));
+            take_byte('\v');
             break;
         case 's':
-            take(QLatin1Char(' '));
+            take_byte(' ');
             break;
         case '\\':
-            take(QLatin1Char('\\'));
+            take_byte('\\');
             break;
         case '\'':
-            take(QLatin1Char('\''));
+            take_byte('\'');
             break;
         case '"':
-            take(QLatin1Char('"'));
+            take_byte('"');
             break;
         case 'x': {
             const int hi = (i + 2 < inner.size()) ? hex_value(inner[i + 2]) : -1;
             const int lo = (i + 3 < inner.size()) ? hex_value(inner[i + 3]) : -1;
             if (hi >= 0 && lo >= 0) {
-                out.append(QChar(char16_t(hi * 16 + lo)));
+                append_byte(uint(hi * 16 + lo));
                 i += 4;
             } else {
-                out.append(c);
-                ++i;
+                take_literally();
             }
             break;
         }
@@ -116,12 +140,15 @@ QString UnescapeSystemdValue(const QString& value) {
                     v = v * 16 + uint(h);
                 }
             }
+            // Lone surrogates are not scalar values; keep them literally.
+            if (ok && v >= 0xD800 && v <= 0xDFFF) {
+                ok = false;
+            }
             if (ok) {
-                out.append(QString::fromUcs4(reinterpret_cast<const char32_t*>(&v), 1));
+                append_code_point(v);
                 i += 2 + digits;
             } else {
-                out.append(c);
-                ++i;
+                take_literally();
             }
             break;
         }
@@ -137,18 +164,21 @@ QString UnescapeSystemdValue(const QString& value) {
                 v = v * 8 + (d - '0');
                 ++k;
             }
-            if (k > 0) {
-                out.append(QChar(char16_t(v)));
+            if (k == 0) {
+                take_literally();
+            } else if (v <= 0xFF) {
+                append_byte(v);
                 i += 1 + k;
             } else {
-                out.append(c);
-                ++i;
+                // Not a byte; keep the previous code-point semantics.
+                bytes.append(QString(QChar(char16_t(v))).toUtf8());
+                i += 1 + k;
             }
             break;
         }
         }
     }
-    return out;
+    return QString::fromUtf8(bytes);
 }
 
 /// Queries the systemd user manager for its session-wide XDG_CONFIG_HOME.
