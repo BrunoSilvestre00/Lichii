@@ -286,6 +286,11 @@ public:
     bool WaitUntil(u64 position, DrainSite site) {
         return WaitFor((std::min)(position, write_position), site);
     }
+    /// Whether the back executed everything sent before `position`. It may tell so a little
+    /// late: the back stores its position every few thousand words and when it runs out of work.
+    [[nodiscard]] bool Ran(u64 position) const {
+        return consumed.load(std::memory_order_acquire) >= position;
+    }
 
     /// Compute or copy work was just sent: what can write GPU-written command lists.
     void NoteWriter() {
