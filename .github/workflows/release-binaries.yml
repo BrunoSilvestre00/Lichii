@@ -216,7 +216,16 @@ jobs:
         shell: pwsh
         run: |
           $zip = Join-Path $env:RUNNER_TEMP 'sccache.zip'
-          Invoke-WebRequest -OutFile $zip https://github.com/mozilla/sccache/releases/download/v0.19.0/sccache-v0.19.0-x86_64-pc-windows-msvc.zip
+          $url = 'https://github.com/mozilla/sccache/releases/download/v0.19.0/sccache-v0.19.0-x86_64-pc-windows-msvc.zip'
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+              Invoke-WebRequest -OutFile $zip -Uri $url -TimeoutSec 60
+              break
+            } catch {
+              if ($attempt -eq 5) { throw }
+              Start-Sleep -Seconds ([Math]::Min(5 * $attempt, 20))
+            }
+          }
           Expand-Archive $zip -DestinationPath (Join-Path $env:RUNNER_TEMP 'sccache')
           $bin = (Get-ChildItem -Recurse -Filter sccache.exe (Join-Path $env:RUNNER_TEMP 'sccache')).DirectoryName
           $bin | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
