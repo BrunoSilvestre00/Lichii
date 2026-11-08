@@ -109,10 +109,11 @@ QColor SampleLogoColor(const QImage& image, int begin, int end) {
     return QColor::fromRgbF(red / weight_total, green / weight_total, blue / weight_total);
 }
 
-void SetLogoBackground(QWidget* widget, const QPixmap& logo) {
-    const QImage image = logo.toImage();
-    const QColor left = SampleLogoColor(image, 0, 50);
-    const QColor right = SampleLogoColor(image, 50, 100);
+QColor LiftLogoAccent(QColor color) {
+    return color.lightness() < 112 ? color.lighter(165) : color;
+}
+
+void SetLogoBackground(QWidget* widget, const QColor& left, const QColor& right) {
     widget->setStyleSheet(
         QStringLiteral(
             "QWidget#LoadingScreen { background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, "
@@ -125,6 +126,12 @@ void SetLogoBackground(QWidget* widget, const QPixmap& logo) {
             .arg(right.red())
             .arg(right.green())
             .arg(right.blue()));
+}
+
+void SetLogoBackground(QWidget* widget, const QPixmap& logo) {
+    const QImage image = logo.toImage();
+    SetLogoBackground(widget, LiftLogoAccent(SampleLogoColor(image, 0, 50)),
+                      LiftLogoAccent(SampleLogoColor(image, 50, 100)));
 }
 
 } // namespace
@@ -147,10 +154,7 @@ LoadingScreen::LoadingScreen(QWidget* parent)
     logo_float_animation->setLoopCount(-1);
     logo_float_animation->setEasingCurve(QEasingCurve::InOutSine);
 
-    // Create a fade out effect to hide this loading screen widget.
-    // When fading opacity, it will fade to the parent widgets background color, which is why we
-    // create an internal widget named fade_widget that we use the effect on, while keeping the
-    // loading screen widget's background color black. This way we can create a fade to black effect
+    // Fade the content layer to reveal the logo-tinted background behind it.
     opacity_effect = new QGraphicsOpacityEffect(this);
     opacity_effect->setOpacity(1);
     ui->fade_parent->setGraphicsEffect(opacity_effect);
@@ -190,6 +194,8 @@ void LoadingScreen::Prepare(Loader::AppLoader& loader) {
     closing_screen = false;
     ui->banner->clear();
     ui->logo->clear();
+    ui->logo->setWordWrap(false);
+    ui->logo->setStyleSheet(QStringLiteral("QLabel#logo { background-color: transparent; }"));
     ui->stage->clear();
     ui->value->clear();
     ui->logo->setVisible(false);
@@ -198,8 +204,17 @@ void LoadingScreen::Prepare(Loader::AppLoader& loader) {
     previous_total = 0;
     previous_stage = VideoCore::LoadCallbackStage::Complete;
 
+    QColor logo_accent{166, 168, 171};
+    QPixmap banner_fallback;
+    bool logo_loaded = false;
     std::vector<u8> buffer;
     if (loader.ReadBanner(buffer) == Loader::ResultStatus::Success) {
+        const QImage banner_image =
+            QImage::fromData(buffer.data(), static_cast<int>(buffer.size()));
+        if (!banner_image.isNull()) {
+            banner_fallback = QPixmap::fromImage(banner_image);
+            logo_accent = LiftLogoAccent(SampleLogoColor(banner_image, 0, 100));
+        }
 #ifdef YUZU_QT_MOVIE_MISSING
         QPixmap map;
         map.loadFromData(buffer.data(), buffer.size());
@@ -222,10 +237,12 @@ void LoadingScreen::Prepare(Loader::AppLoader& loader) {
             ui->logo->setPixmap(map.scaled(360, 100, Qt::KeepAspectRatio,
                                            Qt::SmoothTransformation));
             ui->logo->setVisible(true);
-            QColor logo_color = SampleLogoColor(map.toImage(), 0, 100);
-            logo_color.setAlpha(112);
-            logo_glow->setColor(logo_color);
+            logo_accent = LiftLogoAccent(SampleLogoColor(map.toImage(), 0, 100));
+            QColor glow_color = logo_accent;
+            glow_color.setAlpha(112);
+            logo_glow->setColor(glow_color);
             SetLogoBackground(this, map);
+            logo_loaded = true;
         }
     }
 
@@ -234,6 +251,26 @@ void LoadingScreen::Prepare(Loader::AppLoader& loader) {
         title.clear();
     }
     game_title = QString::fromStdString(title);
+
+    if (!logo_loaded) {
+        if (!banner_fallback.isNull()) {
+            ui->logo->setPixmap(banner_fallback.scaled(360, 100, Qt::KeepAspectRatio,
+                                                       Qt::SmoothTransformation));
+        } else {
+            const QString wordmark = game_title.isEmpty() ? tr("Lichii") : game_title;
+            ui->logo->setText(wordmark);
+            ui->logo->setWordWrap(true);
+            ui->logo->setStyleSheet(
+                QStringLiteral("QLabel#logo { background-color: transparent; color: %1; "
+                               "font-size: 25px; font-weight: 600; letter-spacing: 1px; }")
+                    .arg(logo_accent.name()));
+        }
+        ui->logo->setVisible(true);
+        QColor glow_color = logo_accent;
+        glow_color.setAlpha(112);
+        logo_glow->setColor(glow_color);
+        SetLogoBackground(this, logo_accent, logo_accent);
+    }
 
     slow_shader_compile_start = false;
     OnLoadProgress(VideoCore::LoadCallbackStage::Prepare, 0, 0);
