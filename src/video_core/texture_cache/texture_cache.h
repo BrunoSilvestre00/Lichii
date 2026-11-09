@@ -468,14 +468,7 @@ void TextureCache<P>::TickFrame() {
                         if (heap_budget > budget) {
                             u64 image_bytes = 0;
                             for (const auto [image_id, image] : slot_images) {
-                                // The allocation's real size where there is one: ImageMemoryBytes
-                                // counts ASTC kept as RGBA8 (uneven mips on AMD) at its BC size,
-                                // and the difference would count as not images.
-                                u64 bytes = 0;
-                                if constexpr (requires { image->MemoryBlock(); }) {
-                                    bytes = image->MemoryBlock().size;
-                                }
-                                image_bytes += bytes != 0 ? bytes : ImageMemoryBytes(*image);
+                                image_bytes += ImageAllocationBytes(*image);
                                 if (image->HasScaled()) {
                                     image_bytes += GetScaledImageSizeBytes(*image);
                                 }
@@ -2705,6 +2698,18 @@ u64 TextureCache<P>::ImageMemoryBytes(const Image& image) const {
 }
 
 template <class P>
+u64 TextureCache<P>::ImageAllocationBytes(const Image& image) const {
+    // ImageMemoryBytes counts ASTC kept as RGBA8 (uneven block mips on AMD) at its BC size. Where
+    // usage comes from the driver, the difference would count as memory that isn't images.
+    if constexpr (requires { image.MemoryBlock(); }) {
+        if (const u64 bytes = image.MemoryBlock().size; bytes != 0) {
+            return bytes;
+        }
+    }
+    return ImageMemoryBytes(image);
+}
+
+template <class P>
 void TextureCache<P>::QueueAsyncDecode(Image& image, ImageId image_id) {
     UNIMPLEMENTED_IF(False(image.flags & ImageFlagBits::Converted));
     LOG_DEBUG(HW_GPU, "Queuing async texture decode {:#x}", image.gpu_addr);
@@ -3973,7 +3978,7 @@ void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
     // TickFrame sets the total from the driver, which can be under the sum of these estimates.
     total_used_memory -= (std::min)(total_used_memory, ImageMemoryBytes(slot_images[image_id]));
     const u64 freed_bytes = (image.HasScaled() ? GetScaledImageSizeBytes(image) : 0) +
-                            ImageMemoryBytes(slot_images[image_id]);
+                            ImageAllocationBytes(slot_images[image_id]);
     const GPUVAddr gpu_addr = image.gpu_addr;
     const auto alloc_it = image_allocs_table.find(gpu_addr);
     if (alloc_it == image_allocs_table.end()) {
