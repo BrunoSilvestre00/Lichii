@@ -2623,12 +2623,6 @@ void MainWindow::OnEmulationStopped() {
     }
     game_list->SetFilterFocus();
 
-    // A direct launch that skipped the first-run library style chooser asks for it now, once the
-    // interactive library session is back.
-    if (deferred_library_style_prompt && isVisible()) {
-        deferred_library_style_prompt = false;
-        PromptGameLibraryStyle();
-    }
     tas_label->clear();
     input_subsystem->GetTas()->Stop();
     OnTasStateChanged();
@@ -2676,6 +2670,12 @@ void MainWindow::OnEmulationStopped() {
     } else if (!boot_in_progress) {
         game_list->SetScanEnabled(true);
         game_list->PopulateAsync(UISettings::values.game_dirs);
+        // Ask after cleanup and rescan so a deferred first-run prompt cannot interrupt shutdown.
+        if (deferred_library_style_prompt && isVisible()) {
+            deferred_library_style_prompt = false;
+            PromptGameLibraryStyle();
+            SetGameListMode(UISettings::values.game_list_mode.GetValue());
+        }
     }
 }
 
@@ -4005,17 +4005,14 @@ void MainWindow::OnConfigure() {
         RestoreUIState();
     }
     if (UISettings::values.game_library_style.GetValue() != old_library_style || reset_requested) {
-        if (reset_requested) {
-            // Defaults return to the first-run state, so the library style chooser asks again.
-            UISettings::values.has_selected_game_library_style = false;
-        } else {
-            UISettings::values.has_selected_game_library_style = true;
-        }
+        // Defaults return to the first-run state, so the library style chooser asks again.
+        UISettings::values.has_selected_game_library_style = !reset_requested;
         SetGameListMode(static_cast<UISettings::GameLibraryStyle>(
                                 UISettings::values.game_library_style.GetValue()) ==
                                 UISettings::GameLibraryStyle::Modern
                             ? Settings::GameListMode::GridView
-                            : Settings::GameListMode::TreeView);
+                            : Settings::GameListMode::TreeView,
+                        false);
     }
 
     InitializeHotkeys();

@@ -6,6 +6,7 @@
 #include <QColor>
 #include <QFileInfo>
 #include <QFont>
+#include <QImage>
 #include <QPainter>
 #include <QPainterPath>
 #include <QRectF>
@@ -19,14 +20,30 @@
 
 namespace {
 
+const QImage& Switch2LogoImage() {
+    static const QImage logo = [] {
+        QImage image(512, 512, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::transparent);
+        QSvgRenderer renderer(QStringLiteral(":/img/switch2_logo.svg"));
+        if (renderer.isValid()) {
+            QPainter image_painter(&image);
+            renderer.render(&image_painter, QRectF(image.rect()));
+        } else {
+            image = {};
+        }
+        return image;
+    }();
+    return logo;
+}
+
 void DrawSwitch2Placeholder(QPainter* painter, const QRect& bounds) {
-    static QSvgRenderer switch2_logo(QStringLiteral(":/img/switch2_logo.svg"));
-    if (switch2_logo.isValid()) {
+    const QImage& switch2_logo = Switch2LogoImage();
+    if (!switch2_logo.isNull()) {
         painter->fillRect(bounds, QColor(230, 0, 18));
         const int side = std::min(bounds.width(), bounds.height());
         const QRectF logo_rect(bounds.center().x() - side / 2.0,
                                bounds.center().y() - side / 2.0, side, side);
-        switch2_logo.render(painter, logo_rect);
+        painter->drawImage(logo_rect, switch2_logo);
         return;
     }
 

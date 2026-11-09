@@ -159,6 +159,9 @@ LoadingScreen::LoadingScreen(QWidget* parent)
     setMinimumSize(Layout::MinimumSize::Width, Layout::MinimumSize::Height);
     ui->logo->setMinimumSize(100, 100);
     ui->logo->setMaximumSize(360, 100);
+    auto value_size_policy = ui->value->sizePolicy();
+    value_size_policy.setRetainSizeWhenHidden(true);
+    ui->value->setSizePolicy(value_size_policy);
     ui->value->setMinimumHeight(20);
 
     logo_glow = new QGraphicsDropShadowEffect(ui->logo);

@@ -186,6 +186,7 @@ private:
     bool m_isTreeMode = true;
     bool m_isFlat = false;
     bool m_populating = false;
+    bool suppress_grid_double_click = false;
     bool nup_conversion_running{};
     bool nx_tool_running{};
     u64 reportable_program_id{};

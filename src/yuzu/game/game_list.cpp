@@ -22,6 +22,7 @@
 #include <QScrollBar>
 #include <QScroller>
 #include <QScrollerProperties>
+#include <QTimer>
 #include <QToolButton>
 #include <QVariantAnimation>
 #include <qlayoutitem.h>
@@ -104,10 +105,21 @@ GameList::GameList(FileSys::VirtualFilesystem vfs_, FileSys::ManualContentProvid
     connect(tree_view, &QTreeView::activated, this, &GameList::ValidateEntry);
     connect(tree_view, &QTreeView::customContextMenuRequested, this, &GameList::PopupContextMenu);
 
-    connect(grid_view, &QListView::activated, this, &GameList::ValidateEntry);
+    connect(grid_view, &QListView::doubleClicked, this, [this](const QModelIndex& index) {
+        if (suppress_grid_double_click) {
+            return;
+        }
+        ValidateEntry(index);
+    });
     connect(grid_view, &QListView::clicked, this, [this](const QModelIndex& index) {
+        if (suppress_grid_double_click) {
+            return;
+        }
         const auto type = index.data(GameListItem::TypeRole).value<GameListItemType>();
         if (IsGameDirectoryType(type)) {
+            suppress_grid_double_click = true;
+            QTimer::singleShot(QApplication::doubleClickInterval(), this,
+                               [this] { suppress_grid_double_click = false; });
             ValidateEntry(index);
         }
     });
@@ -295,6 +307,7 @@ void GameList::ResetViewMode() {
     search_field->SetModernMode(mode == Settings::GameListMode::GridView);
     layout->insertWidget(mode == Settings::GameListMode::GridView ? 2 : 0, m_currentView);
 
+    m_currentView->installEventFilter(this);
     auto view = m_currentView->viewport();
     view->installEventFilter(this);
 
@@ -975,11 +988,16 @@ void GameList::SetupScrollAnimation() {
 }
 
 bool GameList::eventFilter(QObject* obj, QEvent* event) {
-    if (obj == m_currentView->viewport() && event->type() == QEvent::KeyPress &&
-        game_list_mode == Settings::GameListMode::GridView && grid_view->rootIndex().isValid()) {
+    if (obj == m_currentView && event->type() == QEvent::KeyPress &&
+        game_list_mode == Settings::GameListMode::GridView) {
         const auto* key_event = static_cast<QKeyEvent*>(event);
-        if (key_event->key() == Qt::Key_Escape || key_event->key() == Qt::Key_Backspace) {
+        if (grid_view->rootIndex().isValid() &&
+            (key_event->key() == Qt::Key_Escape || key_event->key() == Qt::Key_Backspace)) {
             ReturnToGameDirectories();
+            return true;
+        }
+        if (key_event->key() == Qt::Key_Return || key_event->key() == Qt::Key_Enter) {
+            ValidateEntry(grid_view->currentIndex());
             return true;
         }
     }

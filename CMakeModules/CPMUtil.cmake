@@ -126,17 +126,19 @@ endmacro()
 # presigned asset URL after the redirect keeps working.
 function(cpmutil_netrc_args out_args)
     if(DEFINED ENV{GITHUB_TOKEN})
-        if(NOT "${CPMUTIL_NETRC}")
+        if(NOT CPMUTIL_NETRC OR NOT EXISTS "${CPMUTIL_NETRC}")
             set(CPMUTIL_NETRC "${CMAKE_BINARY_DIR}/.cpmutil_netrc" CACHE INTERNAL
                 "Path to a netrc file for GitHub downloads" FORCE)
-            file(WRITE "${CPMUTIL_NETRC}"
-                "machine github.com login oauth2 password $ENV{GITHUB_TOKEN}\n")
+            file(WRITE "${CPMUTIL_NETRC}" "")
         endif()
-        set(result NETRC_FILE "${CPMUTIL_NETRC}")
+        file(CHMOD "${CPMUTIL_NETRC}" PERMISSIONS OWNER_READ OWNER_WRITE)
+        file(WRITE "${CPMUTIL_NETRC}"
+            "machine github.com login oauth2 password $ENV{GITHUB_TOKEN}\n")
+        set(${out_args} NETRC_FILE "${CPMUTIL_NETRC}")
     else()
-        unset(result)
+        unset(${out_args})
     endif()
-    return(PROPAGATE result)
+    return(PROPAGATE ${out_args})
 endfunction()
 
 # Get a package's effective URL.
@@ -1129,6 +1131,12 @@ function(AddCIPackage)
 
             file(READ "${sha512sum_file}" sha512sum_hash)
             string(STRIP "${sha512sum_hash}" sha512sum_hash)
+            if(NOT sha512sum_hash)
+                file(REMOVE "${sha512sum_file}")
+                message(FATAL_ERROR "[CPMUtil] Cached checksum for ${ARTIFACT_NAME} is empty. "
+                    "The stale checksum was removed; re-run CMake configuration "
+                    "to download it again.")
+            endif()
 
             # Caches extracted before hashes were recorded get the hash now
             if(EXISTS "${artifact_cache_path}/.cpm_patch_key")

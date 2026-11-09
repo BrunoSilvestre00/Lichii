@@ -12,6 +12,7 @@
 #include <string>
 #include <utility>
 
+#include <QByteArrayView>
 #include <QCache>
 #include <QCoreApplication>
 #include <QFileInfo>
@@ -164,8 +165,14 @@ public:
         }
         // Decode and scale the card artwork once, then share it through the bounded cache; the
         // item itself stores a cheap copy-on-write reference.
+        const auto icon_hash = qHash(QByteArrayView{
+            reinterpret_cast<const char*>(picture_data.data()),
+            static_cast<qsizetype>(picture_data.size())});
         const QString card_cache_key =
-            QStringLiteral("%1|%2").arg(qulonglong(program_id)).arg(game_path);
+            QStringLiteral("%1|%2|%3")
+                .arg(qulonglong(program_id))
+                .arg(game_path)
+                .arg(static_cast<qulonglong>(icon_hash));
         QPixmap card_picture = has_icon ? CardArtCache::Lookup(card_cache_key) : QPixmap{};
         if (has_icon && card_picture.isNull()) {
             const u32 card_target = std::max<u32>(size, u32{384});
