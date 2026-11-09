@@ -429,7 +429,7 @@ IR::Program TranslateProgram(ObjectPool<IR::Inst>& inst_pool, ObjectPool<IR::Blo
             const auto& mask{env.GpPassthroughMask()};
             for (size_t i = 0; i < mask.size() * 32; ++i) {
                 // Only position and the generics can pass through: the skip mask covers every
-                // attribute word, and a cleared register (Switch 2 titles never write it) would
+                // attribute word, and a cleared register (Donkey Kong Bananza leaves it at 0) would
                 // otherwise declare vertex/instance ids, front face, point coords and tess coords
                 // as geometry inputs (invalid SPIR-V that crashes the AMD driver).
                 const auto attribute = static_cast<IR::Attribute>(i);
