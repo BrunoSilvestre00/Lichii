@@ -242,7 +242,7 @@ constexpr VkBorderColor ConvertBorderColor(const std::array<float, 4>& color) {
     // of ~0.6 GB at area loads on a Steam Deck, where VRAM and system RAM are the same memory and
     // the load peaks got the emulator killed. Integrated GPUs and cards under 6 GiB keep BC.
     using namespace Common::Literals;
-    if (device.IsIntegrated() || device.GetDeviceLocalMemory() < 6_GiB) {
+    if (device.IsIntegrated() || device.GetDeviceLocalHeapSize() < 6_GiB) {
         return false;
     }
     return HasUnevenBlockMips(info) && !IsHugeAstcArray(device, info);
