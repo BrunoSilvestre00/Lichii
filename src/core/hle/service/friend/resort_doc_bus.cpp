@@ -118,8 +118,8 @@ private:
         }
         T value{};
         for (std::size_t i = 0; i < sizeof(T); ++i) {
-            value = static_cast<T>(value | static_cast<T>(static_cast<T>(bytes[offset + i])
-                                                          << (8 * i)));
+            value = static_cast<T>(value |
+                                   static_cast<T>(static_cast<T>(bytes[offset + i]) << (8 * i)));
         }
         out = value;
         offset += sizeof(T);
@@ -162,8 +162,9 @@ void DocBus::Start(u64 node_id, const std::vector<RoomMemberView>& members) {
         ResetLocked();
         node = node_id;
         active.store(true, std::memory_order_release);
-        LOG_INFO(Service_Friend, "ResortBus start node={:016x} ip={} nickname={} online={} epoch={}",
-                 node, IpText(link.OwnIp()), link.Nickname(), link.Connected(), epoch.load());
+        LOG_INFO(Service_Friend,
+                 "ResortBus start node={:016x} ip={} nickname={} online={} epoch={}", node,
+                 IpText(link.OwnIp()), link.Nickname(), link.Connected(), epoch.load());
     }
     OnRoomMembers(members);
     OnConnection(link.Connected());
@@ -203,16 +204,10 @@ void DocBus::ResetLocked() {
 IdentityView DocBus::Identity() {
     std::scoped_lock lock{mutex};
     IdentityView view{};
-    view.active = active.load(std::memory_order_acquire);
-    view.connected = link.Connected();
     view.node = node;
     view.session = session;
     view.ip = link.OwnIp();
     view.lobby = lobby;
-    view.epoch = epoch.load(std::memory_order_acquire);
-    view.peers = static_cast<u32>(peers.size());
-    view.head = head.load(std::memory_order_acquire);
-    view.nickname = link.Nickname();
     return view;
 }
 
@@ -497,7 +492,6 @@ PollResult DocBus::Poll(u32 collection, u32 consumer_epoch, u64 cursor, u32 max_
         const std::size_t size = ViewSize(doc_key.key.size(), entry.body.size());
         if (size > max_bytes) {
             ++oversize_count;
-            result.needed = std::max(result.needed, static_cast<u32>(size));
             if ((oversize_count & (oversize_count - 1)) == 0) {
                 LOG_WARNING(Service_Friend,
                             "ResortBus poll skipped {:08x}/{}: {} bytes do not fit a {} byte "
@@ -549,26 +543,17 @@ void DocBus::Touch(const DocKey& doc_key, Entry& entry) {
 
 DocView DocBus::MakeView(const DocKey& doc_key, const Entry& entry) const {
     DocView view{};
-    view.scope = doc_key.scope;
     view.collection = doc_key.collection;
     view.key = doc_key.key;
     view.owner = entry.owner;
-    view.stamp = entry.stamp;
-    view.seq = entry.seq;
-    view.flags = entry.flags & DocFlag::WireMask;
-    if (entry.cause == node) {
-        view.flags |= DocFlag::Local;
-    }
-    if (entry.erased) {
-        view.flags |= DocFlag::Erased | DocFlag::Deleted;
-    }
     view.body = entry.body;
     return view;
 }
 
 DocBus::Record DocBus::MakeRecord(const DocKey& doc_key, const Entry& entry) const {
-    return Record{doc_key.collection, doc_key.key, entry.owner,
-                  entry.stamp,        entry.flags & DocFlag::WireMask, entry.body};
+    return Record{
+        doc_key.collection, doc_key.key, entry.owner, entry.stamp, entry.flags & DocFlag::WireMask,
+        entry.body};
 }
 
 std::optional<u32> DocBus::OwnerAddress(u64 scope, u64 owner) const {
@@ -583,7 +568,8 @@ std::optional<u32> DocBus::OwnerAddress(u64 scope, u64 owner) const {
 void DocBus::Forward(u64 scope, const DocKey& doc_key, const Entry& entry) {
     const auto target = OwnerAddress(scope, entry.owner);
     if (!target) {
-        LOG_WARNING(Service_Friend, "ResortBus write to {:08x}/{} stays local: owner {:016x} unknown",
+        LOG_WARNING(Service_Friend,
+                    "ResortBus write to {:08x}/{} stays local: owner {:016x} unknown",
                     doc_key.collection, doc_key.key, entry.owner);
         return;
     }
@@ -623,8 +609,8 @@ void DocBus::Depart(u64 node_id, const char* reason) {
         }
         peers.erase(it);
     }
-    LOG_INFO(Service_Friend, "ResortBus peer {:016x} {} at {} gone ({}), {} docs removed",
-             node_id, nickname, IpText(ip), reason, removed);
+    LOG_INFO(Service_Friend, "ResortBus peer {:016x} {} at {} gone ({}), {} docs removed", node_id,
+             nickname, IpText(ip), reason, removed);
 }
 
 void DocBus::EndSession(Peer& peer) {
@@ -632,7 +618,8 @@ void DocBus::EndSession(Peer& peer) {
         return;
     }
     const u32 removed = EraseOwned(peer.session, std::nullopt);
-    LOG_INFO(Service_Friend, "ResortBus {} ({}) left lobby {:016x} (session {:016x}), {} docs "
+    LOG_INFO(Service_Friend,
+             "ResortBus {} ({}) left lobby {:016x} (session {:016x}), {} docs "
              "removed",
              peer.nickname, IpText(peer.ip), peer.lobby, peer.session, removed);
     peer.session = 0;
@@ -792,8 +779,8 @@ void DocBus::HandleHello(u64 sender, Peer& peer, const Header& header,
     peer.nickname = std::move(nickname);
     peer.lobby = header.scope;
     if (their_ip != peer.ip) {
-        LOG_WARNING(Service_Friend, "ResortBus hello from {} claims address {}",
-                    IpText(peer.ip), IpText(their_ip));
+        LOG_WARNING(Service_Friend, "ResortBus hello from {} claims address {}", IpText(peer.ip),
+                    IpText(their_ip));
     }
     LOG_DEBUG(Service_Friend,
               "ResortBus hello from {} ({}) node={:016x} lobby={:016x} session={:016x} flags={:x}",
@@ -818,8 +805,7 @@ void DocBus::HandleHello(u64 sender, Peer& peer, const Header& header,
     SendMessage(MessageType::SnapshotEnd, lobby, std::move(writer.data), target, 0);
 }
 
-void DocBus::HandleBye(u64 sender, Peer& peer, const Header& header,
-                       std::span<const u8> payload) {
+void DocBus::HandleBye(u64 sender, Peer& peer, const Header& header, std::span<const u8> payload) {
     Reader reader{payload};
     u8 reason{};
     if (!reader.U8(reason)) {
@@ -851,12 +837,12 @@ bool DocBus::ReadRecords(std::span<const u8> payload, std::vector<Record>& out) 
         u32 body_size{};
         std::span<const u8> key;
         std::span<const u8> body;
-        if (!reader.U32(record.collection) || !reader.U16(key_size) ||
-            !reader.U16(reserved16) || !reader.U64(record.owner) ||
-            !reader.U64(record.stamp.lamport) || !reader.U64(record.stamp.node) ||
-            !reader.U32(record.flags) || !reader.U32(body_size) || key_size == 0 ||
-            key_size > MaxKeySize || body_size > MaxBodySize || !reader.Bytes(key_size, key) ||
-            !reader.Bytes(body_size, body) || record.owner == 0 || record.stamp.node == 0) {
+        if (!reader.U32(record.collection) || !reader.U16(key_size) || !reader.U16(reserved16) ||
+            !reader.U64(record.owner) || !reader.U64(record.stamp.lamport) ||
+            !reader.U64(record.stamp.node) || !reader.U32(record.flags) || !reader.U32(body_size) ||
+            key_size == 0 || key_size > MaxKeySize || body_size > MaxBodySize ||
+            !reader.Bytes(key_size, key) || !reader.Bytes(body_size, body) || record.owner == 0 ||
+            record.stamp.node == 0) {
             return false;
         }
         record.key.assign(key.begin(), key.end());
@@ -886,9 +872,10 @@ void DocBus::HandleRecords(u64 sender, Peer& peer, const Header& header,
     std::vector<Record> retracts;
     for (auto& record : records) {
         if (expected_owner == 0 || record.owner != expected_owner) {
-            LOG_WARNING(Service_Friend,
-                        "ResortBus rejected {:08x}/{} from {:016x}: owner {:016x} is not the sender",
-                        record.collection, record.key, sender, record.owner);
+            LOG_WARNING(
+                Service_Friend,
+                "ResortBus rejected {:08x}/{} from {:016x}: owner {:016x} is not the sender",
+                record.collection, record.key, sender, record.owner);
             continue;
         }
         if ((record.flags & DocFlag::Retract) != 0) {
@@ -1092,8 +1079,8 @@ void DocBus::OnConnection(bool connected) {
     }
     LOG_INFO(Service_Friend, "ResortBus online as {} node={:016x} lobby={:016x} session={:016x}",
              IpText(link.OwnIp()), node, lobby, session);
-    SendHello(static_cast<u8>(HelloFlag::WantRoomDocs |
-                              (lobby != 0 ? HelloFlag::WantLobbyDocs : 0)));
+    SendHello(
+        static_cast<u8>(HelloFlag::WantRoomDocs | (lobby != 0 ? HelloFlag::WantLobbyDocs : 0)));
     SendOwned(RoomScope, MessageType::Snapshot, std::nullopt);
     if (lobby != 0) {
         SendOwned(lobby, MessageType::Snapshot, std::nullopt);

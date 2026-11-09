@@ -6,6 +6,7 @@
 #include <mutex>
 #include <vector>
 
+#include "common/game_presets.h"
 #include "common/logging.h"
 #include "common/settings.h"
 #include "core/core.h"
@@ -18,7 +19,6 @@ namespace Core::HLE::ResortBus {
 
 namespace {
 
-constexpr u64 ResortProgramId = 0x04008E001F098000ULL;
 constexpr u64 MaxInput = 0x200;
 constexpr u64 MaxOutput = 0x10000;
 constexpr auto StationWaitRestart = std::chrono::seconds{1};
@@ -67,7 +67,7 @@ s32 FilterGameError(s32 kind, u32 raiser) {
 } // Anonymous namespace
 
 s32 HandleSvc(Core::System& system, Kernel::KProcess& process, std::span<const u64, 8> args) {
-    if (Settings::GetCurrentProgramID() != ResortProgramId) {
+    if (Settings::GetCurrentProgramID() != Settings::SwitchSportsResortProgramId) {
         return ResultInactive;
     }
     auto& memory = process.GetMemory();

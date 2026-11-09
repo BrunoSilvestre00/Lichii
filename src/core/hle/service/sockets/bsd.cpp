@@ -1397,8 +1397,8 @@ std::pair<s32, Errno> BSD_USA::SocketImpl(Domain domain, Type type, Protocol pro
 
     std::shared_ptr<Network::SocketBase> socket;
     auto room_member = Network::GetRoomMember().lock();
-    const bool emulated_ping = type == Type::RAW && protocol == Protocol::ICMP &&
-                               Network::SwitchSportsLanFixesEnabled();
+    const bool emulated_ping =
+        type == Type::RAW && protocol == Protocol::ICMP && Network::SwitchSportsLanFixesEnabled();
     if ((room_member && room_member->IsConnected()) || emulated_ping) {
         socket = std::make_shared<Network::ProxySocket>();
     } else {
@@ -2430,12 +2430,12 @@ std::optional<std::pair<s32, Errno>> BSD_USA::SendMMsgImpl(HLERequestContext& ct
                     return Translate(descriptor->socket->SendTo(FLAG_MSG_DONTWAIT, rest, &addr_in));
                 }
                 const bool was_readable = IsEmulatedReadable(*descriptor->socket);
-                const auto sent =
+                const auto send_result =
                     Translate(descriptor->socket->SendTo(FLAG_MSG_DONTWAIT, rest, &addr_in));
                 if (!was_readable && IsEmulatedReadable(*descriptor->socket)) {
                     select_notifier->NotifyChange();
                 }
-                return sent;
+                return send_result;
             }();
             if (ret < 0) {
                 return {-1, send_errno};

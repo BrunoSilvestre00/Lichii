@@ -7,6 +7,7 @@
 #include <openssl/evp.h>
 
 #include "common/fs/path_util.h"
+#include "common/game_presets.h"
 #include "common/hex_util.h"
 #include "common/settings.h"
 #include "common/uuid.h"
@@ -386,7 +387,7 @@ Result IApplicationFunctions::GetPseudoDeviceId(Out<Common::UUID> out_pseudo_dev
     auto const algorithm = EVP_sha1();
     EVP_DigestInit_ex(ctx, algorithm, nullptr);
     EVP_DigestUpdate(ctx, &seed, sizeof(seed));
-    if (m_applet->program_id == 0x04008E001F098000ULL) {
+    if (m_applet->program_id == Settings::SwitchSportsResortProgramId) {
         const auto nand = Common::FS::GetEdenPathString(Common::FS::EdenPath::NANDDir);
         EVP_DigestUpdate(ctx, nand.data(), nand.size());
         if (const auto user = system.GetProfileManager().GetUser(0)) {

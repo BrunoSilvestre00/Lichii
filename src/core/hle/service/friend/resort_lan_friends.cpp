@@ -7,6 +7,7 @@
 #include <chrono>
 #include <string_view>
 
+#include "common/game_presets.h"
 #include "common/logging.h"
 #include "common/settings.h"
 #include "core/hle/service/friend/resort_doc_bus.h"
@@ -18,7 +19,6 @@ namespace Service::Friend {
 
 namespace {
 
-constexpr u64 ResortProgramId = 0x04008E001F098000ULL;
 constexpr std::string_view HostingTag = " [hosting Friend Lobby]";
 constexpr std::array<u8, 0x10> HostingOnUid{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5e, 0xed,
                                             0x00, 0x00, 0x00, 0x00, 0x54, 0x53, 0x4f, 0x48};
@@ -54,7 +54,7 @@ std::string StripHostingTag(const std::string& version) {
 } // Anonymous namespace
 
 bool ResortLanFriendsActive() {
-    return Settings::GetCurrentProgramID() == ResortProgramId;
+    return Settings::GetCurrentProgramID() == Settings::SwitchSportsResortProgramId;
 }
 
 bool HandleResortHostingSignal(const Common::UUID& uid) {
@@ -72,7 +72,7 @@ bool HandleResortHostingSignal(const Common::UUID& uid) {
         if (hosting_on) {
             version += HostingTag;
         }
-        if (info.id == ResortProgramId && version != info.version) {
+        if (info.id == Settings::SwitchSportsResortProgramId && version != info.version) {
             info.version = std::move(version);
             room_member->SendGameInfo(info);
         }
@@ -122,7 +122,8 @@ std::vector<ResortRoomFriend> CollectResortRoomHosts() {
     const auto own_ip = room_member->GetFakeIpAddress();
     for (const auto& member : room_member->GetMemberInformation()) {
         if (member.fake_ip == own_ip || member.nickname.empty() ||
-            member.game_info.id != ResortProgramId || !IsHostingVersion(member.game_info.version)) {
+            member.game_info.id != Settings::SwitchSportsResortProgramId ||
+            !IsHostingVersion(member.game_info.version)) {
             continue;
         }
         hosts.push_back({member.nickname, member.fake_ip});

@@ -4,7 +4,6 @@
 #pragma once
 
 #include <atomic>
-#include <chrono>
 #include <compare>
 #include <map>
 #include <mutex>
@@ -65,8 +64,6 @@ constexpr u32 Deleted = 1U << 0;
 constexpr u32 Sticky = 1U << 1;
 constexpr u32 RoomWide = 1U << 2;
 constexpr u32 Retract = 1U << 3;
-constexpr u32 Local = 1U << 4;
-constexpr u32 Erased = 1U << 5;
 constexpr u32 WireMask = Deleted | Sticky | RoomWide;
 } // namespace DocFlag
 
@@ -94,13 +91,9 @@ struct DocKey {
 };
 
 struct DocView {
-    u64 scope{};
     u32 collection{};
     std::string key;
     u64 owner{};
-    Stamp stamp{};
-    u32 flags{};
-    u64 seq{};
     std::vector<u8> body;
 };
 
@@ -108,23 +101,16 @@ struct PollResult {
     u32 epoch{};
     bool reset{};
     bool more{};
-    u32 needed{};
     u64 next_cursor{};
     u64 head{};
     std::vector<DocView> changes;
 };
 
 struct IdentityView {
-    bool active{};
-    bool connected{};
     u64 node{};
     u64 session{};
     u32 ip{};
     u64 lobby{};
-    u32 epoch{};
-    u32 peers{};
-    u64 head{};
-    std::string nickname;
 };
 
 struct RoomMemberView {

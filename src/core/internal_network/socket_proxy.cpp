@@ -330,8 +330,8 @@ std::pair<s32, Errno> ProxySocket::SendTo(u32 flags, std::span<const u8> message
         static std::atomic<u32> next_ephemeral_port{0};
         SockAddrIn ephemeral{};
         ephemeral.family = Domain::INET;
-        ephemeral.portno = static_cast<u16>(
-            EphemeralPortFirst + next_ephemeral_port.fetch_add(1) % EphemeralPortCount);
+        ephemeral.portno = static_cast<u16>(EphemeralPortFirst +
+                                            next_ephemeral_port.fetch_add(1) % EphemeralPortCount);
         Bind(ephemeral);
     }
 

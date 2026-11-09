@@ -31,6 +31,7 @@
 
 #include "common/assert.h"
 #include "common/common_types.h"
+#include "common/game_presets.h"
 #include "common/logging.h"
 #include "common/settings.h"
 #include "core/internal_network/network.h"
@@ -763,8 +764,7 @@ std::optional<IPv4Address> GetRoomIPv4Address() {
 }
 
 bool SwitchSportsLanFixesEnabled() {
-    constexpr u64 NintendoSwitchSportsResort = 0x04008E001F098000ULL;
-    return Settings::GetCurrentProgramID() == NintendoSwitchSportsResort;
+    return Settings::GetCurrentProgramID() == Settings::SwitchSportsResortProgramId;
 }
 
 std::string IPv4AddressToString(IPv4Address ip_addr) {

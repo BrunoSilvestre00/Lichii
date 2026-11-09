@@ -4,6 +4,7 @@
 #include <memory>
 #include <mutex>
 
+#include "common/game_presets.h"
 #include "common/logging.h"
 #include "common/random.h"
 #include "core/hle/service/friend/resort_doc_bus.h"
@@ -14,8 +15,6 @@
 namespace Service::Friend::ResortBus {
 
 namespace {
-
-constexpr u64 ResortProgramId = 0x04008E001F098000ULL;
 
 u32 ToU32(const Network::IPv4Address& ip) {
     return static_cast<u32>(ip[0]) << 24 | static_cast<u32>(ip[1]) << 16 |
@@ -57,10 +56,9 @@ public:
         }
         Network::ProxyPacket packet{};
         packet.local_endpoint = {Network::Domain::INET, member->GetFakeIpAddress(), WirePort};
-        packet.remote_endpoint = {Network::Domain::INET,
-                                  target_ip ? ToAddress(*target_ip)
-                                            : Network::IPv4Address{255, 255, 255, 255},
-                                  WirePort};
+        packet.remote_endpoint = {
+            Network::Domain::INET,
+            target_ip ? ToAddress(*target_ip) : Network::IPv4Address{255, 255, 255, 255}, WirePort};
         packet.protocol = static_cast<Network::Protocol>(WireProtocol);
         packet.broadcast = !target_ip.has_value();
         packet.data = std::move(message);
@@ -79,7 +77,7 @@ std::vector<RoomMemberView> CollectMembers(const Network::RoomMember& member) {
 struct Runtime {
     std::mutex lifecycle;
     RoomLink link;
-    DocBus bus{link, ResortProgramId};
+    DocBus bus{link, Settings::SwitchSportsResortProgramId};
     std::weak_ptr<Network::RoomMember> bound;
     Network::RoomMember::CallbackHandle<Network::ProxyPacket> packet_handle;
     Network::RoomMember::CallbackHandle<Network::RoomInformation> info_handle;
@@ -117,8 +115,8 @@ bool StartResortDocBus() {
                 }
                 runtime.bus.OnDatagram(ToU32(packet.local_endpoint.ip), packet.data);
             });
-        runtime.info_handle = member->BindOnRoomInformationChanged(
-            [&runtime](const Network::RoomInformation&) {
+        runtime.info_handle =
+            member->BindOnRoomInformationChanged([&runtime](const Network::RoomInformation&) {
                 if (const auto current = runtime.bound.lock()) {
                     runtime.bus.OnRoomMembers(CollectMembers(*current));
                 }

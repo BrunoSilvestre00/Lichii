@@ -8,6 +8,7 @@
 #include <array>
 #include <cinttypes>
 #include <cstring>
+#include <map>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -1071,12 +1072,14 @@ constexpr std::array BuiltInCodeFixes{
     BuiltInCodeFix{
         .build_id = "3941550A42845731651BCD05EDBB47031FFCCA26",
         .words = SwitchSportsResortRecvErrorWords,
-        .description = "Friend Lobby LAN receive errors stay silent (Nintendo Switch Sports Resort)",
+        .description =
+            "Friend Lobby LAN receive errors stay silent (Nintendo Switch Sports Resort)",
     },
     BuiltInCodeFix{
         .build_id = "3941550A42845731651BCD05EDBB47031FFCCA26",
         .words = SwitchSportsResortErrorFilterWords,
-        .description = "Friend Lobby LAN-only errors filtered by Eden (Nintendo Switch Sports Resort)",
+        .description =
+            "Friend Lobby LAN-only errors filtered by Eden (Nintendo Switch Sports Resort)",
     },
     BuiltInCodeFix{
         .build_id = "3941550A42845731651BCD05EDBB47031FFCCA26",
@@ -1128,14 +1131,14 @@ constexpr std::array BuiltInCodeFixes{
     BuiltInCodeFix{
         .build_id = "3941550A42845731651BCD05EDBB47031FFCCA26",
         .words = SwitchSportsResortBotFillWords,
-        .description =
-            "Friend Lobby LAN fills CPU player slots like online play (Nintendo Switch Sports Resort)",
+        .description = "Friend Lobby LAN fills CPU player slots like online play (Nintendo Switch "
+                       "Sports Resort)",
     },
     BuiltInCodeFix{
         .build_id = "3941550A42845731651BCD05EDBB47031FFCCA26",
         .words = SwitchSportsResortBotOwnerWords,
-        .description =
-            "Friend Lobby LAN matches CPU player owners by console address (Nintendo Switch Sports Resort)",
+        .description = "Friend Lobby LAN matches CPU player owners by console address (Nintendo "
+                       "Switch Sports Resort)",
     },
     BuiltInCodeFix{
         .build_id = "3941550A42845731651BCD05EDBB47031FFCCA26",
@@ -1148,33 +1151,41 @@ constexpr std::array BuiltInCodeFixes{
 void ApplyBuiltInCodeFixes(const std::array<u8, 0x20>& build_id_bytes, std::span<u8> image) {
     const auto build_id_raw = Common::HexToString(build_id_bytes, true);
     const auto build_id = build_id_raw.substr(0, build_id_raw.find_last_not_of('0') + 1);
+    std::map<u32, u32> patched;
+    std::vector<std::string_view> applied;
     for (const auto& fix : BuiltInCodeFixes) {
         if (build_id != fix.build_id) {
             continue;
         }
-        const auto mismatch = std::ranges::find_if(fix.words, [&](const CodeWord& word) {
-            if (word.image_offset + sizeof(u32) > image.size()) {
-                return true;
-            }
-            u32 current{};
-            std::memcpy(&current, image.data() + word.image_offset, sizeof(current));
-            return current != word.original;
-        });
-        if (mismatch != fix.words.end()) {
-            u32 current{};
-            if (mismatch->image_offset + sizeof(u32) <= image.size()) {
-                std::memcpy(&current, image.data() + mismatch->image_offset, sizeof(current));
-            }
-            LOG_WARNING(Loader,
-                        "Built-in fix \"{}\" skipped: unexpected instruction {:#010x} at {:#x}",
-                        fix.description, current, mismatch->image_offset);
-            continue;
-        }
         for (const auto& word : fix.words) {
-            std::memcpy(image.data() + word.image_offset, &word.replacement,
-                        sizeof(word.replacement));
+            if (word.image_offset + sizeof(u32) > image.size()) {
+                LOG_WARNING(Loader,
+                            "Built-in fixes skipped: \"{}\" patches {:#x}, outside the image",
+                            fix.description, word.image_offset);
+                return;
+            }
+            u32 current{};
+            if (const auto it = patched.find(word.image_offset); it != patched.end()) {
+                current = it->second;
+            } else {
+                std::memcpy(&current, image.data() + word.image_offset, sizeof(current));
+            }
+            if (current != word.original) {
+                LOG_WARNING(Loader,
+                            "Built-in fixes skipped: \"{}\" found unexpected instruction {:#010x} "
+                            "at {:#x}",
+                            fix.description, current, word.image_offset);
+                return;
+            }
+            patched.insert_or_assign(word.image_offset, word.replacement);
         }
-        LOG_INFO(Loader, "Applied built-in fix: {}", fix.description);
+        applied.push_back(fix.description);
+    }
+    for (const auto& [offset, value] : patched) {
+        std::memcpy(image.data() + offset, &value, sizeof(value));
+    }
+    for (const auto description : applied) {
+        LOG_INFO(Loader, "Applied built-in fix: {}", description);
     }
 }
 } // Anonymous namespace
@@ -1320,9 +1331,8 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
         std::copy(pi_header.begin() + sizeof(NSOHeader), pi_header.end(), patchable_section.data());
     }
 
-    ApplyBuiltInCodeFixes(nso_header.build_id,
-                          std::span<u8>(codeset.memory.data() + module_start,
-                                        codeset.memory.size() - module_start));
+    ApplyBuiltInCodeFixes(nso_header.build_id, std::span<u8>(codeset.memory.data() + module_start,
+                                                             codeset.memory.size() - module_start));
 
     // Mario Kart World selects a 1- or 2-vblank frame mode in its main loop. Force its native
     // 30 FPS mode, or let it choose dynamically using the whole frame time (CPU + GPU wait).

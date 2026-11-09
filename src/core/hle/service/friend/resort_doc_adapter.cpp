@@ -209,6 +209,15 @@ bool NextField(std::span<const u8> in, std::size_t& pos, u32& field, u32& wire,
     }
 }
 
+void SetEntry(Entries& entries, std::string_view key, std::vector<u8> value) {
+    auto it = std::ranges::find(entries, key, &Entries::value_type::first);
+    if (it != entries.end()) {
+        it->second = std::move(value);
+    } else {
+        entries.emplace_back(std::string{key}, std::move(value));
+    }
+}
+
 std::optional<Entries> ParseMap(std::span<const u8> body) {
     Entries entries;
     std::size_t pos = 0;
@@ -240,12 +249,7 @@ std::optional<Entries> ParseMap(std::span<const u8> body) {
                 value.assign(b.begin(), b.end());
             }
         }
-        auto it = std::ranges::find(entries, key, &Entries::value_type::first);
-        if (it != entries.end()) {
-            it->second = std::move(value);
-        } else {
-            entries.emplace_back(std::move(key), std::move(value));
-        }
+        SetEntry(entries, key, std::move(value));
     }
     return entries;
 }
@@ -260,20 +264,12 @@ std::vector<u8> EncodeMap(const Entries& entries) {
     std::vector<u8> out;
     for (const auto& [key, value] : entries) {
         std::vector<u8> entry;
-        PutBytesField(entry, 1, std::span<const u8>{reinterpret_cast<const u8*>(key.data()), key.size()});
+        PutBytesField(entry, 1,
+                      std::span<const u8>{reinterpret_cast<const u8*>(key.data()), key.size()});
         PutBytesField(entry, 2, value);
         PutBytesField(out, 1, entry);
     }
     return out;
-}
-
-void SetEntry(Entries& entries, std::string_view key, std::vector<u8> value) {
-    auto it = std::ranges::find(entries, key, &Entries::value_type::first);
-    if (it != entries.end()) {
-        it->second = std::move(value);
-    } else {
-        entries.emplace_back(std::string{key}, std::move(value));
-    }
 }
 
 std::vector<u8> TimestampValue(u64 ms) {
@@ -289,7 +285,8 @@ std::vector<u8> TimestampValue(u64 ms) {
 
 std::vector<u8> StringValue(std::string_view text) {
     std::vector<u8> value;
-    PutBytesField(value, 7, std::span<const u8>{reinterpret_cast<const u8*>(text.data()), text.size()});
+    PutBytesField(value, 7,
+                  std::span<const u8>{reinterpret_cast<const u8*>(text.data()), text.size()});
     return value;
 }
 
@@ -335,8 +332,8 @@ void ObserveTimes(State& state, const Entries& entries) {
         if (key != "uts" && key != "utime") {
             continue;
         }
-        if (const auto ms = ValueMilliseconds(value); ms && *ms > state.max_seen_ms &&
-                                                       *ms < 0x7FFFFFFFFFFFULL) {
+        if (const auto ms = ValueMilliseconds(value);
+            ms && *ms > state.max_seen_ms && *ms < 0x7FFFFFFFFFFFULL) {
             state.max_seen_ms = *ms;
         }
     }
@@ -417,7 +414,8 @@ void MaybeEnterLobby() {
     }
     if (IsResortHosting() || ResolveResortLobbyScope()) {
         const auto status = EnterResortLobby(0);
-        LOG_INFO(Service_Friend, "ResortDocs auto lobby entry: status {}", static_cast<u32>(status));
+        LOG_INFO(Service_Friend, "ResortDocs auto lobby entry: status {}",
+                 static_cast<u32>(status));
     }
 }
 
@@ -710,18 +708,20 @@ s32 PublishDocument(State& state, u32 collection, const std::string& id, std::sp
         return 0;
     }
     if (id.empty()) {
-        LOG_WARNING(Service_Friend, "ResortDocs {} write without a document id", CollectionName(collection));
+        LOG_WARNING(Service_Friend, "ResortDocs {} write without a document id",
+                    CollectionName(collection));
         return 5;
     }
     auto incoming = ParseMap(body);
     if (!incoming) {
-        LOG_WARNING(Service_Friend, "ResortDocs {}/{}: body is not a MapValue", CollectionName(collection), id);
+        LOG_WARNING(Service_Friend, "ResortDocs {}/{}: body is not a MapValue",
+                    CollectionName(collection), id);
         return 6;
     }
     auto& bus = GetResortDocBus();
     const bool creates_huddle = collection == RoomHash && replace && IsOwnRoom(state, id);
-    const bool joins_huddle = kind == 2 && collection == RoomrHash && !id.ends_with("leave") &&
-                              !IsOwnRoom(state, id);
+    const bool joins_huddle =
+        kind == 2 && collection == RoomrHash && !id.ends_with("leave") && !IsOwnRoom(state, id);
     if (creates_huddle || joins_huddle) {
         CloseStaleHuddles(state, bus, id);
         state.joined_huddle = joins_huddle ? id : std::string{};
@@ -969,9 +969,10 @@ s32 LobbyQuery(State& state, bool has_session, bool at_start) {
     }
     if (lan.rejoin_gen != gen) {
         lan.rejoin_gen = gen;
-        LOG_INFO(Service_Friend,
-                 "ResortDocs LAN session is from lobby host generation {}, host is on {}: rejoining",
-                 lan.joined_gen, gen);
+        LOG_INFO(
+            Service_Friend,
+            "ResortDocs LAN session is from lobby host generation {}, host is on {}: rejoining",
+            lan.joined_gen, gen);
     }
     return LobbyRejoin;
 }
@@ -1027,7 +1028,8 @@ s32 GamePublish(Core::Memory::Memory& memory, std::span<const u8> record) {
         return 2;
     }
     if (body_len > MaxBodySize) {
-        LOG_WARNING(Service_Friend, "ResortDocs kind {} body of {} bytes is too large", kind, body_len);
+        LOG_WARNING(Service_Friend, "ResortDocs kind {} body of {} bytes is too large", kind,
+                    body_len);
         return 3;
     }
     std::vector<u8> body(static_cast<std::size_t>(body_len));
@@ -1077,17 +1079,15 @@ s32 GamePoll(u64 out_address, u32 capacity, std::vector<u8>& out) {
         const u32 lobby_host = static_cast<u32>(identity.lobby);
         if (identity.lobby != 0 && lobby_host != identity.ip &&
             RecentResortUnicastTo(lobby_host, 1000)) {
-            LOG_INFO(Service_Friend, "ResortDocs staying in lobby {:016x}: still connected to its host",
+            LOG_INFO(Service_Friend,
+                     "ResortDocs staying in lobby {:016x}: still connected to its host",
                      identity.lobby);
         } else if (identity.lobby != 0) {
             bus.LeaveLobby();
         }
     }
     if (const auto target = TakeResortUnicastTarget(); target && !IsResortHosting()) {
-        const u32 target_ip = static_cast<u32>((*target)[0]) << 24 |
-                              static_cast<u32>((*target)[1]) << 16 |
-                              static_cast<u32>((*target)[2]) << 8 | static_cast<u32>((*target)[3]);
-        const u64 scope = LobbyScopeFromHostIp(target_ip);
+        const u64 scope = LobbyScopeFromHostIp(IpValue(*target));
         if (state.lobby != scope) {
             for (const auto& host : CollectResortRoomHosts()) {
                 if (host.ip != *target) {
@@ -1098,8 +1098,8 @@ s32 GamePoll(u64 out_address, u32 capacity, std::vector<u8>& out) {
                 }
                 const auto status = EnterResortLobby(scope);
                 LOG_INFO(Service_Friend,
-                         "ResortDocs joined {}'s lobby from game traffic: status {}",
-                         host.nickname, static_cast<u32>(status));
+                         "ResortDocs joined {}'s lobby from game traffic: status {}", host.nickname,
+                         static_cast<u32>(status));
                 break;
             }
         }

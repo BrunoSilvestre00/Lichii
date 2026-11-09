@@ -10,6 +10,7 @@
 #include <queue>
 #include <vector>
 #include "common/common_funcs.h"
+#include "common/game_presets.h"
 #include "common/logging.h"
 #include "common/uuid.h"
 #include "core/core.h"
@@ -251,7 +252,7 @@ private:
                 entry.account_id = ResortFriendAccountId(hosts[i].ip);
                 const auto name_length = std::min<std::size_t>(hosts[i].nickname.size(), 0x20);
                 std::copy_n(hosts[i].nickname.begin(), name_length, entry.nickname.begin());
-                entry.presence.last_played_application_id = 0x04008E001F098000ULL;
+                entry.presence.last_played_application_id = Settings::SwitchSportsResortProgramId;
                 entry.presence.status = 2;
                 entry.presence.is_same_group = 1;
                 entry.is_valid = 1;
