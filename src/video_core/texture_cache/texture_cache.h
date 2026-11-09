@@ -368,6 +368,25 @@ void TextureCache<P>::TickFrame() {
             scratch->release();
         }
     }
+    if constexpr (requires { runtime.CurrentTick(); }) {
+        while (!gpu_sentenced_images.empty() &&
+               runtime.IsFree(gpu_sentenced_images.front().tick)) {
+            gpu_sentenced_bytes -= gpu_sentenced_images.front().bytes;
+            gpu_sentenced_images.pop_front();
+        }
+    }
+    // If we can obtain the memory info, use it instead of the estimate. Read before the budget
+    // check below, which counts what isn't images from it.
+    if (runtime.CanReportMemoryUsage()) {
+        total_used_memory = runtime.GetDeviceMemoryUsage();
+        // Images the collector deleted keep their memory for TICKS_TO_DESTROY frames: counting
+        // it kept the collector in aggressive mode, deleting 40+ images a frame for frames after
+        // it had freed enough (title 1: frames over 100 ms for seconds at a time).
+        for (const u64 bytes : sentenced_image_bytes) {
+            total_used_memory -= (std::min)(total_used_memory, bytes);
+        }
+        total_used_memory -= (std::min)(total_used_memory, gpu_sentenced_bytes);
+    }
     if constexpr (HAS_DEVICE_MEMORY_INFO) {
         // Switch 2 titles (native tiling) stream far more texture data than Eden's thresholds
         // were tuned for: title 1's attract loop alone keeps ~5.3 GB resident, so the collector
@@ -480,24 +499,6 @@ void TextureCache<P>::TickFrame() {
                 }
             }
         }
-    }
-    if constexpr (requires { runtime.CurrentTick(); }) {
-        while (!gpu_sentenced_images.empty() &&
-               runtime.IsFree(gpu_sentenced_images.front().tick)) {
-            gpu_sentenced_bytes -= gpu_sentenced_images.front().bytes;
-            gpu_sentenced_images.pop_front();
-        }
-    }
-    // If we can obtain the memory info, use it instead of the estimate.
-    if (runtime.CanReportMemoryUsage()) {
-        total_used_memory = runtime.GetDeviceMemoryUsage();
-        // Images the collector deleted keep their memory for TICKS_TO_DESTROY frames: counting
-        // it kept the collector in aggressive mode, deleting 40+ images a frame for frames after
-        // it had freed enough (title 1: frames over 100 ms for seconds at a time).
-        for (const u64 bytes : sentenced_image_bytes) {
-            total_used_memory -= (std::min)(total_used_memory, bytes);
-        }
-        total_used_memory -= (std::min)(total_used_memory, gpu_sentenced_bytes);
     }
     // EDEN_NX2_MEM_TRACE=1: every 2 s, what the cache holds next to what the process and the
     // driver report (memory climbs).
