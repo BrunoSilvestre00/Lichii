@@ -468,7 +468,14 @@ void TextureCache<P>::TickFrame() {
                         if (heap_budget > budget) {
                             u64 image_bytes = 0;
                             for (const auto [image_id, image] : slot_images) {
-                                image_bytes += ImageMemoryBytes(*image);
+                                // The allocation's real size where there is one: ImageMemoryBytes
+                                // counts ASTC kept as RGBA8 (uneven mips on AMD) at its BC size,
+                                // and the difference would count as not images.
+                                u64 bytes = 0;
+                                if constexpr (requires { image->MemoryBlock(); }) {
+                                    bytes = image->MemoryBlock().size;
+                                }
+                                image_bytes += bytes != 0 ? bytes : ImageMemoryBytes(*image);
                                 if (image->HasScaled()) {
                                     image_bytes += GetScaledImageSizeBytes(*image);
                                 }
