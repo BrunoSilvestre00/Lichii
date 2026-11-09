@@ -63,7 +63,8 @@ struct HostTranslateInfo {
         for (const bool property :
              {support_float64, support_float16, support_int64, support_conditional_barrier,
               needs_demote_reorder, support_geometry_shader_passthrough, support_viewport_mask,
-              single_lane_geometry_subgroups, support_snorm_render_buffer}) {
+              single_lane_geometry_subgroups, support_snorm_render_buffer,
+              support_handle_table_arrays}) {
             properties |= property ? bit : 0U;
             bit <<= 1;
         }

@@ -1911,6 +1911,29 @@ void LimitPipelineSampledTextureArrays(std::span<IR::Program* const> programs,
     }
 }
 
+void LimitSharedStageSampledTextureArrays(std::span<IR::Program* const> programs,
+                                          const HostTranslateInfo& host_info,
+                                          u32 auxiliary_resources) {
+    u32 other_resources{auxiliary_resources};
+    for (const IR::Program* const program : programs) {
+        const Info& info{program->info};
+        other_resources += NumDescriptors(info.constant_buffer_descriptors) +
+                           NumDescriptors(info.storage_buffers_descriptors) +
+                           NumDescriptors(info.image_buffer_descriptors) +
+                           NumDescriptors(info.image_descriptors);
+    }
+    // The pipeline limiter already counts every texture array and texel buffer across programs.
+    // Give it the budget of their shared host stage, after the non-sampled resources.
+    HostTranslateInfo shared{host_info};
+    shared.max_descriptor_set_samplers = (std::min)(host_info.max_descriptor_set_samplers,
+                                                    host_info.max_per_stage_descriptor_samplers);
+    shared.max_descriptor_set_sampled_images =
+        (std::min)({host_info.max_descriptor_set_sampled_images,
+                    host_info.max_per_stage_descriptor_sampled_images,
+                    SaturatingSub(host_info.max_per_stage_resources, other_resources)});
+    LimitPipelineSampledTextureArrays(programs, shared);
+}
+
 JoinedDescriptors JoinTextureInfo(Info& base, Info& source, std::span<const u32> storage_bindings) {
     base.requires_coherent_image_memory |= source.requires_coherent_image_memory;
     // The handle programs of source join those of base (once each, as the pass keeps them),

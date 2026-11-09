@@ -861,6 +861,69 @@ TEST_CASE("Storage handle words are read from the host-aligned buffer base",
     }
 }
 
+TEST_CASE("Handle table support distinguishes cached environment reads",
+          "[video_core][texture_handles]") {
+    Shader::HostTranslateInfo host;
+    const u32 without_tables{host.EnvironmentReadProperties()};
+    host.support_handle_table_arrays = true;
+    CHECK(host.EnvironmentReadProperties() == (without_tables | (1U << 9)));
+}
+
+TEST_CASE("Task and mesh texture arrays share the compute stage budget",
+          "[video_core][texture_handles]") {
+    // Each guest stage fits by itself; their arrays, texel buffers and auxiliary output buffers
+    // together must fit one host compute stage. A fragment stage's textures are outside it.
+    for (const bool sampler_limited : {false, true}) {
+        CAPTURE(sampler_limited);
+        std::array<HandleProgram, 2> stages;
+        for (HandleProgram& shader : stages) {
+            const LightTable table{shader};
+            shader.Sample(table.handle);
+            shader.Run();
+            shader.program.info.constant_buffer_descriptors.push_back({.index = 0, .count = 1});
+            shader.program.info.storage_buffers_descriptors.push_back({.count = 1});
+        }
+        stages[0].program.info.texture_buffer_descriptors.push_back({.count = 1});
+        Shader::HostTranslateInfo host;
+        host.ApplyDescriptorLimitPolicy();
+        host.max_per_stage_resources = 21;
+        host.max_per_stage_descriptor_sampled_images = 32;
+        host.max_per_stage_descriptor_samplers = sampler_limited ? 8 : 32;
+        const std::array programs{&stages[0].program, &stages[1].program};
+        // Four auxiliary buffers, four cbuf/ssbo resources and a texel buffer leave 12 textures.
+        Shader::Optimization::LimitSharedStageSampledTextureArrays(programs, host, 4);
+        for (const auto& shader : stages) {
+            CHECK(shader.program.info.texture_descriptors.front().count ==
+                  (sampler_limited ? 4U : 6U));
+        }
+        host.max_per_stage_resources = 10; // only one texture slot for two arrays
+        REQUIRE_THROWS(
+            Shader::Optimization::LimitSharedStageSampledTextureArrays(programs, host, 4));
+    }
+}
+
+TEST_CASE("Joined storage descriptors retain the bounds of both halves' writes",
+          "[video_core][texture_handles]") {
+    Shader::Info base;
+    Shader::Info source;
+    base.storage_buffers_descriptors.push_back(
+        {.cbuf_index = 0, .cbuf_offset = 0x10, .count = 1, .is_written = false});
+    source.storage_buffers_descriptors.push_back(
+        {.cbuf_index = 0, .cbuf_offset = 0x10, .count = 1, .is_written = true});
+    source.storage_buffers_descriptors.front().write_extent = {.bounded = true, .const_end = 32};
+    Shader::Optimization::JoinStorageInfo(base, source);
+    REQUIRE(base.storage_buffers_descriptors.size() == 1);
+    CHECK(base.storage_buffers_descriptors.front().is_written);
+    CHECK(base.storage_buffers_descriptors.front().write_extent.bounded);
+    CHECK(base.storage_buffers_descriptors.front().write_extent.const_end == 32);
+    source.storage_buffers_descriptors.front().write_extent.const_end = 64;
+    Shader::Optimization::JoinStorageInfo(base, source);
+    CHECK(base.storage_buffers_descriptors.front().write_extent.const_end == 64);
+    source.storage_buffers_descriptors.front().write_extent = {};
+    Shader::Optimization::JoinStorageInfo(base, source);
+    CHECK_FALSE(base.storage_buffers_descriptors.front().write_extent.bounded);
+}
+
 TEST_CASE("A texture handle word that holds a storage buffer address is not a handle",
           "[video_core][texture_handles]") {
     Shader::Info info;
