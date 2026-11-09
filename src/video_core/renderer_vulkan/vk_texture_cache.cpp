@@ -5135,18 +5135,30 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
     // few layers at a time through a smaller image; the encoded output is the same.
     u32 batch = layers;
     PendingTranscode pending;
-    if (!take_free(batch, pending)) {
+    bool reused = take_free(batch, pending);
+    if (!reused) {
         vk::Image decode = make_decode(batch);
-        if (!decode && !free_transcodes.empty()) {
+        // The whole array does not fit. A free image with fewer layers comes first: a texture
+        // that was decoded in batches gets back the image its last upload used, and the rest of
+        // the pool is kept. Emptying the pool first destroyed that image on every upload, only
+        // to make the same one again.
+        for (u32 fewer = batch; !decode && !reused && fewer > 1;) {
+            fewer = Common::DivCeil(fewer, 2U);
+            if (take_free(fewer, pending)) {
+                batch = fewer;
+                reused = true;
+            }
+        }
+        if (!decode && !reused && !free_transcodes.empty()) {
             // The GPU is done with these: their memory goes back to the driver now.
             free_transcodes.clear();
             decode = make_decode(batch);
         }
-        while (!decode && batch > 1) {
+        while (!decode && !reused && batch > 1) {
             batch = Common::DivCeil(batch, 2U);
             decode = make_decode(batch);
         }
-        if (!decode) {
+        if (!decode && !reused) {
             static u32 logged{};
             if (logged++ < 32) {
                 LOG_ERROR(Render_Vulkan,
@@ -5167,19 +5179,21 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
                             image.gpu_addr, width, height, levels, layers, batch);
             }
         }
-        pending = PendingTranscode{
-            .tick = 0,
-            .image = std::move(decode),
-            .views = {},
-            .width = width,
-            .height = height,
-            .levels = levels,
-            .layers = batch,
-            .unused_frames = 0,
-        };
-        for (u32 level = 0; level < levels; ++level) {
-            pending.views.push_back(
-                MakeStorageView(device.GetLogical(), level, *pending.image, DecodeFormat));
+        if (!reused) {
+            pending = PendingTranscode{
+                .tick = 0,
+                .image = std::move(decode),
+                .views = {},
+                .width = width,
+                .height = height,
+                .levels = levels,
+                .layers = batch,
+                .unused_frames = 0,
+            };
+            for (u32 level = 0; level < levels; ++level) {
+                pending.views.push_back(
+                    MakeStorageView(device.GetLogical(), level, *pending.image, DecodeFormat));
+            }
         }
     }
 
