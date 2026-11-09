@@ -459,7 +459,11 @@ void TextureCache<P>::TickFrame() {
                         // images: deleting them all could not get under it, and the collector
                         // recreated ~480 images a second, downloading ~70 with a GPU wait (#739).
                         // There the share bounds the images: what isn't images is added to the
-                        // thresholds, up to the heap's own budget.
+                        // thresholds, up to the heap's own budget. EDEN_NX2_TC_*_MIB set the
+                        // thresholds by hand, so they are left as the overrides made them.
+                        static const bool overridden =
+                            std::getenv("EDEN_NX2_TC_EXPECTED_MIB") != nullptr ||
+                            std::getenv("EDEN_NX2_TC_CRITICAL_MIB") != nullptr;
                         const u64 heap_budget = runtime.GetDeviceHeapMemoryBudget();
                         if (heap_budget > budget) {
                             u64 image_bytes = 0;
@@ -471,6 +475,8 @@ void TextureCache<P>::TickFrame() {
                             }
                             other_memory =
                                 total_used_memory - (std::min)(total_used_memory, image_bytes);
+                        }
+                        if (heap_budget > budget && !overridden) {
                             const u64 heap_critical =
                                 heap_budget - (std::min)(reserved, heap_budget / 2);
                             const u64 gap = critical_memory - expected_memory;
