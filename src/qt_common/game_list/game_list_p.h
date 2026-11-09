@@ -104,8 +104,9 @@ public:
             }
             const QMutexLocker lock{&Mutex()};
             Cache().insert(key, new QPixmap(pixmap),
-                           static_cast<int>(std::min<qint64>(pixmap.sizeInBytes(),
-                                                             MaxCost)));
+                           static_cast<int>(std::min<qint64>(
+                               qint64(pixmap.width()) * pixmap.height() * pixmap.depth() / 8,
+                               MaxCost)));
         }
 
     private:
@@ -164,7 +165,7 @@ public:
         // Decode and scale the card artwork once, then share it through the bounded cache; the
         // item itself stores a cheap copy-on-write reference.
         const QString card_cache_key =
-            QStringLiteral("%1|%2").arg(qulonglong(program_id), game_path);
+            QStringLiteral("%1|%2").arg(qulonglong(program_id)).arg(game_path);
         QPixmap card_picture = has_icon ? CardArtCache::Lookup(card_cache_key) : QPixmap{};
         if (has_icon && card_picture.isNull()) {
             const u32 card_target = std::max<u32>(size, u32{384});

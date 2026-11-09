@@ -30,6 +30,7 @@
 #include "qt_common/util/game.h"
 #include "yuzu/compatibility_report.h"
 #include "yuzu/hotkeys.h"
+#include "yuzu/loading_screen.h"
 #include "yuzu/user_data_migration.h"
 
 #ifdef __unix__
@@ -50,7 +51,6 @@ class EmuThread;
 class GameList;
 class GImageInfo;
 class GRenderWindow;
-class LoadingScreen;
 class OverlayDialog;
 class ControllerDialog;
 class QLabel;
