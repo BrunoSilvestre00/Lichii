@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -102,6 +105,57 @@ class FrameMetricsTests(unittest.TestCase):
             path.write_text(header + '2,10000000,7,1\n3,200000000,7,1\n')
             with self.assertRaisesRegex(ValueError, 'complete'):
                 read_intervals(path, 2, 4)
+
+
+class FrameMetricsOutputTests(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.folder = Path(folder.name)
+        self.source = self.folder / 'frames.json'
+        self.original = b'{"frames": 2, "intervals_ms": [10, 30]}\n'
+        self.source.write_bytes(self.original)
+
+    def run_cli(self, output, source=None):
+        script = Path(__file__).with_name('frame_time_metrics.py').resolve()
+        return subprocess.run([sys.executable, '-B', str(script),
+                               str(self.source if source is None else source),
+                               '--domain', 'test present', '--output', str(output)],
+                              cwd=self.folder, capture_output=True, text=True)
+
+    def assert_input_preserved(self, output, source=None):
+        result = self.run_cli(output, source)
+        self.assertEqual(self.source.read_bytes(), self.original)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('output must not refer to the input file', result.stderr)
+
+    def test_output_rejects_same_path(self):
+        self.assert_input_preserved(self.source)
+
+    def test_output_rejects_relative_absolute_alias(self):
+        self.assert_input_preserved(self.source, Path('frames.json'))
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows filename case alias')
+    def test_output_rejects_windows_case_alias(self):
+        alias = self.source.with_name('FRAMES.JSON')
+        if not alias.exists() or not alias.samefile(self.source):
+            self.skipTest('temporary directory has case-sensitive filenames')
+        self.assert_input_preserved(alias)
+
+    def test_output_rejects_hardlink_alias(self):
+        alias = self.folder / 'linked.json'
+        alias.hardlink_to(self.source)
+        self.assert_input_preserved(alias)
+        self.assertEqual(alias.read_bytes(), self.original)
+
+    def test_distinct_output_preserves_input(self):
+        output = self.folder / 'report.json'
+        result = self.run_cli(output)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.source.read_bytes(), self.original)
+        report = json.loads(output.read_text(encoding='utf-8'))
+        self.assertEqual(report['average_fps'], 50)
+        self.assertEqual(json.loads(result.stdout), report)
 
 
 if __name__ == '__main__':

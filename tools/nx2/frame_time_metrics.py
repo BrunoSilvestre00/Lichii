@@ -92,6 +92,8 @@ def main():
     parser.add_argument('--end-frame', type=int, help='exclusive')
     parser.add_argument('--output', type=Path)
     args = parser.parse_args()
+    if args.output and args.output.exists() and args.output.samefile(args.input):
+        parser.error('output must not refer to the input file')
     result = {'measurement_domain': args.domain, 'source': str(args.input),
               'first_frame': args.first_frame, 'end_frame_exclusive': args.end_frame,
               **summarize(read_intervals(args.input, args.first_frame, args.end_frame))}

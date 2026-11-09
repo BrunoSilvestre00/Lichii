@@ -10,6 +10,8 @@ For a tab-separated recorder file with `frame` and `interval_ms` columns, select
 
 Native present-call traces in `.csv` files may instead supply `frame` and `interval_ns`; nanoseconds are converted to milliseconds. Exclude the first record when it has no preceding interval. These return timestamps do not measure GPU completion or scanout.
 
+An `--output` path that identifies the input file is rejected, including relative/absolute aliases, Windows filename case aliases and hard links. Keep the raw capture separate from its derived report.
+
 ```powershell
 python tools/nx2/frame_time_metrics.py gameplay.tsv --domain "game present, frame generation off" --first-frame 3000 --end-frame 4200 --output run-1.json
 python -m unittest discover -s tools/nx2 -p test_frame_time_metrics.py
