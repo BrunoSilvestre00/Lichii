@@ -5285,6 +5285,9 @@ void MainWindow::UpdateFrameGenButton() {
         unavailable = tr("LSFG needs Lossless.dll from Lossless Scaling in the \"lossless\" folder "
                          "of the user directory. It is missing or could not be loaded.");
         break;
+    case VideoCore::FrameGenState::NvidiaFrameGen:
+        unavailable = tr("NVIDIA DLSS Frame Generation generates the frames instead.");
+        break;
     }
 
     if (!unavailable.isEmpty()) {
