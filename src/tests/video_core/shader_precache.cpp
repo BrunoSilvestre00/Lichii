@@ -472,6 +472,8 @@ TEST_CASE("ShaderPrecache: draw state guesses come from the v2 log, else the old
 
     REQUIRE(V2::CreateLog(log, records) == V2::WriteResult::Written);
     REQUIRE(ShaderWarm::FindRuntimeCaches(dir.path) == std::vector{log});
+    // The older disk cache is still found for a v2 log without graphics records
+    REQUIRE(ShaderWarm::FindOlderRuntimeCaches(dir.path) == std::vector{old_cache});
 
     const auto expected_vertex = ShaderWarm::GraphicsEntryKey(0, state_a, 0, 0x5);
     for (const auto& file : {log, old_cache}) {
