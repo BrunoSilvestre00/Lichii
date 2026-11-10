@@ -80,7 +80,7 @@ jobs:
           host: linux
           target: desktop
           arch: linux_gcc_64
-          modules: qtcharts qtsvg
+          modules: qtcharts
           cache: true
 
       # Objects are keyed by content, so the newest cache of this branch or nx2 always helps;
@@ -187,7 +187,7 @@ jobs:
           host: windows
           target: desktop
           arch: win64_msvc2022_64
-          modules: qtcharts qtsvg
+          modules: qtcharts
           cache: true
 
       - name: Install ccache
