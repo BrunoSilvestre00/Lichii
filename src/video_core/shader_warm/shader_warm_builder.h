@@ -52,11 +52,9 @@ std::filesystem::path WarmCountPath(const std::filesystem::path& warm_file);
 u64 ReadWarmCount(const std::filesystem::path& warm_file);
 
 /// What a marker records: the precache file's size and last-write time, its entry count, the GPU
-/// driver version and device ID, the pipeline cache version and whether shared shader functions
-/// were built as calls (compute bit 0, graphics bit 1: the SPIR-V the driver compiled differs).
-/// Graphics markers set bits 2 and up for the dynamic states the device lacks (entries left
-/// out), bit 2 being dynamic vertex input.
-/// Markers written without the last field no longer match, so that precache runs once more.
+/// driver version and device ID, the pipeline cache version, the marker version and a mode field
+/// of the precache's own (graphics: the dynamic states the device lacks; 0 for compute).
+/// A marker without the mode field (written before it) reads with a mode of 0.
 struct WarmStamp {
     u64 size{};
     s64 write_time{};
@@ -64,21 +62,31 @@ struct WarmStamp {
     u32 driver{};
     u32 device_id{};
     u32 cache_version{};
-    u32 no_inline{};
+    u32 marker_version{};
+    u32 mode{};
 
-    /// True when `other` was written for the same file, driver, device, cache version and shader
-    /// calls mode (the entry count is informative).
+    /// True when `other` was written for the same file, driver, device, cache version, marker
+    /// version and mode (the entry count is informative).
     [[nodiscard]] bool Matches(const WarmStamp& other) const noexcept {
         return size == other.size && write_time == other.write_time && driver == other.driver &&
                device_id == other.device_id && cache_version == other.cache_version &&
-               no_inline == other.no_inline;
+               marker_version == other.marker_version && mode == other.mode;
     }
 };
+
+/// Raised when the SPIR-V handed to the driver changes, so that the compute precache runs again.
+/// 2: shared shader functions are built as calls. Markers without this field no longer read.
+constexpr u32 WarmMarkerVersion = 2;
+
+/// Version of the graphics warm-up markers (warm-graphics.bin), raised when the entries it builds
+/// change, so that the graphics warm-up runs again. Above 1023: the same field of earlier graphics
+/// markers held mode bits (below 1024), so none of them matches and it runs once more.
+constexpr u32 GraphicsWarmMarkerVersion = 1024;
 
 /// The stamp of `warm_file` as it is now, empty when its size or time cannot be read.
 std::optional<WarmStamp> CurrentWarmStamp(const std::filesystem::path& warm_file, u64 entries,
                                           u32 driver, u32 device_id, u32 cache_version,
-                                          u32 no_inline = 0);
+                                          u32 marker_version = WarmMarkerVersion, u32 mode = 0);
 
 /// The marker of `warm_file`, empty when there is none or it cannot be read.
 std::optional<WarmStamp> ReadWarmMarker(const std::filesystem::path& warm_file);
@@ -109,13 +117,11 @@ bool TakeWarmBeforeStart();
 void RequestSkipWarm();
 bool TakeSkipWarm();
 
-/// The GPU driver, device, pipeline cache version and graphics shader calls mode (1 when shared
-/// functions are built as calls) pipelines were precached for.
+/// The GPU driver, device and pipeline cache version pipelines were precached for.
 struct DriverStamp {
     u32 driver{};
     u32 device_id{};
     u32 cache_version{};
-    u32 graphics_no_inline{};
 
     bool operator==(const DriverStamp&) const = default;
 };
@@ -125,7 +131,7 @@ struct DriverStamp {
 std::filesystem::path PrecachedPipelinesPath(u64 title_id);
 
 /// The pipeline key hashes in `file`, empty when there is none or it was written for another
-/// driver, device, cache version or graphics shader calls mode.
+/// driver, device or cache version, or before shared shader functions were built as calls.
 std::unordered_set<u64> ReadPrecachedPipelines(const std::filesystem::path& file,
                                                const DriverStamp& stamp);
 
