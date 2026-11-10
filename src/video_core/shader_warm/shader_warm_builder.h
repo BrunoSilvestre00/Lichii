@@ -59,8 +59,9 @@ struct WarmStamp {
 };
 
 /// Raised when the SPIR-V handed to the driver changes, so that the compute precache runs again.
-/// 2: shared shader functions are built as calls. Markers without this field no longer read.
-constexpr u32 WarmMarkerVersion = 2;
+/// 4: shared shader functions are built as calls. Markers without this field no longer read.
+/// Test builds stored the calls mode (0 to 3) in this field, so versions start above that range.
+constexpr u32 WarmMarkerVersion = 4;
 
 /// The stamp of `warm_file` as it is now, empty when its size or time cannot be read.
 std::optional<WarmStamp> CurrentWarmStamp(const std::filesystem::path& warm_file, u64 entries,

@@ -108,9 +108,15 @@ TEST_CASE("ShaderPrecache: the marker records its version", "[video_core]") {
     REQUIRE(marker->marker_version == ShaderWarm::WarmMarkerVersion);
     REQUIRE(marker->Matches(*stamp));
 
-    // A marker of another version does not match.
+    // A marker of another version does not match, including the calls modes (0 to 3) that
+    // test builds stored in this field.
     stamp->marker_version = ShaderWarm::WarmMarkerVersion - 1;
     REQUIRE_FALSE(marker->Matches(*stamp));
+    for (u32 old_mode = 0; old_mode <= 3; ++old_mode) {
+        auto old_stamp = *marker;
+        old_stamp.marker_version = old_mode;
+        REQUIRE_FALSE(old_stamp.Matches(*marker));
+    }
 
     // A marker from before the version was recorded (six fields) no longer reads, so the
     // precache runs once more.
