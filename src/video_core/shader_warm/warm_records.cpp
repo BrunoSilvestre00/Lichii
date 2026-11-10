@@ -317,8 +317,12 @@ std::vector<std::filesystem::path> FindRuntimeCaches(const std::filesystem::path
     if (std::filesystem::exists(log, error)) {
         return {log};
     }
-    // No v2 log yet: the current version's disk cache, or the newest older one with the same
-    // record layout
+    return FindOlderRuntimeCaches(title_dir);
+}
+
+std::vector<std::filesystem::path> FindOlderRuntimeCaches(const std::filesystem::path& title_dir) {
+    std::error_code error;
+    // The current version's disk cache, or the newest older one with the same record layout
     std::vector<u32> versions{WarmCacheVersion};
     versions.insert(versions.end(), CompatibleRuntimeCacheVersions.begin(),
                     CompatibleRuntimeCacheVersions.end());
