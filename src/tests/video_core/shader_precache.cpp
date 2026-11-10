@@ -128,7 +128,12 @@ TEST_CASE("ShaderPrecache: the marker matches only the same link mode and varian
     const auto warm = dir.path / "warm-graphics.bin";
     WriteBytes(warm, "precache");
     const u64 variant = 0xfedcba9876543210ULL;
-    const auto stamp = ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53, 2, 1, variant);
+    const auto graphics_stamp = [&](u64 entries, u32 link_mode, u64 stamp_variant) {
+        return ShaderWarm::CurrentWarmStamp(warm, entries, 0x1234, 0x2206, 53,
+                                            ShaderWarm::GraphicsWarmMarkerVersion, 2, link_mode,
+                                            stamp_variant);
+    };
+    const auto stamp = graphics_stamp(12, 1, variant);
     REQUIRE(stamp.has_value());
     REQUIRE(ShaderWarm::WriteWarmMarker(warm, *stamp));
 
@@ -136,14 +141,10 @@ TEST_CASE("ShaderPrecache: the marker matches only the same link mode and varian
     REQUIRE(marker.has_value());
     REQUIRE(marker->link_mode == 1);
     REQUIRE(marker->variant == variant);
-    REQUIRE(marker->Matches(
-        *ShaderWarm::CurrentWarmStamp(warm, 0, 0x1234, 0x2206, 53, 2, 1, variant)));
-    REQUIRE_FALSE(marker->Matches(
-        *ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53, 2, 0, variant)));
-    REQUIRE_FALSE(marker->Matches(
-        *ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53, 2, 1, variant + 1)));
-    REQUIRE_FALSE(
-        marker->Matches(*ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53, 2, 1)));
+    REQUIRE(marker->Matches(*graphics_stamp(0, 1, variant)));
+    REQUIRE_FALSE(marker->Matches(*graphics_stamp(12, 0, variant)));
+    REQUIRE_FALSE(marker->Matches(*graphics_stamp(12, 1, variant + 1)));
+    REQUIRE_FALSE(marker->Matches(*graphics_stamp(12, 1, 0)));
     REQUIRE(ShaderWarm::EmissionStamp() != 0);
 }
 
@@ -151,36 +152,67 @@ TEST_CASE("ShaderPrecache: a marker written before the variant is not read", "[v
     TempDir dir;
     const auto warm = dir.path / "warm-compute.bin";
     WriteBytes(warm, "precache");
-    const auto stamp = ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53, 1, 0);
+    const auto stamp = ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53);
     REQUIRE(stamp.has_value());
-    // The older format: every field up to the shader calls mode, then the line end.
+    // The older format: every field up to the mode, then the line end.
     {
         std::ofstream out(ShaderWarm::WarmMarkerPath(warm), std::ios::trunc);
         out << stamp->size << ' ' << stamp->write_time << ' ' << stamp->entries << ' '
             << stamp->driver << ' ' << stamp->device_id << ' ' << stamp->cache_version << ' '
-            << stamp->no_inline << '\n';
+            << stamp->marker_version << ' ' << stamp->mode << '\n';
     }
     REQUIRE_FALSE(ShaderWarm::ReadWarmMarker(warm).has_value());
 }
 
-TEST_CASE("ShaderPrecache: the marker records the shader calls mode", "[video_core]") {
+TEST_CASE("ShaderPrecache: the marker records its version", "[video_core]") {
     TempDir dir;
     const auto warm = dir.path / "warm-compute.bin";
     WriteBytes(warm, "precache");
 
-    const auto stamp = ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53, 1);
+    auto stamp = ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53);
+    REQUIRE(stamp.has_value());
+    REQUIRE(stamp->marker_version == ShaderWarm::WarmMarkerVersion);
+    REQUIRE(ShaderWarm::WriteWarmMarker(warm, *stamp));
+    const auto marker = ShaderWarm::ReadWarmMarker(warm);
+    REQUIRE(marker.has_value());
+    REQUIRE(marker->marker_version == ShaderWarm::WarmMarkerVersion);
+    REQUIRE(marker->Matches(*stamp));
+
+    // A marker of another version does not match.
+    stamp->marker_version = ShaderWarm::WarmMarkerVersion - 1;
+    REQUIRE_FALSE(marker->Matches(*stamp));
+
+    // A marker from before the version was recorded (six fields) no longer reads, so the
+    // precache runs once more.
+    WriteBytes(ShaderWarm::WarmMarkerPath(warm), "8 1 12 4660 8710 53\n");
+    REQUIRE_FALSE(ShaderWarm::ReadWarmMarker(warm).has_value());
+}
+
+TEST_CASE("ShaderPrecache: the graphics marker records its version and mode", "[video_core]") {
+    TempDir dir;
+    const auto warm = dir.path / "warm-graphics.bin";
+    WriteBytes(warm, "precache");
+    const auto graphics_stamp = [&](u32 mode) {
+        return ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53,
+                                            ShaderWarm::GraphicsWarmMarkerVersion, mode);
+    };
+
+    const auto stamp = graphics_stamp(0x41);
     REQUIRE(stamp.has_value());
     REQUIRE(ShaderWarm::WriteWarmMarker(warm, *stamp));
     const auto marker = ShaderWarm::ReadWarmMarker(warm);
     REQUIRE(marker.has_value());
-    REQUIRE(marker->no_inline == 1);
-    REQUIRE(marker->Matches(*ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53, 1)));
-    REQUIRE_FALSE(marker->Matches(*ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53, 0)));
-    REQUIRE_FALSE(marker->Matches(*ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53, 2)));
+    REQUIRE(marker->marker_version == ShaderWarm::GraphicsWarmMarkerVersion);
+    REQUIRE(marker->mode == 0x41);
+    REQUIRE(marker->Matches(*stamp));
+    // A device that gains a dynamic state no longer matches, so its entries get built.
+    REQUIRE_FALSE(marker->Matches(*graphics_stamp(0x01)));
 
-    // A marker from before the mode was recorded (six fields) no longer reads, so the precache
-    // runs once more.
-    WriteBytes(ShaderWarm::WarmMarkerPath(warm), "8 1 12 4660 8710 53\n");
+    // A marker written before the mode field (seven fields) no longer reads, so the graphics
+    // warm-up runs once more.
+    WriteBytes(ShaderWarm::WarmMarkerPath(warm),
+               std::to_string(stamp->size) + ' ' + std::to_string(stamp->write_time) +
+                   " 12 4660 8710 53 3\n");
     REQUIRE_FALSE(ShaderWarm::ReadWarmMarker(warm).has_value());
 }
 
@@ -196,8 +228,6 @@ TEST_CASE("ShaderPrecache: precached pipelines are kept per driver", "[video_cor
     REQUIRE(ShaderWarm::ReadPrecachedPipelines(file, {0x1235, 0x2206, 53}).empty());
     REQUIRE(ShaderWarm::ReadPrecachedPipelines(file, {0x1234, 0x2207, 53}).empty());
     REQUIRE(ShaderWarm::ReadPrecachedPipelines(file, {0x1234, 0x2206, 54}).empty());
-    // A change of the graphics shader calls mode precaches them again.
-    REQUIRE(ShaderWarm::ReadPrecachedPipelines(file, {0x1234, 0x2206, 53, 1}).empty());
 
     // A truncated file keeps the hashes it holds in full.
     std::filesystem::resize_file(file, std::filesystem::file_size(file) - 4);

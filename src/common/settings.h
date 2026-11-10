@@ -672,19 +672,12 @@ struct Values {
                                                          true};
 
     // Graphics pipeline libraries (VK_EXT_graphics_pipeline_library): pipelines linked from
-    // per-stage shader libraries. EDEN_NX2_GPL=1 also turns it on.
+    // per-stage shader libraries.
     SwitchableSetting<bool> use_graphics_pipeline_library{
         linkage, false, "use_graphics_pipeline_library", Category::RendererAdvanced};
 
-    // Large shader functions called from several places are built as calls instead of being
-    // copied into every caller (much faster driver compiles). EDEN_NX2_COMPUTE_NOINLINE=0 and
-    // EDEN_NX2_GRAPHICS_NOINLINE=0 still override.
-    SwitchableSetting<bool> shader_calls_not_inlined{linkage, true, "shader_calls_not_inlined",
-                                                     Category::RendererAdvanced};
-
     // Threads of the shader precache on the loading screen, 0 for every CPU thread that fits
     // the free commit memory (Windows).
-    // EDEN_NX2_WARM_THREADS overrides.
     SwitchableSetting<u32, true> shader_warm_threads{linkage,
                                                      0,
                                                      0,
@@ -1050,6 +1043,12 @@ struct Values {
     Setting<bool> log_flush_line{linkage, false, "flush_line", Category::Miscellaneous, Specialization::Default, true, true};
     Setting<bool> censor_username{linkage, true, "censor_username", Category::Miscellaneous};
     Setting<bool> first_launch{linkage, true, "first_launch", Category::Miscellaneous};
+    // The recommended settings offer (common/recommended_settings.h): whether the user has
+    // answered it, and the values its settings held before they were applied.
+    Setting<bool> recommended_settings_prompt_shown{
+        linkage, false, "recommended_settings_prompt_shown", Category::Miscellaneous};
+    Setting<std::string> recommended_settings_backup{
+        linkage, {}, "recommended_settings_backup", Category::Miscellaneous};
 
     // Network
     Setting<std::string> network_interface{linkage, std::string(), "network_interface",

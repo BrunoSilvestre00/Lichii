@@ -346,12 +346,6 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "cause shorter stutters.\nAlso lets Precache shaders before game start build the "
               "graphics shaders found in the game files.\nTakes effect after restarting the "
               "game."));
-    INSERT(Settings, shader_calls_not_inlined,
-           tr("Faster shader compiles (shared functions as calls)"),
-           tr("Builds large functions that a shader uses in several places once, as calls, "
-              "instead of copying them into every place. Driver compiles of such shaders get "
-              "several times faster (compute precache about 3x); the game may run slightly "
-              "slower.\nApplies to shaders built after the change."));
     INSERT(Settings, shader_warm_threads, tr("Shader precache threads:"),
            tr("CPU threads the shader precache uses on the loading screen. 0 uses every CPU "
               "thread.\nTakes effect at the next game start."));

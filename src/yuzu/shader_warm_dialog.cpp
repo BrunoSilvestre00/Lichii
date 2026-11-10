@@ -54,13 +54,9 @@ QString StageText(const std::string& stage) {
     return QString::fromStdString(stage);
 }
 
-/// True when shader libraries are on (the setting or EDEN_NX2_GPL).
+/// True when shader libraries are on (the Shader libraries setting).
 bool ShaderLibrariesOn() {
-    if (Settings::values.use_graphics_pipeline_library.GetValue()) {
-        return true;
-    }
-    const char* value = std::getenv("EDEN_NX2_GPL");
-    return value && *value && *value != '0';
+    return Settings::values.use_graphics_pipeline_library.GetValue();
 }
 
 } // namespace

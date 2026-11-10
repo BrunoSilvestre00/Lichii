@@ -148,7 +148,7 @@ public:
     /// because the driver could crash on it (a vertex program that reads its position input).
     enum class WarmResult { Built, Unbuildable, DriverFailed, Skipped };
 
-    /// Graphics pipeline libraries (EDEN_NX2_GPL): builds the pre-rasterization and fragment
+    /// Graphics pipeline libraries: builds the pre-rasterization and fragment
     /// shader libraries of the pipeline `key` would make, on the calling thread, with no draw and
     /// no pipeline kept (for a warm-up). `pools` must be the calling thread's own. Unbuildable
     /// when the device has no libraries or the pipeline takes the monolithic route, DriverFailed
@@ -270,7 +270,7 @@ private:
     };
 
     /// Shader precache before the game starts (precache_shaders), on every CPU thread unless
-    /// shader_warm_threads or EDEN_NX2_WARM_THREADS say otherwise: the cached
+    /// shader_warm_threads says otherwise: the cached
     /// graphics pipelines this boot skipped (`jobs`; `precached` holds those built by earlier
     /// precaches) and the compute programs of the title's precache file (made from the game files,
     /// missing reads guessed) are built, then thrown away. They only fill the driver's shader
@@ -315,7 +315,7 @@ private:
     GraphicsPipelineCacheKey graphics_key{};
     GraphicsPipeline* current_pipeline{};
 
-    /// EDEN_NX2_GPL: shader libraries shared by the graphics pipelines. Declared before the
+    /// Shader libraries shared by the graphics pipelines. Declared before the
     /// pipelines, so it outlives them.
     GraphicsPipelineLibraryCache graphics_libraries;
 

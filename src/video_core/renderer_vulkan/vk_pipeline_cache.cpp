@@ -391,19 +391,6 @@ void AddRuntimeSpirvTime(size_t thread, std::chrono::steady_clock::time_point be
         std::memory_order::relaxed);
 }
 
-// EDEN_NX2_GRAPHICS_NOINLINE=0 turns it off: graphics modules are then built from the SPIR-V
-// exactly as emitted. On by default: functions a graphics stage calls from several places (the
-// global memory functions of native programs) are built as calls instead of being inlined at
-// each call site, as for compute (EDEN_NX2_COMPUTE_NOINLINE, video_core/spirv_inline_control.h).
-bool GraphicsNoInline() {
-    // The environment variable wins over the setting (shader_calls_not_inlined).
-    static const int forced = [] {
-        const char* value = std::getenv("EDEN_NX2_GRAPHICS_NOINLINE");
-        return value == nullptr || *value == '\0' ? -1 : (value[0] == '0' ? 0 : 1);
-    }();
-    return forced >= 0 ? forced == 1 : Settings::values.shader_calls_not_inlined.GetValue();
-}
-
 vk::ShaderModule EmitShaderModule(const Device& device, const Shader::Profile& profile,
                                  const Shader::RuntimeInfo& runtime_info,
                                  Shader::IR::Program& program, Shader::Backend::Bindings& binding,
@@ -413,18 +400,18 @@ vk::ShaderModule EmitShaderModule(const Device& device, const Shader::Profile& p
     const auto code =
         EmitPipelineShader(profile, runtime_info, program, binding, shader_hash, reference);
     // Every graphics module (monolithic pipelines, pipeline libraries, the graphics warm-up, on
-    // the GPU thread or on a worker) is made here, so the pass runs once on every path.
+    // the GPU thread or on a worker) is made here, so the pass runs once on every path. Functions
+    // a stage calls from several places (the global memory functions of native programs) are
+    // built as calls instead of being inlined at each call site
+    // (video_core/spirv_inline_control.h).
     std::vector<u32> module_code(code.begin(), code.end());
-    if (GraphicsNoInline()) {
-        if (const size_t marked = VideoCommon::MarkSharedFunctionsDontInline(module_code);
-            marked != 0) {
-            static std::atomic<u32> logged{};
-            if (logged.fetch_add(1, std::memory_order_relaxed) < 32) {
-                LOG_INFO(Render_Vulkan,
-                         "Graphics shader {:016x}: {} shared functions built as calls, not "
-                         "inlined",
-                         shader_hash, marked);
-            }
+    if (const size_t marked = VideoCommon::MarkSharedFunctionsDontInline(module_code);
+        marked != 0) {
+        static std::atomic<u32> logged{};
+        if (logged.fetch_add(1, std::memory_order_relaxed) < 32) {
+            LOG_INFO(Render_Vulkan,
+                     "Graphics shader {:016x}: {} shared functions built as calls, not inlined",
+                     shader_hash, marked);
         }
     }
     if (spirv_hash) {
@@ -463,7 +450,7 @@ vk::ShaderModule EmitShaderModule(const Device& device, const Shader::Profile& p
     return module;
 }
 
-// Graphics pipeline libraries (EDEN_NX2_GPL): each stage's resources go to its own descriptor
+// Graphics pipeline libraries: each stage's resources go to its own descriptor
 // set (set index = stage index) with bindings from 0, and the fragment stage's rescaling bits
 // start at fixed indices, so a stage's SPIR-V does not depend on the other stages' resources.
 void PrepareStageBindings(Shader::Backend::Bindings& binding, size_t stage_index, bool libraries) {
@@ -482,46 +469,19 @@ void PrepareStageBindings(Shader::Backend::Bindings& binding, size_t stage_index
     }
 }
 
-// EDEN_NX2_COMPUTE_SPIRV_DUMP=<dir>: write each compute shader's SPIR-V the first time a pipeline
-// is made from it, as <dir>/<shader hash>.spv (to time driver compiles outside the emulator).
-void DumpComputeSpirv(u64 shader_hash, std::span<const u32> code) {
-    static const char* const directory = std::getenv("EDEN_NX2_COMPUTE_SPIRV_DUMP");
-    if (directory == nullptr || directory[0] == '\0') {
-        return;
-    }
-    const auto path = std::filesystem::path{directory} / fmt::format("{:016x}.spv", shader_hash);
-    std::ofstream file{path, std::ios::binary};
-    file.write(reinterpret_cast<const char*>(code.data()),
-               static_cast<std::streamsize>(code.size_bytes()));
-}
-
-// EDEN_NX2_COMPUTE_NOINLINE=0 turns it off: compute modules are then built from the SPIR-V exactly
-// as emitted. On by default: functions a compute shader calls from several places (the global
-// memory functions of native programs) are built as calls instead of being inlined at each call
-// site, which made NVIDIA spend 2-13 s on single compute shaders of a test title, every one a
-// freeze at its first dispatch (video_core/spirv_inline_control.h).
-bool ComputeNoInline() {
-    // The environment variable wins over the setting (shader_calls_not_inlined).
-    static const int forced = [] {
-        const char* value = std::getenv("EDEN_NX2_COMPUTE_NOINLINE");
-        return value == nullptr || *value == '\0' ? -1 : (value[0] == '0' ? 0 : 1);
-    }();
-    return forced >= 0 ? forced == 1 : Settings::values.shader_calls_not_inlined.GetValue();
-}
-
-// The words a compute module is built from. The translation cache keeps the SPIR-V as emitted,
-// so cached and freshly translated stages are built alike.
+// The words a compute module is built from. Functions a compute shader calls from several places
+// (the global memory functions of native programs) are built as calls instead of being inlined at
+// each call site, which made NVIDIA spend 2-13 s on single compute shaders of a test title, every
+// one a freeze at its first dispatch (video_core/spirv_inline_control.h). The translation cache
+// keeps the SPIR-V as emitted, so cached and freshly translated stages are built alike.
 std::vector<u32> ComputeModuleCode(std::span<const u32> code, u64 shader_hash) {
-    DumpComputeSpirv(shader_hash, code);
     std::vector<u32> words(code.begin(), code.end());
-    if (ComputeNoInline()) {
-        if (const size_t marked = VideoCommon::MarkSharedFunctionsDontInline(words); marked != 0) {
-            static std::atomic<u32> logged{};
-            if (logged.fetch_add(1, std::memory_order_relaxed) < 32) {
-                LOG_INFO(Render_Vulkan,
-                         "Compute shader {:016x}: {} shared functions built as calls, not inlined",
-                         shader_hash, marked);
-            }
+    if (const size_t marked = VideoCommon::MarkSharedFunctionsDontInline(words); marked != 0) {
+        static std::atomic<u32> logged{};
+        if (logged.fetch_add(1, std::memory_order_relaxed) < 32) {
+            LOG_INFO(Render_Vulkan,
+                     "Compute shader {:016x}: {} shared functions built as calls, not inlined",
+                     shader_hash, marked);
         }
     }
     return words;
@@ -532,7 +492,7 @@ vk::ShaderModule EmitComputeModule(const Device& device, const Shader::Profile& 
                                    std::span<const u32> reference = {}) {
     const std::vector<u32> code{EmitComputeShader(profile, program, shader_hash, reference)};
     device.SaveShader(code);
-    // Saved as emitted, built from ComputeModuleCode's words (NoInline pass, SPIR-V dump)
+    // Saved as emitted, built from ComputeModuleCode's words
     vk::ShaderModule spv_module{BuildShader(device, ComputeModuleCode(code, shader_hash))};
 
     // Text log + .spv dump. Same split as the graphics path.
@@ -1186,8 +1146,7 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
     if (precache) {
         precached_pipelines = ShaderWarm::ReadPrecachedPipelines(
             ShaderWarm::PrecachedPipelinesPath(title_id),
-            {device.GetDriverVersion(), device.GetDeviceID(), CACHE_VERSION,
-             GraphicsNoInline() ? 1U : 0U});
+            {device.GetDriverVersion(), device.GetDeviceID(), CACHE_VERSION});
     }
     if (use_vulkan_pipeline_cache) {
         vulkan_pipeline_cache_filename =
@@ -1718,31 +1677,13 @@ void PipelineCache::LoadPipelinesV2(u64 title_id,
 }
 
 namespace {
-/// Threads of the shader precache: EDEN_NX2_WARM_THREADS=N (1 to 64), else the
-/// shader_warm_threads setting, where 0 is every CPU thread that fits the free commit memory.
+/// Threads of the shader precache: the shader_warm_threads setting, where 0 is every CPU thread
+/// that fits the free commit memory.
 size_t PrecacheThreads() {
     const size_t all = std::clamp<size_t>(std::thread::hardware_concurrency(), 1, 64);
     const u32 setting = Settings::values.shader_warm_threads.GetValue();
-    const size_t chosen = setting == 0 ? all : std::clamp<size_t>(setting, 1, 64);
-    static const size_t forced = [] {
-        constexpr size_t Default = 0;
-        const char* const value = std::getenv("EDEN_NX2_WARM_THREADS");
-        if (value == nullptr || *value == '\0') {
-            return Default;
-        }
-        char* end = nullptr;
-        const long parsed = std::strtol(value, &end, 10);
-        if (end == value || *end != '\0' || parsed < 1 || parsed > 64) {
-            LOG_WARNING(Render_Vulkan,
-                        "Nx2Perf: EDEN_NX2_WARM_THREADS={} is not a number from 1 to 64, using "
-                        "the setting",
-                        value);
-            return Default;
-        }
-        return static_cast<size_t>(parsed);
-    }();
-    if (forced != 0 || setting != 0) {
-        return forced != 0 ? forced : chosen;
+    if (setting != 0) {
+        return std::clamp<size_t>(setting, 1, 64);
     }
     // Every CPU thread, unless the system is short of commit memory: each warm-up thread holds a
     // driver compile, and on a 16 GB machine all 12 threads plus the guest memory hit the commit
@@ -1751,46 +1692,34 @@ size_t PrecacheThreads() {
     constexpr u64 Headroom = 2ULL << 30;
     const auto usage = Common::GetProcessMemoryUsage();
     if (usage.system_commit_limit == 0 || usage.system_commit >= usage.system_commit_limit) {
-        return chosen;
+        return all;
     }
     const u64 free_commit = usage.system_commit_limit - usage.system_commit;
     const size_t fit = static_cast<size_t>(
         std::max<u64>(free_commit > Headroom ? (free_commit - Headroom) / BytesPerThread : 0, 1));
-    if (fit < chosen) {
+    if (fit < all) {
         LOG_INFO(Render_Vulkan,
                  "Shader precache: {} MiB of commit memory free, {} threads instead of {} "
-                 "(shader_warm_threads or EDEN_NX2_WARM_THREADS set a fixed count)",
-                 free_commit >> 20, fit, chosen);
+                 "(shader_warm_threads sets a fixed count)",
+                 free_commit >> 20, fit, all);
         return fit;
     }
-    return chosen;
+    return all;
 }
 
-/// Whether shared shader functions are built as calls (compute bit 0, graphics bit 1), for the
-/// precache markers: the SPIR-V the driver compiled differs between the two modes.
-u32 NoInlineBits() {
-    return (ComputeNoInline() ? 1U : 0U) | (GraphicsNoInline() ? 2U : 0U);
-}
+/// Graphics marker mode bit 7, set when the device lacks an adaptable dynamic state
+/// (AdaptableKeyDynamicStates): the entries made for it are built without it (AMD on Windows:
+/// color write enable and the EDS2 logic op).
+constexpr u32 WarmAdaptedDynamicStateBit = 1U << 7;
+static_assert(KeyDynamicState::ColorWriteEnable < WarmAdaptedDynamicStateBit);
 
-/// Graphics marker bits 2 and up: the dynamic states the device lacks (KeyDynamicState bits),
-/// whose entries the warm-up left out or built without them. Gaining one later no longer
-/// matches, and they get built for it.
-constexpr u32 WarmMissingDynamicStateShift = 2;
-// Bit 2 stays dynamic vertex input, so markers written before the other states still match.
-static_assert((KeyDynamicState::VertexInput << WarmMissingDynamicStateShift) == 4);
-
-/// Graphics marker bit 9, set when the device lacks an adaptable dynamic state
-/// (AdaptableKeyDynamicStates): its entries are now built without it, where earlier markers
-/// left them out (AMD on Windows: none of the built-in draw state entries was built). Those
-/// devices warm up once more; the markers of the others still match.
-constexpr u32 WarmAdaptedDynamicStateBit = 1U << 9;
-static_assert((KeyDynamicState::ColorWriteEnable << WarmMissingDynamicStateShift) <
-              WarmAdaptedDynamicStateBit);
-
+/// The mode field of the graphics marker: the KeyDynamicState bits the device lacks, whose
+/// entries the warm-up left out or built without them, and WarmAdaptedDynamicStateBit. Gaining a
+/// state later no longer matches, and its entries get built.
 u32 GraphicsWarmModeBits(const DynamicFeatures& features) {
     const u32 missing = MissingKeyDynamicStates(features);
-    return NoInlineBits() | (missing << WarmMissingDynamicStateShift) |
-           ((missing & AdaptableKeyDynamicStates) != 0 ? WarmAdaptedDynamicStateBit : 0U);
+    const bool adapted = (missing & AdaptableKeyDynamicStates) != 0;
+    return missing | (adapted ? WarmAdaptedDynamicStateBit : 0U);
 }
 
 /// The graphics link mode, for the graphics precache marker: bit 0 when fast links are usable,
@@ -1831,6 +1760,18 @@ u64 WarmVariant(bool graphics) {
     return Common::CityHash64(reinterpret_cast<const char*>(graphics_inputs.data()),
                               sizeof(graphics_inputs));
 }
+
+/// The graphics marker stamp of `warm_file` as it is now, for this device and these settings.
+std::optional<VideoCommon::ShaderWarm::WarmStamp> GraphicsWarmStamp(
+    const std::filesystem::path& warm_file, u64 entries, const Device& device,
+    const DynamicFeatures& features) {
+    namespace ShaderWarm = VideoCommon::ShaderWarm;
+    return ShaderWarm::CurrentWarmStamp(warm_file, entries, device.GetDriverVersion(),
+                                        device.GetDeviceID(), CACHE_VERSION,
+                                        ShaderWarm::GraphicsWarmMarkerVersion,
+                                        GraphicsWarmModeBits(features), LinkModeBits(device),
+                                        WarmVariant(true));
+}
 } // Anonymous namespace
 
 size_t PipelineCache::PrecacheGraphicsWarm(u64 title_id, size_t num_threads, size_t done_before,
@@ -1847,14 +1788,9 @@ size_t PipelineCache::PrecacheGraphicsWarm(u64 title_id, size_t num_threads, siz
     if (!std::filesystem::exists(warm_file, ec)) {
         return 0;
     }
-    const u32 mode_bits = GraphicsWarmModeBits(dynamic_features);
     const u32 missing_dynamic_states = MissingKeyDynamicStates(dynamic_features);
-    const u32 link_mode = LinkModeBits(device);
-    const u64 variant = WarmVariant(true);
     const auto stamp = [&](u64 entries) {
-        return ShaderWarm::CurrentWarmStamp(warm_file, entries, device.GetDriverVersion(),
-                                            device.GetDeviceID(), CACHE_VERSION, mode_bits,
-                                            link_mode, variant);
+        return GraphicsWarmStamp(warm_file, entries, device, dynamic_features);
     };
     const auto current = stamp(0);
     const auto marker = ShaderWarm::ReadWarmMarker(warm_file);
@@ -2062,7 +1998,8 @@ void PipelineCache::PrecacheShaders(u64 title_id, std::vector<PrecacheJob> jobs,
     const std::string path = Common::FS::PathToUTF8String(warm_file);
     const auto stamp = [&](u64 entries) {
         return ShaderWarm::CurrentWarmStamp(warm_file, entries, device.GetDriverVersion(),
-                                            device.GetDeviceID(), CACHE_VERSION, NoInlineBits(), 0,
+                                            device.GetDeviceID(), CACHE_VERSION,
+                                            ShaderWarm::WarmMarkerVersion, 0, 0,
                                             WarmVariant(false));
     };
     // Compute programs of the precache file, unless a matching marker says they were built.
@@ -2143,9 +2080,7 @@ void PipelineCache::PrecacheShaders(u64 title_id, std::vector<PrecacheJob> jobs,
         if (!std::filesystem::exists(graphics_file, ec)) {
             return false;
         }
-        const auto graphics_current = ShaderWarm::CurrentWarmStamp(
-            graphics_file, 0, device.GetDriverVersion(), device.GetDeviceID(), CACHE_VERSION,
-            GraphicsWarmModeBits(dynamic_features), LinkModeBits(device), WarmVariant(true));
+        const auto graphics_current = GraphicsWarmStamp(graphics_file, 0, device, dynamic_features);
         const auto graphics_marker = ShaderWarm::ReadWarmMarker(graphics_file);
         return !(graphics_current && graphics_marker &&
                  graphics_marker->Matches(*graphics_current));
@@ -2234,9 +2169,7 @@ void PipelineCache::PrecacheShaders(u64 title_id, std::vector<PrecacheJob> jobs,
     if (precached.size() != precached_before) {
         ShaderWarm::WritePrecachedPipelines(
             ShaderWarm::PrecachedPipelinesPath(title_id),
-            {device.GetDriverVersion(), device.GetDeviceID(), CACHE_VERSION,
-             GraphicsNoInline() ? 1U : 0U},
-            precached);
+            {device.GetDriverVersion(), device.GetDeviceID(), CACHE_VERSION}, precached);
     }
     if (!stop_loading.stop_requested() && total_built != 0) {
         // Without this, the builds reach the file only at the next boot, game change or clean
@@ -2252,7 +2185,7 @@ void PipelineCache::PrecacheShaders(u64 title_id, std::vector<PrecacheJob> jobs,
     VideoCommon::StutterTrace::BootMarker(
         "precache_end", fmt::format("built={} seconds={:.3f}", total_built, seconds));
     // The graphics programs of the game files come last, on threads of their own
-    // (shader_warm_threads / EDEN_NX2_WARM_THREADS).
+    // (shader_warm_threads).
     if (graphics_warm_pending && !skipped && !stop_loading.stop_requested()) {
         const size_t graphics_built =
             PrecacheGraphicsWarm(title_id, PrecacheThreads(), done.load(), jobs.size(),
@@ -2980,7 +2913,7 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
         }
         return nullptr;
     }
-    // Graphics pipeline libraries (EDEN_NX2_GPL). Left on the monolithic route: task and mesh
+    // Graphics pipeline libraries. Left on the monolithic route: task and mesh
     // pipelines, transform feedback, a static rasterizer discard, and stages whose texture or
     // image counts do not fit the split rescaling bits.
     const bool use_libraries = [&] {
@@ -3145,9 +3078,9 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
                        : BuildQueue(build_in_parallel, defer_emission ? deferred_ir_bytes : 0);
     static_assert(VideoCommon::EvictedPointerSlots::NumPrograms == Maxwell::MaxShaderProgram);
     VideoCommon::EvictedPointerSlots::Slots mapped_pointers;
-    for (size_t index = 0, env_index = 0; index < Maxwell::MaxShaderProgram; ++index) {
+    for (size_t index = 0, mapped_env = 0; index < Maxwell::MaxShaderProgram; ++index) {
         if (key.unique_hashes[index] != 0) {
-            mapped_pointers[index] = envs[env_index++]->MappedStoragePointerKeys();
+            mapped_pointers[index] = envs[mapped_env++]->MappedStoragePointerKeys();
         }
     }
     auto pipeline = std::make_unique<GraphicsPipeline>(

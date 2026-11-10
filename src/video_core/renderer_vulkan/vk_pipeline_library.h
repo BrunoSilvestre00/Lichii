@@ -21,7 +21,7 @@
 
 namespace Vulkan {
 
-// Graphics pipeline libraries (EDEN_NX2_GPL=1, VK_EXT_graphics_pipeline_library).
+// Graphics pipeline libraries (VK_EXT_graphics_pipeline_library).
 //
 // A pipeline is linked from four parts: vertex input, pre-rasterization shaders, fragment shader
 // and fragment output. The two shader parts are what the driver spends seconds on; they are built

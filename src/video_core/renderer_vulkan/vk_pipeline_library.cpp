@@ -99,6 +99,10 @@ std::shared_ptr<const GplLibrary> GraphicsPipelineLibraryCache::GetOrCreate(
         std::scoped_lock lock{mutex};
         if (const auto it = entries.find(key); it != entries.end() && it->second == entry) {
             entries.erase(it);
+            if (library) {
+                // No longer cached: the count of cached libraries stays exact.
+                total_libraries.fetch_sub(1, std::memory_order_relaxed);
+            }
         }
     }
     return library;
@@ -165,9 +169,11 @@ size_t GraphicsPipelineLibraryCache::PruneUnused() {
     const size_t pruned = std::erase_if(entries, [](const auto& item) {
         Entry& entry = *item.second;
         std::scoped_lock entry_lock{entry.mutex};
-        // Only the map holds it. A thread that took the entry before this still holds the entry
-        // itself, and with it the library it returns.
-        return entry.done && entry.library && entry.library.use_count() == 1;
+        // Only the map holds the entry and its library. A caller of GetOrCreate that still holds
+        // the entry keeps it in the map, so a later caller reuses the library instead of
+        // building it again.
+        return item.second.use_count() == 1 && entry.done && entry.library &&
+               entry.library.use_count() == 1;
     });
     total_libraries.fetch_sub(pruned, std::memory_order_relaxed);
     return pruned;
