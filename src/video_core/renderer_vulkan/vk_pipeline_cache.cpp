@@ -1696,8 +1696,15 @@ size_t PrecacheThreads() {
     constexpr u64 BytesPerThread = 2ULL << 30;
     constexpr u64 Headroom = 2ULL << 30;
     const auto usage = Common::GetProcessMemoryUsage();
-    if (usage.system_commit_limit == 0 || usage.system_commit >= usage.system_commit_limit) {
+    if (usage.system_commit_limit == 0) {
         return all;
+    }
+    if (usage.system_commit >= usage.system_commit_limit) {
+        LOG_INFO(Render_Vulkan,
+                 "Shader precache: no commit memory free, 1 thread instead of {} "
+                 "(shader_warm_threads sets a fixed count)",
+                 all);
+        return 1;
     }
     const u64 free_commit = usage.system_commit_limit - usage.system_commit;
     const size_t fit = static_cast<size_t>(
