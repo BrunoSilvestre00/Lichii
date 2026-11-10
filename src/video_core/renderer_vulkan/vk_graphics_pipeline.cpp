@@ -405,7 +405,9 @@ GraphicsPipeline::GraphicsPipeline(
       pipeline_cache(pipeline_cache_), binaries{binaries_}, scheduler{scheduler_},
       guest_descriptor_queue{guest_descriptor_queue_},
       descriptor_buffer_ring{descriptor_buffer_ring_}, spv_modules{std::move(stages)},
-      library_cache{library_params.library_cache}, spirv_hashes{library_params.spirv_hashes},
+      library_cache{library_params.library_cache},
+      libraries_only{library_params.library_cache && library_params.libraries_only},
+      spirv_hashes{library_params.spirv_hashes},
       worker_only_build{build_queue.jobs && static_cast<bool>(emit_stages)},
       mesh_emulation{std::move(mesh_emulation_)} {
     if (shader_notify) {
@@ -515,10 +517,12 @@ GraphicsPipeline::GraphicsPipeline(
             stage_set_layouts[stage] = stage_builder.CreateDescriptorSetLayout(false);
             set_layouts[stage] = *stage_set_layouts[stage];
             has_stage_sets = true;
-            stage_templates[stage] =
-                stage_builder.CreateTemplate(set_layouts[stage], VK_NULL_HANDLE, false);
-            stage_allocators[stage] = descriptor_pool.Allocator(
-                device, scheduler, set_layouts[stage], stage_infos[stage]);
+            if (!libraries_only) {
+                stage_templates[stage] =
+                    stage_builder.CreateTemplate(set_layouts[stage], VK_NULL_HANDLE, false);
+                stage_allocators[stage] = descriptor_pool.Allocator(
+                    device, scheduler, set_layouts[stage], stage_infos[stage]);
+            }
         }
         pipeline_layout =
             DescriptorLayoutBuilder{device}.CreateIndependentPipelineLayout(set_layouts, true);
@@ -648,14 +652,24 @@ GraphicsPipeline::GraphicsPipeline(
             const VkRenderPass render_pass{render_pass_cache.Get(MakeRenderPassKey(key.state, device))};
             Validate();
             if (library_cache) {
+                const bool has_module = std::ranges::any_of(
+                    spv_modules, [](const vk::ShaderModule& module) { return bool(module); });
                 bool made{};
                 try {
                     made = MakeLibraryPipeline(render_pass);
                 } catch (const vk::Exception& exception) {
                     LOG_ERROR(Render_Vulkan, "Nx2Perf gpl: pipeline {:016x} linking failed: {}",
                               key.Hash(), exception.what());
+                    if (libraries_only) {
+                        throw;
+                    }
                 }
-                if (!made) {
+                if (!made && libraries_only && has_module) {
+                    // A warm-up build whose library the driver did not make: reported as a
+                    // failed build (Failed()), not counted as built.
+                    throw vk::Exception(VK_ERROR_INITIALIZATION_FAILED);
+                }
+                if (!made && !libraries_only) {
                     library_cache->RecordFallback();
                     FallBackToMonolithic(render_pass);
                 }
@@ -675,7 +689,7 @@ GraphicsPipeline::GraphicsPipeline(
             ReportPipelineBuildFailure(exception.GetResult());
             throw;
         }
-        if (pipeline_statistics) {
+        if (pipeline_statistics && !(library_cache && !pipeline)) {
             pipeline_statistics->Collect(device, *pipeline);
         }
         // Nothing reads the shader modules once the pipeline exists, and the driver keeps a copy
@@ -2515,8 +2529,19 @@ bool GraphicsPipeline::MakeLibraryPipeline(VkRenderPass render_pass) {
         states.depth_stencil_ci.maxDepthBounds = 0.0f;
     }
     static constexpr std::array parts{GplPart::PreRasterization, GplPart::Fragment};
+    bool any_library{};
     for (size_t index = 0; index < parts.size(); ++index) {
         const GplPart part = parts[index];
+        if (libraries_only) {
+            // Warm-up with one stage and no partner: build only the part that has a shader.
+            bool has_shader{};
+            for (size_t stage = 0; stage < NUM_STAGES; ++stage) {
+                has_shader |= InPart(part, stage) && static_cast<bool>(spv_modules[stage]);
+            }
+            if (!has_shader) {
+                continue;
+            }
+        }
         // The log names a library after its vertex (or fragment) program.
         const u64 name = part == GplPart::PreRasterization ? key.unique_hashes[1]
                                                            : key.unique_hashes[5];
@@ -2526,6 +2551,10 @@ bool GraphicsPipeline::MakeLibraryPipeline(VkRenderPass render_pass) {
         if (!shader_libraries[index]) {
             return false;
         }
+        any_library = true;
+    }
+    if (libraries_only) {
+        return any_library;
     }
     const VkGraphicsPipelineLibraryCreateInfoEXT vertex_input_ci{
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT,

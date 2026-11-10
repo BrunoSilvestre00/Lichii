@@ -25,6 +25,7 @@
 #include "common/cityhash.h"
 #include "common/scope_exit.h"
 #include "common/fs/fs.h"
+#include "common/fs/fs_util.h"
 #include "common/fs/path_util.h"
 #include "common/thread.h"
 #include "common/thread_worker.h"
@@ -408,8 +409,8 @@ vk::ShaderModule EmitShaderModule(const Device& device, const Shader::Profile& p
                                  u128* spirv_hash = nullptr) {
     const auto code =
         EmitPipelineShader(profile, runtime_info, program, binding, shader_hash, reference);
-    // Every graphics module (monolithic pipelines and pipeline libraries, on the GPU thread or on
-    // a worker) is made here, so the pass runs once on every path.
+    // Every graphics module (monolithic pipelines, pipeline libraries, the graphics warm-up, on
+    // the GPU thread or on a worker) is made here, so the pass runs once on every path.
     std::vector<u32> module_code(code.begin(), code.end());
     if (GraphicsNoInline()) {
         if (const size_t marked = VideoCommon::MarkSharedFunctionsDontInline(module_code);
@@ -1713,12 +1714,243 @@ void PipelineCache::LoadPipelinesV2(u64 title_id,
 }
 
 namespace {
+/// Threads of the shader precache: EDEN_NX2_WARM_THREADS=N (1 to 64), else the
+/// shader_warm_threads setting, where 0 is every CPU thread.
+size_t PrecacheThreads() {
+    const size_t all = std::clamp<size_t>(std::thread::hardware_concurrency(), 1, 64);
+    const u32 setting = Settings::values.shader_warm_threads.GetValue();
+    const size_t chosen = setting == 0 ? all : std::clamp<size_t>(setting, 1, 64);
+    static const size_t forced = [] {
+        constexpr size_t Default = 0;
+        const char* const value = std::getenv("EDEN_NX2_WARM_THREADS");
+        if (value == nullptr || *value == '\0') {
+            return Default;
+        }
+        char* end = nullptr;
+        const long parsed = std::strtol(value, &end, 10);
+        if (end == value || *end != '\0' || parsed < 1 || parsed > 64) {
+            LOG_WARNING(Render_Vulkan,
+                        "Nx2Perf: EDEN_NX2_WARM_THREADS={} is not a number from 1 to 64, using "
+                        "the setting",
+                        value);
+            return Default;
+        }
+        return static_cast<size_t>(parsed);
+    }();
+    return forced != 0 ? forced : chosen;
+}
+
 /// Whether shared shader functions are built as calls (compute bit 0, graphics bit 1), for the
 /// precache markers: the SPIR-V the driver compiled differs between the two modes.
 u32 NoInlineBits() {
     return (ComputeNoInline() ? 1U : 0U) | (GraphicsNoInline() ? 2U : 0U);
 }
+
+/// Graphics marker bits 2 and up: the dynamic states the device lacks (KeyDynamicState bits),
+/// whose entries the warm-up left out. Gaining one later no longer matches, and they get built.
+constexpr u32 WarmMissingDynamicStateShift = 2;
+// Bit 2 stays dynamic vertex input, so markers written before the other states still match.
+static_assert((KeyDynamicState::VertexInput << WarmMissingDynamicStateShift) == 4);
+
+u32 GraphicsWarmModeBits(const DynamicFeatures& features) {
+    return NoInlineBits() | (MissingKeyDynamicStates(features) << WarmMissingDynamicStateShift);
+}
 } // Anonymous namespace
+
+size_t PipelineCache::PrecacheGraphicsWarm(u64 title_id, size_t num_threads, size_t done_before,
+                                           size_t total_before, std::stop_token stop_loading,
+                                           const VideoCore::DiskResourceLoadCallback& callback,
+                                           bool& skipped) {
+    namespace ShaderWarm = VideoCommon::ShaderWarm;
+    if (!device.IsExtGraphicsPipelineLibrarySupported()) {
+        return 0;
+    }
+    const std::filesystem::path warm_file = ShaderWarm::GraphicsWarmPath(title_id);
+    const std::string path = Common::FS::PathToUTF8String(warm_file); // for the log
+    std::error_code ec;
+    if (!std::filesystem::exists(warm_file, ec)) {
+        return 0;
+    }
+    const u32 mode_bits = GraphicsWarmModeBits(dynamic_features);
+    const u32 missing_dynamic_states = MissingKeyDynamicStates(dynamic_features);
+    const auto stamp = [&](u64 entries) {
+        return ShaderWarm::CurrentWarmStamp(warm_file, entries, device.GetDriverVersion(),
+                                            device.GetDeviceID(), CACHE_VERSION, mode_bits);
+    };
+    const auto current = stamp(0);
+    const auto marker = ShaderWarm::ReadWarmMarker(warm_file);
+    if (current && marker && marker->Matches(*current)) {
+        LOG_INFO(Render_Vulkan, "Shader precache: graphics programs already done for this driver");
+        return 0;
+    }
+    // Streamed: the file can be 1.5 GB; workers take the next entry under the reader's lock.
+    struct Reader {
+        std::mutex mutex;
+        std::ifstream file;
+        std::streampos end{};
+        bool failed{};
+        std::atomic<size_t> built{};
+        std::atomic<size_t> failed_builds{};
+        /// Builds the driver refused: worth another precache, unlike entries that cannot be built.
+        std::atomic<size_t> driver_failures{};
+        /// Left out on purpose: vertex programs that read their position input.
+        std::atomic<size_t> skipped_builds{};
+        /// Left out: entries made for a dynamic state this device lacks.
+        std::atomic<size_t> unsupported_builds{};
+        size_t read{}; ///< Entries taken from the file (under the mutex)
+        std::streamoff position{};
+    };
+    Reader reader;
+    size_t known_total = 0; ///< Entry count recorded by the builder, 0 when unknown
+    try {
+        reader.file.open(warm_file, std::ios::binary | std::ios::ate);
+        if (!reader.file.is_open()) {
+            LOG_WARNING(Render_Vulkan, "Shader precache: cannot open {}", path);
+            return 0;
+        }
+        reader.file.exceptions(std::ifstream::failbit);
+        reader.end = reader.file.tellg();
+        known_total = static_cast<size_t>(ShaderWarm::ReadWarmCount(warm_file));
+        reader.file.seekg(0, std::ios::beg);
+        std::array<char, 8> magic{};
+        u32 version{};
+        reader.file.read(magic.data(), magic.size())
+            .read(reinterpret_cast<char*>(&version), sizeof(version));
+        constexpr std::array<char, 8> expected_magic{'y', 'u', 'z', 'u', 'c', 'a', 'c', 'h'};
+        if (magic != expected_magic || version != CACHE_VERSION) {
+            LOG_WARNING(Render_Vulkan, "Shader precache: {} is not a version {} file", path,
+                        CACHE_VERSION);
+            return 0;
+        }
+        reader.position = reader.file.tellg();
+    } catch (const std::exception& e) {
+        LOG_WARNING(Render_Vulkan, "Shader precache: opening {} failed: {}", path, e.what());
+        return 0;
+    }
+    const auto begin = std::chrono::steady_clock::now();
+    LOG_INFO(Render_Vulkan, "Shader precache: graphics programs of {} ({} MB) on {} threads", path,
+             static_cast<long long>(reader.end) / (1024 * 1024), num_threads);
+    std::atomic<bool> cancel{false};
+    {
+        std::vector<std::jthread> threads;
+        for (size_t thread = 0; thread < num_threads; ++thread) {
+            threads.emplace_back([this, &reader, &cancel, missing_dynamic_states] {
+                Common::SetCurrentThreadName("VkShaderPrecache");
+                // One thread per CPU thread: below normal, like the shader job workers, so the
+                // UI thread (menus, the configure dialog) is not starved during the warm-up.
+                Common::SetCurrentThreadPriority(Common::ThreadPriority::Low);
+                static const GuessMissing guess{};
+                GraphicsPipelineLibraryCache::SetNoRetainOnThisThread(true);
+                ShaderPools pools;
+                while (!cancel.load(std::memory_order_relaxed)) {
+                    FileEnvironment env;
+                    GraphicsPipelineCacheKey key{};
+                    {
+                        std::scoped_lock lock{reader.mutex};
+                        if (reader.failed || reader.file.tellg() == reader.end) {
+                            break;
+                        }
+                        try {
+                            u32 num_envs{};
+                            reader.file.read(reinterpret_cast<char*>(&num_envs),
+                                             sizeof(num_envs));
+                            if (num_envs != 1) {
+                                LOG_WARNING(Render_Vulkan,
+                                            "Shader precache: unexpected graphics entry, stopping");
+                                reader.failed = true;
+                                break;
+                            }
+                            env.Deserialize(reader.file, reader.end);
+                            reader.file.read(reinterpret_cast<char*>(&key), sizeof(key));
+                            ++reader.read;
+                            reader.position = reader.file.tellg();
+                        } catch (const std::exception& e) {
+                            LOG_WARNING(Render_Vulkan, "Shader precache: graphics read failed: {}",
+                                        e.what());
+                            reader.failed = true;
+                            break;
+                        }
+                    }
+                    // Its libraries would name a dynamic state this device does not have.
+                    if ((KeyDynamicStates(key.state) & missing_dynamic_states) != 0) {
+                        reader.unsupported_builds.fetch_add(1);
+                        continue;
+                    }
+                    env.SetGuessMissing(&guess);
+                    WarmResult result = WarmResult::Unbuildable;
+                    try {
+                        Shader::Environment* const env_ptr = &env;
+                        result = WarmGraphicsLibraries(pools, key, std::span{&env_ptr, 1});
+                    } catch (const vk::Exception& e) {
+                        LOG_DEBUG(Render_Vulkan, "Shader precache: {}", e.what());
+                        result = WarmResult::DriverFailed;
+                    } catch (const std::exception& e) {
+                        LOG_DEBUG(Render_Vulkan, "Shader precache: {}", e.what());
+                    }
+                    if (result == WarmResult::Skipped) {
+                        reader.skipped_builds.fetch_add(1);
+                    } else {
+                        (result == WarmResult::Built ? reader.built : reader.failed_builds)
+                            .fetch_add(1);
+                    }
+                    if (result == WarmResult::DriverFailed) {
+                        reader.driver_failures.fetch_add(1);
+                    }
+                }
+            });
+        }
+        while (true) {
+            {
+                std::scoped_lock lock{reader.mutex};
+                if (reader.failed || reader.position == reader.end) {
+                    break;
+                }
+            }
+            if (stop_loading.stop_requested() || ShaderWarm::TakeSkipWarm()) {
+                // Every thread stops after its current build; the scope end joins them.
+                cancel = true;
+                skipped = true;
+                break;
+            }
+            if (callback) {
+                const size_t done = reader.built + reader.failed_builds + reader.skipped_builds +
+                                    reader.unsupported_builds;
+                // The builder's recorded count, or else an estimate from the bytes read.
+                size_t total = known_total;
+                if (total == 0) {
+                    std::scoped_lock lock{reader.mutex};
+                    const std::streamoff header = 12;
+                    const std::streamoff end = reader.end;
+                    if (reader.position > header) {
+                        total = static_cast<size_t>(static_cast<double>(reader.read) *
+                                                    static_cast<double>(end - header) /
+                                                    static_cast<double>(reader.position - header));
+                    }
+                }
+                callback(VideoCore::LoadCallbackStage::Warm, done_before + done,
+                         total_before + std::max(total, done));
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds{100});
+        }
+    }
+    const bool complete =
+        !reader.failed && reader.end == reader.position && reader.driver_failures == 0;
+    if (complete && !skipped && !stop_loading.stop_requested()) {
+        // A precache with driver failures writes no marker, so the next start tries again.
+        if (const auto stamp_done = stamp(reader.read)) {
+            ShaderWarm::WriteWarmMarker(warm_file, *stamp_done);
+        }
+    }
+    LOG_INFO(Render_Vulkan,
+             "Shader precache: graphics programs {}, {} built, {} failed ({} by the driver), "
+             "{} skipped (vertex reads its position input), {} skipped (made for dynamic state "
+             "this device lacks), {:.1f} s",
+             stop_loading.stop_requested() ? "stopped" : (skipped ? "skipped" : "finished"),
+             reader.built.load(), reader.failed_builds.load(), reader.driver_failures.load(),
+             reader.skipped_builds.load(), reader.unsupported_builds.load(),
+             std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count());
+    return reader.built;
+}
 
 void PipelineCache::PrecacheShaders(u64 title_id, std::vector<PrecacheJob> jobs,
                                     std::unordered_set<u64> precached, std::stop_token stop_loading,
@@ -1801,12 +2033,29 @@ void PipelineCache::PrecacheShaders(u64 title_id, std::vector<PrecacheJob> jobs,
             file_entries = 0;
         }
     }
-    if (jobs.empty() && !compute_pending) {
+    const bool graphics_warm_pending = [&] {
+        if (!device.IsExtGraphicsPipelineLibrarySupported()) {
+            return false;
+        }
+        const auto graphics_file = ShaderWarm::GraphicsWarmPath(title_id);
+        if (!std::filesystem::exists(graphics_file, ec)) {
+            return false;
+        }
+        const auto graphics_current = ShaderWarm::CurrentWarmStamp(
+            graphics_file, 0, device.GetDriverVersion(), device.GetDeviceID(), CACHE_VERSION,
+            GraphicsWarmModeBits(dynamic_features));
+        const auto graphics_marker = ShaderWarm::ReadWarmMarker(graphics_file);
+        return !(graphics_current && graphics_marker &&
+                 graphics_marker->Matches(*graphics_current));
+    }();
+    if (jobs.empty() && !compute_pending && !graphics_warm_pending) {
         LOG_INFO(Render_Vulkan, "Shader precache: nothing to precache");
         return;
     }
 
     const auto begin = std::chrono::steady_clock::now();
+    // The cached pipelines and compute programs build as shader jobs (the count is for the log);
+    // the graphics warm-up below runs on PrecacheThreads() threads of its own.
     const size_t num_threads = GetTotalPipelineWorkers();
     std::vector<u8> built(jobs.size());
     std::atomic<size_t> done{};
@@ -1898,6 +2147,16 @@ void PipelineCache::PrecacheShaders(u64 title_id, std::vector<PrecacheJob> jobs,
              seconds);
     VideoCommon::StutterTrace::BootMarker(
         "precache_end", fmt::format("built={} seconds={:.3f}", total_built, seconds));
+    // The graphics programs of the game files come last, on threads of their own
+    // (shader_warm_threads / EDEN_NX2_WARM_THREADS).
+    if (graphics_warm_pending && !skipped && !stop_loading.stop_requested()) {
+        const size_t graphics_built =
+            PrecacheGraphicsWarm(title_id, PrecacheThreads(), done.load(), jobs.size(),
+                                 stop_loading, callback, skipped);
+        if (!stop_loading.stop_requested() && graphics_built != 0) {
+            QueueVulkanPipelineCacheSave();
+        }
+    }
 }
 
 void PipelineCache::QueueVulkanPipelineCacheFlush() {
@@ -2109,6 +2368,22 @@ GraphicsPipeline* PipelineCache::CurrentGraphicsPipelineSlowPath() {
     return BuiltPipeline(current_pipeline);
 }
 
+PipelineCache::WarmResult PipelineCache::WarmGraphicsLibraries(
+    ShaderPools& pools, const GraphicsPipelineCacheKey& key,
+    std::span<Shader::Environment* const> envs) {
+    if (!device.IsExtGraphicsPipelineLibrarySupported()) {
+        return WarmResult::Unbuildable;
+    }
+    pools.ReleaseContents();
+    bool skipped = false;
+    const auto pipeline{CreateGraphicsPipeline(pools, key, envs, nullptr, false, nullptr, nullptr,
+                                               true, &skipped)};
+    if (!pipeline) {
+        return skipped ? WarmResult::Skipped : WarmResult::Unbuildable;
+    }
+    return pipeline->Failed() ? WarmResult::DriverFailed : WarmResult::Built;
+}
+
 void PipelineCache::TickFrame() {
     ++frame_count;
     native_wait_budget_us =
@@ -2285,11 +2560,14 @@ GraphicsPipeline* PipelineCache::BuiltPipeline(GraphicsPipeline* pipeline) noexc
     return discard ? nullptr : pipeline;
 }
 
+/// Translates the key's stages and creates the pipeline, on the library route when it qualifies.
+/// Null when the pipeline cannot run on this device (or, with `libraries_only`, takes the
+/// monolithic route) or a stage fails to translate.
 std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
     ShaderPools& pools, const GraphicsPipelineCacheKey& key,
     std::span<Shader::Environment* const> envs, PipelineStatistics* statistics,
     bool build_in_parallel, std::shared_ptr<ShaderPools> emit_pools,
-    ParallelTranslation* parallel) try {
+    ParallelTranslation* parallel, bool libraries_only, bool* warm_skipped) try {
     auto hash = key.Hash();
     LOG_DEBUG(Render_Vulkan, "{:#016x}", hash);
     // Declared before the programs, whose IR they hold
@@ -2582,6 +2860,17 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
                 storage_buffers + auxiliary_buffers, auxiliary_buffers, set_limit);
         }
     }
+    // Warm-up only: a vertex program that reads its own position input makes SPIR-V with a
+    // BuiltIn Position input, which a vertex shader may not have (VUID-Position-Position-04319).
+    // RADV crashes compiling it (radv_nir_lower_vs_inputs), and a driver crash cannot be caught.
+    // Generic scans of game files find such programs. The game's own pipelines are not affected.
+    if (libraries_only && uses_vertex_b && programs[1].stage == Shader::Stage::VertexB &&
+        programs[1].info.loads.AnyComponent(Shader::IR::Attribute::PositionX)) {
+        if (warm_skipped != nullptr) {
+            *warm_skipped = true;
+        }
+        return nullptr;
+    }
     // Graphics pipeline libraries (EDEN_NX2_GPL). Left on the monolithic route: task and mesh
     // pipelines, transform feedback, a static rasterizer discard, and stages whose texture or
     // image counts do not fit the split rescaling bits.
@@ -2615,6 +2904,9 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
                pre_images <= GPL_FRAGMENT_IMAGE_SCALING_BASE &&
                fragment_images <= GPL_FRAGMENT_IMAGE_SCALING_BASE;
     }();
+    if (libraries_only && !use_libraries) {
+        return nullptr;
+    }
     std::array<u128, Maxwell::MaxShaderStage> spirv_hashes{};
 
     u64 deferred_ir_bytes = 0;
@@ -2732,6 +3024,16 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
             return stage_modules;
         };
     }
+    GraphicsPipeline::LibraryParams library_params{
+        .library_cache = use_libraries && !mesh_emulation ? &graphics_libraries : nullptr,
+        .spirv_hashes = spirv_hashes,
+        .libraries_only = libraries_only,
+    };
+    // A libraries_only build (warm-up) is built here, on the calling thread: no job, and not left
+    // for Build() either, so Failed() is known when this returns.
+    const PipelineBuildQueue build_queue =
+        libraries_only ? PipelineBuildQueue{}
+                       : BuildQueue(build_in_parallel, defer_emission ? deferred_ir_bytes : 0);
     static_assert(VideoCommon::EvictedPointerSlots::NumPrograms == Maxwell::MaxShaderProgram);
     VideoCommon::EvictedPointerSlots::Slots mapped_pointers;
     for (size_t index = 0, env_index = 0; index < Maxwell::MaxShaderProgram; ++index) {
@@ -2739,14 +3041,10 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
             mapped_pointers[index] = envs[env_index++]->MappedStoragePointerKeys();
         }
     }
-    GraphicsPipeline::LibraryParams library_params{
-        .library_cache = use_libraries && !mesh_emulation ? &graphics_libraries : nullptr,
-        .spirv_hashes = spirv_hashes,
-    };
     auto pipeline = std::make_unique<GraphicsPipeline>(
         scheduler, buffer_cache, texture_cache, vulkan_pipeline_cache, pipeline_binaries.get(),
-        &shader_notify, device, descriptor_pool, guest_descriptor_queue, descriptor_buffer_ring,
-        BuildQueue(build_in_parallel, defer_emission ? deferred_ir_bytes : 0), statistics,
+        libraries_only ? nullptr : &shader_notify, device, descriptor_pool,
+        guest_descriptor_queue, descriptor_buffer_ring, build_queue, statistics,
         render_pass_cache, key, std::move(modules), infos, std::move(emit_stages),
         std::move(mesh_emulation), library_params);
     pipeline->SetMappedPointers(std::move(mapped_pointers));

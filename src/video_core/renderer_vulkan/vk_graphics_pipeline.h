@@ -104,10 +104,11 @@ struct MeshEmulationSetup {
 };
 
 /// Graphics pipeline libraries (EDEN_NX2_GPL): non-null `library_cache` builds the pipeline
-/// from shared per-stage libraries.
+/// from shared per-stage libraries; `libraries_only` builds only the libraries (warm-up).
 struct GraphicsPipelineLibraryParams {
     GraphicsPipelineLibraryCache* library_cache{};
     std::array<u128, Tegra::Engines::Maxwell3D::Regs::MaxShaderStage> spirv_hashes{};
+    bool libraries_only{};
 };
 
 class GraphicsPipeline {
@@ -121,6 +122,7 @@ public:
 
     /// Graphics pipeline libraries (EDEN_NX2_GPL): non-null `library_cache` builds the pipeline
     /// from per-stage libraries; the stages were emitted with one descriptor set per stage.
+    /// `libraries_only` builds the shader libraries and nothing else (warm-up, no draw).
     // Declared outside the class: GCC rejects a default argument `= {}` of a nested struct
     // with member initializers inside its enclosing class.
     using LibraryParams = GraphicsPipelineLibraryParams;
@@ -388,9 +390,9 @@ private:
 
     vk::Pipeline MakePipeline(VkRenderPass render_pass);
 
-    /// Library build (EDEN_NX2_GPL): gets or builds the two shader libraries, then links them
-    /// with this pipeline's vertex input and fragment output parts. False when a library
-    /// failed; the caller then builds the pipeline the monolithic way.
+    /// Library build (EDEN_NX2_GPL): gets or builds the two shader libraries, then (unless
+    /// libraries_only) links them with this pipeline's vertex input and fragment output parts.
+    /// False when a library failed; the caller then builds the pipeline the monolithic way.
     bool MakeLibraryPipeline(VkRenderPass render_pass);
 
     GplLibrary MakeShaderLibrary(GplPart part, const PipelineStates& states,
@@ -466,6 +468,7 @@ private:
     /// stage index), the shader libraries, and this pipeline's own vertex input and fragment
     /// output libraries.
     GraphicsPipelineLibraryCache* const library_cache;
+    const bool libraries_only;
     std::array<u128, NUM_STAGES> spirv_hashes{};
     std::array<vk::DescriptorSetLayout, NUM_STAGES> stage_set_layouts;
     std::array<std::string, NUM_STAGES> stage_set_signatures;
