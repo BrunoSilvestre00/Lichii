@@ -714,6 +714,15 @@ bool AttachDevice(VkInstance instance, VkPhysicalDevice physical, VkDevice devic
                  "{} compute queues)",
                  version.versionNGX ? version.versionNGX.toStr() : version.versionSL.toStr(),
                  queues.graphics, queues.compute);
+        // DLSS-G refuses to run without Reflex on.
+        sl::ReflexOptions reflex{};
+        reflex.mode = sl::ReflexMode::eLowLatency;
+        reflex.frameLimitUs = 0;
+        if (const sl::Result result = state.api.reflex_set_options(reflex);
+            result != sl::Result::eOk) {
+            LOG_WARNING(Render_Vulkan, "DLSS-G: slReflexSetOptions failed, result {}",
+                        ResultText(result));
+        }
     } else if (state.frame_gen_requested) {
         ClearFrameGenApi(state.api);
         // A loaded DLSS-G puts its own swapchain behind the hooks; without frame generation the

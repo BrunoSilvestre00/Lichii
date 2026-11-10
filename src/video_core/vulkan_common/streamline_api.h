@@ -6,8 +6,11 @@
 
 #pragma once
 
+#include <mutex>
+
 #include <windows.h>
 
+#include "common/common_types.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 
 #include <sl.h>
@@ -45,5 +48,20 @@ struct Api {
 
 /// The loaded functions; only valid while IsDlssAvailable().
 [[nodiscard]] const Api& GetApi();
+
+/// slGetNewFrameToken isn't thread safe, and the token it returns is a slot Streamline hands to
+/// another frame index a few calls later: hold this from getting a token until done with it.
+[[nodiscard]] std::unique_lock<std::mutex> LockFrameTokens();
+
+/// For the upscaler while FrameGenAvailable(): whether it sets this frame's constants, true the
+/// first time only (DLSS-G rejects a second set). Frames that get none reuse the last ones.
+[[nodiscard]] bool ClaimFrameConstants(u32 index, const sl::Constants& constants);
+
+/// slSetConstants with a frame's claimed constants; call with LockFrameTokens held.
+[[nodiscard]] sl::Result SetFrameConstants(u32 index, const sl::FrameToken& token);
+
+/// The upscaler tagged depth and motion vectors for DLSS-G, with real camera constants.
+void NoteFrameGenInputs(u32 index, VkExtent2D extent, VkFormat depth_format,
+                        VkFormat motion_format);
 
 } // namespace Vulkan::Streamline

@@ -48,6 +48,7 @@
 #ifdef EGLANTINE_STREAMLINE
 #include "video_core/renderer_vulkan/vk_streamline_dlss.h"
 #include "video_core/vulkan_common/streamline.h"
+#include "video_core/vulkan_common/streamline_frame_gen.h"
 #endif
 #ifdef __ANDROID__
 #include <jni.h>
@@ -255,6 +256,13 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     SCOPE_EXIT {
         render_window.OnFrameDisplayed();
     };
+#ifdef EGLANTINE_STREAMLINE
+    // DLSS Frame Generation: this guest frame ends here, presented or not.
+    Streamline::FrameGenBeginFrame();
+    SCOPE_EXIT {
+        Streamline::FrameGenNextFrame();
+    };
+#endif
 
     RenderAppletCaptureLayer(framebuffers);
 
@@ -306,6 +314,18 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
         scheduler.MarkFrameEnd(++trace_frame, mark);
     }
     scheduler.Flush(*frame->render_ready);
+#ifdef EGLANTINE_STREAMLINE
+    {
+        const Streamline::FrameGenFrame ended = Streamline::FrameGenEndFrame();
+        const Common::Rectangle<u32>& screen = render_window.GetFramebufferLayout().screen;
+        frame->frame_gen = Streamline::FrameGenAvailable();
+        frame->frame_gen_frame = ended;
+        frame->guest_rect = VkRect2D{
+            .offset = {static_cast<s32>(screen.left), static_cast<s32>(screen.top)},
+            .extent = {screen.GetWidth(), screen.GetHeight()},
+        };
+    }
+#endif
 
     const auto presenting = trace ? std::chrono::steady_clock::now()
                                   : std::chrono::steady_clock::time_point{};
