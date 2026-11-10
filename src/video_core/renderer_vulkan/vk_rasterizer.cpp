@@ -2705,6 +2705,16 @@ void RasterizerVulkan::FlushCommands() {
     }
     draw_counter = 0;
     pending_native_work = false;
+    // A fence with a download is flushed when it is queued, then again here with an empty command
+    // buffer: thousands of empty submits a second, each a kernel call (port of Fritchii c338269b92).
+    // Experiment: EDEN_NX2_EMPTY_SUBMITS=1 submits them anyway, for A/B runs.
+    static const bool empty_submits = [] {
+        const char* value = std::getenv("EDEN_NX2_EMPTY_SUBMITS");
+        return value != nullptr && value[0] == '1';
+    }();
+    if (!empty_submits && !scheduler.RecordedSinceSubmit()) {
+        return;
+    }
     // Fences with downloads or queries come here right after queueing: ~9,400 a second in
     // Hyrule Warriors: Age of Imprisonment fights. Batched like the fences themselves.
     if (!scheduler.DeferFlush()) {
