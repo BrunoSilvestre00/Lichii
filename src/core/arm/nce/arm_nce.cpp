@@ -9,13 +9,13 @@
 #include <cinttypes>
 #include <memory>
 
+#include "common/cpu_features.h"
 #include "common/signal_chain.h"
 #include "core/arm/nce/arm_nce.h"
 #include "core/arm/nce/instructions.h"
 #include "core/arm/nce/interpreter_visitor.h"
 #include "core/arm/nce/patcher.h"
 #include "core/core.h"
-#include "core/core_timing.h"
 #include "core/memory.h"
 
 #include "core/hle/kernel/k_process.h"
@@ -270,8 +270,9 @@ bool ArmNce::HandleGuestIllegalInstruction(GuestContext* guest_ctx, void* raw_in
             LOG_WARNING(Core_ARM, "Trapped {} reads of CNTPCT_EL0 (last at {:#x})", count,
                         host_ctx.pc);
         }
+        // The same guest-frequency counter the patcher's CNTPCT handler returns.
         if (mrs.GetRt() != 31) {
-            host_ctx.regs[mrs.GetRt()] = guest_ctx->parent->m_system.CoreTiming().GetClockTicks();
+            host_ctx.regs[mrs.GetRt()] = static_cast<u64>(Common::g_wall_clock.GetCNTPCT());
         }
         host_ctx.pc += 4;
         return true;

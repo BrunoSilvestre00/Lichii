@@ -313,8 +313,9 @@ std::string SpillKey(const std::array<u8, 0x20>& sha256, u64 size) {
     return key + fmt::format("-{:x}", size);
 }
 
-/// Removes the random-named files of older builds and abandoned partial files, then the least
-/// recently used complete ones while the directory is over SpillDirCap.
+/// Removes partial files (random-named .tmp and per-decoder .part) and unmarked .bin files not
+/// written to for AbandonedSpillAge, then the least recently used complete ones while the
+/// directory is over SpillDirCap.
 void PruneSpillDir(const std::filesystem::path& dir) {
     namespace fs = std::filesystem;
     std::error_code ec;
@@ -330,8 +331,11 @@ void PruneSpillDir(const std::filesystem::path& dir) {
     for (const auto& entry : fs::directory_iterator(dir, ec)) {
         const auto& path = entry.path();
         const auto extension = path.extension();
-        if (extension == ".tmp") {
-            fs::remove(path, ec);
+        if (extension == ".tmp" || extension == ".part") {
+            // Partial files are written as they decode; one this old belongs to no live decoder.
+            if (now - entry.last_write_time(ec) > AbandonedSpillAge) {
+                fs::remove(path, ec);
+            }
         } else if (extension == ".bin") {
             auto done = path;
             done.replace_extension(".done");
@@ -483,17 +487,20 @@ private:
                 if (spilled) {
                     std::error_code ec;
                     std::filesystem::create_directories(cache->spill_dir, ec);
+                    std::random_device random;
                     if (spill_key.empty()) {
-                        std::random_device random;
                         member.path = cache->spill_dir / fmt::format("{:08x}{:08x}-{}.tmp",
                                                                      random(), random(),
                                                                      cache_index);
                     } else {
-                        member.path = cache->spill_dir / (spill_key + ".bin");
                         member.done_path = cache->spill_dir / (spill_key + ".done");
                         if (ReuseSpill(member)) {
                             return true;
                         }
+                        // Decoded into a file of its own and published once complete, so two
+                        // decoders of the same member never write one file.
+                        member.path = cache->spill_dir / fmt::format("{}-{:08x}{:08x}.part",
+                                                                     spill_key, random(), random());
                     }
                     member.file.Open(member.path, Common::FS::FileAccessMode::Write);
                     member.file.Close();
@@ -581,29 +588,50 @@ private:
             return fail("the data does not end at the file size");
         }
         if (spilled && !member.done_path.empty()) {
-            std::scoped_lock file_lock{member.file_mutex};
-            if (member.file.Flush() &&
-                Common::FS::IOFile{member.done_path, Common::FS::FileAccessMode::Write}.IsOpen()) {
-                member.kept = true;
-            }
+            PublishSpill(member);
         }
         member.decoded.store(uncompressed_size, std::memory_order_release);
         finish();
         return true;
     }
 
+    /// Renames a completely decoded member's partial file to its .bin name and marks it complete
+    /// with its .done file, so later sessions reuse it. If the rename fails, for example because
+    /// another session holds a published copy open on Windows, the partial file serves this
+    /// container and is removed with it.
+    void PublishSpill(NupMember& member) const {
+        std::scoped_lock file_lock{member.file_mutex};
+        if (!member.file.Flush()) {
+            return;
+        }
+        auto bin_path = member.done_path;
+        bin_path.replace_extension(".bin");
+        member.file.Close();
+        std::error_code ec;
+        std::filesystem::rename(member.path, bin_path, ec);
+        if (!ec) {
+            member.path = std::move(bin_path);
+            member.kept =
+                Common::FS::IOFile{member.done_path, Common::FS::FileAccessMode::Write}.IsOpen();
+        }
+        member.file.Open(member.path, Common::FS::FileAccessMode::Read);
+    }
+
     /// Opens the member's file decoded by an earlier session, if it is complete. Marks it used
     /// so the spill directory's size cap removes it last.
     bool ReuseSpill(NupMember& member) const {
         std::error_code ec;
+        auto bin_path = member.done_path;
+        bin_path.replace_extension(".bin");
         if (!std::filesystem::exists(member.done_path, ec) ||
-            std::filesystem::file_size(member.path, ec) != uncompressed_size || ec) {
+            std::filesystem::file_size(bin_path, ec) != uncompressed_size || ec) {
             return false;
         }
-        member.file.Open(member.path, Common::FS::FileAccessMode::Read);
+        member.file.Open(bin_path, Common::FS::FileAccessMode::Read);
         if (!member.file.IsOpen()) {
             return false;
         }
+        member.path = std::move(bin_path);
         std::filesystem::last_write_time(member.done_path,
                                          std::filesystem::file_time_type::clock::now(), ec);
         member.kept = true;

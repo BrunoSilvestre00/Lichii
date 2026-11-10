@@ -110,8 +110,11 @@ object GpuDriverHelper {
                     continue
                 }
             }
-            if (firstDriver == null && getMetadataFromZip(target).name != null) {
-                firstDriver = target
+            if (firstDriver == null) {
+                val metadata = getMetadataFromZip(target)
+                if (metadata.name != null && metadata.minApi <= Build.VERSION.SDK_INT) {
+                    firstDriver = target
+                }
             }
         }
 
