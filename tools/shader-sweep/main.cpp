@@ -1329,10 +1329,14 @@ int main(int argc, char** argv) {
         }
         if (format != "instructions" && format != "native-header")
             throw std::runtime_error("Invalid input format");
-        for (const auto& path : {input, environment, pipeline_key}) {
-            if (!path.empty() && std::filesystem::weakly_canonical(path) ==
-                                     std::filesystem::weakly_canonical(output)) {
-                throw std::runtime_error("Output must not overwrite an input");
+        for (const auto& target : {output, override_out}) {
+            if (target.empty())
+                continue;
+            for (const auto& path : {input, environment, pipeline_key}) {
+                if (!path.empty() && std::filesystem::weakly_canonical(path) ==
+                                         std::filesystem::weakly_canonical(target)) {
+                    throw std::runtime_error("Output must not overwrite an input");
+                }
             }
         }
         OfflineEnvironment env;
