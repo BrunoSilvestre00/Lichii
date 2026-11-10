@@ -1440,7 +1440,8 @@ int main(int argc, char** argv) {
             // The emulator's key for this program (Shader::Ampere::NativeProgramKey over the
             // captured source), and the lowering as a program override record
             // (the tools/nx2/make_*_warm.py scripts read it).
-            diagnostic["native_key"] = fmt::format("{:016x}", Shader::Ampere::NativeProgramKey(native));
+            diagnostic["native_key"] =
+                fmt::format("{:016x}", Shader::Ampere::NativeProgramKey(native));
             if (!override_out.empty()) {
                 const auto record = Shader::Ampere::EncodeProgramOverride(native, lowered);
                 if (record.empty())
