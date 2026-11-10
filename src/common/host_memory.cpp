@@ -82,16 +82,16 @@ static int memfd_create(const char* name, unsigned int flags) {
 #include <fstream>
 #include <string>
 
-// EDEN_FILE_BACKED_MEMORY=1 (or a directory) backs guest memory with an unlinked file in the
-// app's internal cache instead of a memfd. The kernel can then write cold guest pages to
-// storage and drop them, where a memfd can only go to swap and the low memory killer ends the
-// app once swap runs short.
+// Guest memory is backed by an unlinked file in the app's internal cache instead of a memfd.
+// The kernel can then write cold guest pages to storage and drop them, where a memfd can only go
+// to swap and the low memory killer ends the app once swap runs short (Pokemon Pokopia on an
+// 8 GB phone). EDEN_FILE_BACKED_MEMORY=0 keeps the memfd; a directory moves the file.
 static int OpenFileBackedMemory() {
     const char* value = std::getenv("EDEN_FILE_BACKED_MEMORY");
-    if (value == nullptr || value[0] == '\0' || value[0] == '0') {
+    if (value != nullptr && value[0] == '0') {
         return -1;
     }
-    std::string dir = value;
+    std::string dir = value == nullptr || value[0] == '\0' ? "1" : value;
     if (dir == "1") {
         std::ifstream cmdline{"/proc/self/cmdline"};
         std::string package;
