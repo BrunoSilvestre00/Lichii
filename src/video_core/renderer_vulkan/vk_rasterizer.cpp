@@ -3438,6 +3438,8 @@ void RasterizerVulkan::LoadDiskResources(u64 title_id, std::stop_token stop_load
     pipeline_cache.LoadDiskResources(title_id, stop_loading, callback);
 }
 
+// Submits what was recorded once the draws since the last submission reach the budget: the
+// driver's default for Switch 2 titles (EDEN_NX2_FLUSH_DRAWS overrides it), a larger one otherwise.
 void RasterizerVulkan::FlushWork() {
 #ifdef __ANDROID__
     static constexpr bool android = true;
