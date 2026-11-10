@@ -1261,15 +1261,10 @@ bool Device::GetSuitability(bool requires_swapchain) {
     FOR_EACH_VK_FEATURE_EXT(FEATURE_EXTENSION);
     FOR_EACH_VK_EXTENSION(EXTENSION);
 
-    // Shader libraries setting or EDEN_NX2_GPL=1: graphics pipelines linked from per-stage
-    // libraries (vk_pipeline_library).
-    graphics_pipeline_library_requested = [] {
-        if (Settings::values.use_graphics_pipeline_library.GetValue()) {
-            return true;
-        }
-        const char* value = std::getenv("EDEN_NX2_GPL");
-        return value && *value && *value != '0';
-    }();
+    // Shader libraries setting: graphics pipelines linked from per-stage libraries
+    // (vk_pipeline_library).
+    graphics_pipeline_library_requested =
+        Settings::values.use_graphics_pipeline_library.GetValue();
     if (graphics_pipeline_library_requested &&
         supported_extensions.contains(VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME) &&
         supported_extensions.contains(VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME)) {
@@ -1795,8 +1790,8 @@ void Device::RemoveUnsuitableExtensions() {
     RemoveExtensionFeatureIfUnsuitable(extensions.mesh_shader, features.mesh_shader,
                                        VK_EXT_MESH_SHADER_EXTENSION_NAME);
 
-    // VK_EXT_graphics_pipeline_library (EDEN_NX2_GPL): used only with fast linking, which makes
-    // a link cost a fraction of a millisecond.
+    // VK_EXT_graphics_pipeline_library (Shader libraries setting): used only with fast linking,
+    // which makes a link cost a fraction of a millisecond.
     if (graphics_pipeline_library_requested) {
         const bool usable = CanUseGraphicsPipelineLibraries(
             graphics_pipeline_library_features.graphicsPipelineLibrary,

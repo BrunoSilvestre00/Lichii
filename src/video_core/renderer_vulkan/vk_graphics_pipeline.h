@@ -103,7 +103,7 @@ struct MeshEmulationSetup {
     std::array<u32, 4> position_lines{~0U, ~0U, ~0U, ~0U}; ///< line of PositionX..W
 };
 
-/// Graphics pipeline libraries (EDEN_NX2_GPL): non-null `library_cache` builds the pipeline
+/// Graphics pipeline libraries: non-null `library_cache` builds the pipeline
 /// from shared per-stage libraries.
 struct GraphicsPipelineLibraryParams {
     GraphicsPipelineLibraryCache* library_cache{};
@@ -119,7 +119,7 @@ public:
     using EmitStagesFunc = std::function<std::array<vk::ShaderModule, NUM_STAGES>(
         std::array<u128, NUM_STAGES>& spirv_hashes)>;
 
-    /// Graphics pipeline libraries (EDEN_NX2_GPL): non-null `library_cache` builds the pipeline
+    /// Graphics pipeline libraries: non-null `library_cache` builds the pipeline
     /// from per-stage libraries; the stages were emitted with one descriptor set per stage.
     // Declared outside the class: GCC rejects a default argument `= {}` of a nested struct
     // with member initializers inside its enclosing class.
@@ -388,7 +388,7 @@ private:
 
     vk::Pipeline MakePipeline(VkRenderPass render_pass);
 
-    /// Library build (EDEN_NX2_GPL): gets or builds the two shader libraries, then links them
+    /// Library build: gets or builds the two shader libraries, then links them
     /// with this pipeline's vertex input and fragment output parts. False when a library
     /// failed; the caller then builds the pipeline the monolithic way.
     bool MakeLibraryPipeline(VkRenderPass render_pass);
@@ -462,7 +462,7 @@ private:
     u64 kept_scale_epoch{};
     bool kept_images_valid{};
 
-    /// Graphics pipeline libraries (EDEN_NX2_GPL): one descriptor set per stage (set index =
+    /// Graphics pipeline libraries: one descriptor set per stage (set index =
     /// stage index), the shader libraries, and this pipeline's own vertex input and fragment
     /// output libraries.
     GraphicsPipelineLibraryCache* const library_cache;

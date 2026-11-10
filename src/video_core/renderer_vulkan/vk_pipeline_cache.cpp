@@ -430,7 +430,7 @@ vk::ShaderModule EmitShaderModule(const Device& device, const Shader::Profile& p
     return module;
 }
 
-// Graphics pipeline libraries (EDEN_NX2_GPL): each stage's resources go to its own descriptor
+// Graphics pipeline libraries: each stage's resources go to its own descriptor
 // set (set index = stage index) with bindings from 0, and the fragment stage's rescaling bits
 // start at fixed indices, so a stage's SPIR-V does not depend on the other stages' resources.
 void PrepareStageBindings(Shader::Backend::Bindings& binding, size_t stage_index, bool libraries) {
@@ -2504,7 +2504,7 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
                 storage_buffers + auxiliary_buffers, auxiliary_buffers, set_limit);
         }
     }
-    // Graphics pipeline libraries (EDEN_NX2_GPL). Left on the monolithic route: task and mesh
+    // Graphics pipeline libraries. Left on the monolithic route: task and mesh
     // pipelines, transform feedback, a static rasterizer discard, and stages whose texture or
     // image counts do not fit the split rescaling bits.
     const bool use_libraries = [&] {

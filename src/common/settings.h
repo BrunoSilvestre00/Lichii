@@ -672,7 +672,7 @@ struct Values {
                                                          true};
 
     // Graphics pipeline libraries (VK_EXT_graphics_pipeline_library): pipelines linked from
-    // per-stage shader libraries. EDEN_NX2_GPL=1 also turns it on.
+    // per-stage shader libraries.
     SwitchableSetting<bool> use_graphics_pipeline_library{
         linkage, false, "use_graphics_pipeline_library", Category::RendererAdvanced};
 
