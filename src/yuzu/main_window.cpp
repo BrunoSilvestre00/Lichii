@@ -45,6 +45,7 @@
 #include "util/util.h"
 #include "yuzu/game/game_list.h"
 #include "yuzu/nup_dialogs.h"
+#include "yuzu/recommended_settings_dialog.h"
 #include "yuzu/shader_warm_dialog.h"
 #include "video_core/shader_warm/shader_warm_builder.h"
 #ifdef LICHII_NX_TOOLS
@@ -564,6 +565,9 @@ MainWindow::MainWindow(bool has_broken_vulkan)
                 LibraryAppletParameters(0x010000000000100Dull, Service::AM::AppletId::QLaunch));
         }
     }
+
+    // Once the window is up and no game was started with it; else when that game stops.
+    QTimer::singleShot(0, this, &MainWindow::OfferRecommendedSettings);
 }
 
 MainWindow::~MainWindow() {
@@ -1710,6 +1714,14 @@ void MainWindow::ConnectMenuEvents() {
     connect_menu(ui->action_Install_Keys, &MainWindow::OnInstallDecryptionKeys);
     connect_menu(ui->action_About, &MainWindow::OnAbout);
     connect_menu(ui->action_Eden_Dependencies, &MainWindow::OnEdenDependencies);
+    connect_menu(ui->action_Apply_Recommended_Settings, &MainWindow::OnApplyRecommendedSettings);
+    connect_menu(ui->action_Restore_Previous_Settings, &MainWindow::OnRestorePreviousSettings);
+    connect(ui->menu_Help, &QMenu::aboutToShow, this, [this] {
+        ui->action_Apply_Recommended_Settings->setEnabled(!emulation_running);
+        ui->action_Restore_Previous_Settings->setEnabled(!emulation_running);
+        ui->action_Restore_Previous_Settings->setVisible(
+            !Settings::values.recommended_settings_backup.GetValue().empty());
+    });
     connect_menu(ui->action_Data_Manager, &MainWindow::OnDataDialog);
 
 #if defined(ENABLE_UPDATE_CHECKER) && (defined(__linux__) || defined(_WIN32))
@@ -2323,6 +2335,8 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     frame_gen_state = VideoCore::FrameGenState::Pending;
     frame_gen_frames = 0;
     frame_gen_generating = false;
+    frame_gen_fps = 0.0;
+    frame_gen_fps_timer.invalidate();
     refresh_button->setDisabled(true);
     SetFPSSuffix();
 
@@ -2565,6 +2579,7 @@ void MainWindow::OnEmulationStopped() {
     } else if (!boot_in_progress) {
         game_list->SetScanEnabled(true);
         game_list->PopulateAsync(UISettings::values.game_dirs);
+        QTimer::singleShot(0, this, &MainWindow::OfferRecommendedSettings);
     }
 }
 
@@ -4273,6 +4288,49 @@ void MainWindow::OnEdenDependencies() {
     depsDialog.exec();
 }
 
+void MainWindow::OfferRecommendedSettings() {
+    if (emulation_running || boot_in_progress || close_pending ||
+        Settings::values.recommended_settings_prompt_shown.GetValue()) {
+        return;
+    }
+    OnApplyRecommendedSettings();
+}
+
+void MainWindow::OnApplyRecommendedSettings() {
+    if (emulation_running) {
+        return;
+    }
+    const bool accepted = RecommendedSettingsDialog::Ask(this);
+    if (emulation_running) {
+        // A game started behind the question; ask again when none runs.
+        return;
+    }
+    Settings::values.recommended_settings_prompt_shown = true;
+    if (!accepted) {
+        OnSaveConfig();
+        return;
+    }
+    const auto changes = Settings::ApplyRecommendedSettings(Settings::values);
+    LOG_INFO(Config, "Applied the recommended settings: {} changed", changes.size());
+    Settings::UpdateGPUAccuracy();
+    OnSaveConfig();
+    UpdateStatusButtons();
+    RecommendedSettingsDialog::ShowApplied(this, changes);
+}
+
+void MainWindow::OnRestorePreviousSettings() {
+    if (emulation_running) {
+        return;
+    }
+    const auto changes = Settings::RestorePreviousSettings(Settings::values);
+    LOG_INFO(Config, "Restored the settings from before the recommended ones: {} changed",
+             changes.size());
+    Settings::UpdateGPUAccuracy();
+    OnSaveConfig();
+    UpdateStatusButtons();
+    RecommendedSettingsDialog::ShowRestored(this, changes);
+}
+
 void MainWindow::OnDataDialog() {
     DataDialog dataDialog(this);
     dataDialog.exec();
@@ -5085,6 +5143,20 @@ void MainWindow::UpdateStatusBar() {
     auto& shader_notify = QtCommon::system->GPU().ShaderNotify();
     const int shaders_building = shader_notify.ShadersBuilding();
 
+    // Before statsUpdated, so the performance overlay reads this update's generated frame rate.
+    const auto frame_gen = QtCommon::system->GPU().Renderer().GetFrameGenStatus();
+    const u64 new_generated_frames = frame_gen.generated_frames - frame_gen_frames;
+    const qint64 frame_gen_ms = frame_gen_fps_timer.isValid() ? frame_gen_fps_timer.restart() : 0;
+    if (!frame_gen_fps_timer.isValid()) {
+        frame_gen_fps_timer.start();
+    }
+    frame_gen_fps = frame_gen_ms > 0 ? static_cast<double>(new_generated_frames) * 1000.0 /
+                                           static_cast<double>(frame_gen_ms)
+                                     : 0.0;
+    frame_gen_generating = frame_gen.generated_frames > frame_gen_frames;
+    frame_gen_frames = frame_gen.generated_frames;
+    frame_gen_state = frame_gen.state;
+
     emit statsUpdated(results, shader_notify);
 
     if (shaders_building > 0) {
@@ -5108,6 +5180,9 @@ void MainWindow::UpdateStatusBar() {
     }
 
     QString fpsText = tr("Game: %1 FPS").arg(std::round(results.average_game_fps), 0, 'f', 0);
+    if (frame_gen_fps >= 0.5) {
+        fpsText = fpsText % tr(" + %1 generated").arg(std::round(frame_gen_fps), 0, 'f', 0);
+    }
     if (!m_fpsSuffix.isEmpty())
         fpsText = fpsText % QStringLiteral(" (%1)").arg(m_fpsSuffix);
 
@@ -5115,10 +5190,6 @@ void MainWindow::UpdateStatusBar() {
 
     emu_frametime_label->setText(tr("Frame: %1 ms").arg(results.frametime * 1000.0, 0, 'f', 2));
 
-    const auto frame_gen = QtCommon::system->GPU().Renderer().GetFrameGenStatus();
-    frame_gen_generating = frame_gen.generated_frames > frame_gen_frames;
-    frame_gen_frames = frame_gen.generated_frames;
-    frame_gen_state = frame_gen.state;
     UpdateFrameGenButton();
 
     res_scale_label->setVisible(true);
