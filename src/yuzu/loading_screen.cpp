@@ -329,7 +329,6 @@ void LoadingScreen::PrepareClosing(const Snapshot& snapshot) {
     fadeout_animation->stop();
     opacity_effect->setOpacity(1);
     ResetDisplay();
-    OnLoadProgress(VideoCore::LoadCallbackStage::Prepare, 0, 0);
     closing_screen = true;
     ApplyArtwork(snapshot);
     ui->stage->setText(game_title.isEmpty() ? tr("Closing software…")

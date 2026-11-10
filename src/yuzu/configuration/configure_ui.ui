@@ -93,7 +93,7 @@
         <item>
          <widget class="QLabel" name="game_library_style_note">
           <property name="text">
-           <string>Modern uses the card grid; Classic uses the tree list.</string>
+           <string>Modern uses the card grid; Legacy uses the tree list.</string>
           </property>
           <property name="wordWrap">
            <bool>true</bool>

@@ -340,7 +340,8 @@ void GameList::ResetViewMode() {
     } else {
         folder_navigation->hide();
         if (mode == Settings::GameListMode::TreeView && item_model->rowCount() > 0) {
-            tree_view->setRowHidden(0, item_model->invisibleRootItem()->index(), true);
+            tree_view->setRowHidden(0, item_model->invisibleRootItem()->index(),
+                                    UISettings::values.favorited_ids.isEmpty());
         }
     }
 
@@ -397,7 +398,10 @@ void GameList::OnPopulatingCompleted(const QStringList& watch_list) {
 
     // favorites row
     if (m_isTreeMode) {
-        tree_view->setRowHidden(0, item_model->invisibleRootItem()->index(), true);
+        tree_view->setRowHidden(0, item_model->invisibleRootItem()->index(),
+                                UISettings::values.favorited_ids.isEmpty());
+        tree_view->setExpanded(item_model->invisibleRootItem()->child(0)->index(),
+                               UISettings::values.favorites_expanded.GetValue());
     }
 
     if (game_list_mode == Settings::GameListMode::GridView) {
@@ -585,6 +589,15 @@ void GameList::ValidateEntry(const QModelIndex& item) {
 
 void GameList::ToggleFavorite(u64 program_id) {
     item_model->ToggleFavorite(program_id);
+
+    if (UISettings::values.favorited_ids.contains(program_id)) {
+        tree_view->setRowHidden(0, item_model->invisibleRootItem()->index(),
+                                !search_field->filterText().isEmpty());
+        item_model->sort(tree_view->header()->sortIndicatorSection(),
+                         tree_view->header()->sortIndicatorOrder());
+    } else if (UISettings::values.favorited_ids.isEmpty()) {
+        tree_view->setRowHidden(0, item_model->invisibleRootItem()->index(), true);
+    }
 }
 
 void GameList::ReturnToGameDirectories() {
