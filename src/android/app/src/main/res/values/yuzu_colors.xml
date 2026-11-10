@@ -321,4 +321,12 @@
     <color name="yuzu_onSecondary_gray">#FFFFFF</color>
     <color name="yuzu_onTertiary_gray">#FFFFFF</color>
 
+    <color name="home_shortcut_background">#FFFFFFFF</color>
+    <color name="home_shortcut_folder">#FFE89400</color>
+    <color name="home_shortcut_filter">#FF2F7FD8</color>
+    <color name="home_shortcut_settings">#FF6B6B76</color>
+    <color name="home_background">#FFEBEBEE</color>
+    <color name="home_divider">#FFC4C4C8</color>
+    <color name="home_accent">#FF00A9C4</color>
+    <color name="home_shortcut_options">#FFE8434F</color>
 </resources>

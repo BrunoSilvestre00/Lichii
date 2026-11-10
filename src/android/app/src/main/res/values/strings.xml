@@ -226,6 +226,21 @@
     <!-- Home strings -->
 
     <string name="alphabetical">Alphabetical</string>
+    <string name="home_start">Start</string>
+    <string name="home_filter">Filter</string>
+    <string name="home_profile">Profile</string>
+    <string name="home_profile_picture">Profile picture</string>
+    <string name="home_profile_pick_picture">Choose picture</string>
+    <string name="home_profile_name">User name</string>
+    <string name="home_profile_save">Save</string>
+    <string name="home_rotation_auto">Menu: auto-rotate</string>
+    <string name="home_rotation_locked">Menu: fixed orientation</string>
+    <string name="home_options">Options</string>
+    <string name="view_home">Home (console style)</string>
+    <string name="home_play">Play</string>
+    <string name="home_game_options">Game options</string>
+    <string name="home_add_folder">Add games</string>
+    <string name="home_controls">Controls</string>
     <string name="filter_switch2_games">Nintendo Switch 2 games</string>
     <string name="filter_switch1_games">Nintendo Switch games</string>
     <string name="view_list">List</string>

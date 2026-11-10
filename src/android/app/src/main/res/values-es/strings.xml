@@ -217,6 +217,21 @@
     <!-- Home strings -->
 
     <string name="alphabetical">Alfabético</string>
+    <string name="home_start">Iniciar</string>
+    <string name="home_filter">Filtrar</string>
+    <string name="home_profile">Perfil</string>
+    <string name="home_profile_picture">Imagen de perfil</string>
+    <string name="home_profile_pick_picture">Elegir imagen</string>
+    <string name="home_profile_name">Nombre de usuario</string>
+    <string name="home_profile_save">Guardar</string>
+    <string name="home_rotation_auto">Menú: giro automático</string>
+    <string name="home_rotation_locked">Menú: orientación fija</string>
+    <string name="home_options">Opciones</string>
+    <string name="view_home">Inicio (estilo consola)</string>
+    <string name="home_play">Jugar</string>
+    <string name="home_game_options">Opciones del juego</string>
+    <string name="home_add_folder">Agregar juegos</string>
+    <string name="home_controls">Controles</string>
     <string name="filter_switch2_games">Juegos de Nintendo Switch 2</string>
     <string name="filter_switch1_games">Juegos de Nintendo Switch</string>
     <string name="view_list">Lista</string>
