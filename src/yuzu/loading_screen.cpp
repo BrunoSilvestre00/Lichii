@@ -317,9 +317,15 @@ void LoadingScreen::ApplyArtwork(const Snapshot& snapshot) {
     }
 }
 
-void LoadingScreen::Prepare(Loader::AppLoader& loader) {
+LoadingScreen::Snapshot LoadingScreen::Prepare(Loader::AppLoader& loader) {
+    Snapshot snapshot = SnapshotLoader(loader);
+    Prepare(snapshot);
+    return snapshot;
+}
+
+void LoadingScreen::Prepare(const Snapshot& snapshot) {
     ResetDisplay();
-    ApplyArtwork(SnapshotLoader(loader));
+    ApplyArtwork(snapshot);
 
     slow_shader_compile_start = false;
     OnLoadProgress(VideoCore::LoadCallbackStage::Prepare, 0, 0);

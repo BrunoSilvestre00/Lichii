@@ -339,7 +339,8 @@ void GameList::ResetViewMode() {
         UpdateFolderNavigation();
     } else {
         folder_navigation->hide();
-        if (mode == Settings::GameListMode::TreeView && item_model->rowCount() > 0) {
+        if (mode == Settings::GameListMode::TreeView && !m_populating &&
+            item_model->rowCount() > 0) {
             tree_view->setRowHidden(0, item_model->invisibleRootItem()->index(),
                                     UISettings::values.favorited_ids.isEmpty() ||
                                         !search_field->filterText().isEmpty());

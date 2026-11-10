@@ -2415,7 +2415,7 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
             if (QtCommon::system->IsShuttingDown()) {
                 return;
             }
-            loading_screen->Prepare(QtCommon::system->GetAppLoader());
+            loading_screen->Prepare(closing_snapshot);
             loading_screen->show();
             render_window->hide();
         },
@@ -2481,7 +2481,7 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     const auto gpu_vendor = QtCommon::system->GPU().Renderer().GetDeviceVendor();
     UpdateWindowTitle(title_name, title_version, gpu_vendor);
 
-    loading_screen->Prepare(QtCommon::system->GetAppLoader());
+    closing_snapshot = loading_screen->Prepare(QtCommon::system->GetAppLoader());
     loading_screen->show();
 
     emulation_running = true;
@@ -2534,10 +2534,6 @@ bool MainWindow::OnShutdownBegin() {
     status_bar_update_timer.stop();
     LOG_INFO(Frontend, "Shutdown requested; waiting for emulation thread");
     discord_rpc->Pause();
-
-    // Capture the closing screen artwork now: System::Shutdown resets the loader from the
-    // emulation thread while this preparation is still running.
-    closing_snapshot = LoadingScreen::SnapshotLoader(QtCommon::system->GetAppLoader());
 
     RequestGameExit();
     QtCommon::emu_thread->disconnect();
@@ -2629,6 +2625,7 @@ void MainWindow::OnEmulationStopped() {
     render_window->hide();
     loading_screen->hide();
     loading_screen->Clear();
+    closing_snapshot = {};
     if (game_list->IsEmpty()) {
         game_list_placeholder->show();
     } else {

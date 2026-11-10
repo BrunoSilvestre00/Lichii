@@ -48,22 +48,24 @@ public:
 
     ~LoadingScreen();
 
-    /// Call before showing the loading screen to load the widgets with the logo and banner for the
-    /// currently loaded application.
-    void Prepare(Loader::AppLoader& loader);
-
-    /// A copy of the artwork an application loader can provide. Take it while emulation is still
-    /// running, before the loader is torn down, and hand it to PrepareClosing.
+    /// A copy of the artwork and title read from the application loader.
     struct Snapshot {
         std::vector<u8> banner;
         std::vector<u8> logo;
         QString title;
     };
 
+    /// Call before showing the loading screen to load the widgets with the logo and banner for the
+    /// currently loaded application.
+    Snapshot Prepare(Loader::AppLoader& loader);
+
+    /// Reuses an already captured snapshot without accessing the application loader.
+    void Prepare(const Snapshot& snapshot);
+
     /// Reads the loader's banner, logo and title into a Snapshot.
     static Snapshot SnapshotLoader(Loader::AppLoader& loader);
 
-    /// Shows the closing screen from a previously taken Snapshot of the loader.
+    /// Shows the closing screen from a snapshot captured before emulation starts.
     void PrepareClosing(const Snapshot& snapshot);
 
     /// After the loading screen is hidden, the owner of this class can call this to clean up any

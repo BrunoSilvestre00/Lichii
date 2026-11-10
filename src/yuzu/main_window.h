@@ -528,8 +528,7 @@ private:
     GRenderWindow* render_window = nullptr;
     GameList* game_list = nullptr;
     LoadingScreen* loading_screen = nullptr;
-    /// Artwork captured before RequestGameExit; the loader is freed by the emulation thread while
-    /// the closing screen is being prepared.
+    /// Artwork captured before emulation starts, so shutdown never reads a loader being torn down.
     LoadingScreen::Snapshot closing_snapshot;
     /// Set when a direct launch skipped the first-run library style chooser; the choice is asked
     /// once the interactive library session comes back.
