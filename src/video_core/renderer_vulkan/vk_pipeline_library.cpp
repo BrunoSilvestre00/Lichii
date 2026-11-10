@@ -99,6 +99,10 @@ std::shared_ptr<const GplLibrary> GraphicsPipelineLibraryCache::GetOrCreate(
         std::scoped_lock lock{mutex};
         if (const auto it = entries.find(key); it != entries.end() && it->second == entry) {
             entries.erase(it);
+            if (library) {
+                // No longer cached: the count of cached libraries stays exact.
+                total_libraries.fetch_sub(1, std::memory_order_relaxed);
+            }
         }
     }
     return library;
