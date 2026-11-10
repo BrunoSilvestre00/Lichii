@@ -315,7 +315,7 @@ private:
     GraphicsPipelineCacheKey graphics_key{};
     GraphicsPipeline* current_pipeline{};
 
-    /// EDEN_NX2_GPL: shader libraries shared by the graphics pipelines. Declared before the
+    /// Shader libraries shared by the graphics pipelines. Declared before the
     /// pipelines, so it outlives them.
     GraphicsPipelineLibraryCache graphics_libraries;
 

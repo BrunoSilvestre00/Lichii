@@ -460,7 +460,7 @@ vk::ShaderModule EmitShaderModule(const Device& device, const Shader::Profile& p
     return module;
 }
 
-// Graphics pipeline libraries (EDEN_NX2_GPL): each stage's resources go to its own descriptor
+// Graphics pipeline libraries: each stage's resources go to its own descriptor
 // set (set index = stage index) with bindings from 0, and the fragment stage's rescaling bits
 // start at fixed indices, so a stage's SPIR-V does not depend on the other stages' resources.
 void PrepareStageBindings(Shader::Backend::Bindings& binding, size_t stage_index, bool libraries) {
@@ -2912,7 +2912,7 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
         }
         return nullptr;
     }
-    // Graphics pipeline libraries (EDEN_NX2_GPL). Left on the monolithic route: task and mesh
+    // Graphics pipeline libraries. Left on the monolithic route: task and mesh
     // pipelines, transform feedback, a static rasterizer discard, and stages whose texture or
     // image counts do not fit the split rescaling bits.
     const bool use_libraries = [&] {
@@ -3077,9 +3077,9 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
                        : BuildQueue(build_in_parallel, defer_emission ? deferred_ir_bytes : 0);
     static_assert(VideoCommon::EvictedPointerSlots::NumPrograms == Maxwell::MaxShaderProgram);
     VideoCommon::EvictedPointerSlots::Slots mapped_pointers;
-    for (size_t index = 0, env_index = 0; index < Maxwell::MaxShaderProgram; ++index) {
+    for (size_t index = 0, mapped_env = 0; index < Maxwell::MaxShaderProgram; ++index) {
         if (key.unique_hashes[index] != 0) {
-            mapped_pointers[index] = envs[env_index++]->MappedStoragePointerKeys();
+            mapped_pointers[index] = envs[mapped_env++]->MappedStoragePointerKeys();
         }
     }
     auto pipeline = std::make_unique<GraphicsPipeline>(

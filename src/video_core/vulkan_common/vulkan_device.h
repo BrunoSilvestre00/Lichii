@@ -396,15 +396,8 @@ public:
     /// draw correctly. On AMD's Windows driver such links draw white fringes around alpha blended
     /// effects (clouds, particles and glows in a test title, RX 7800 XT), while optimized links
     /// and monolithic pipelines from the same SPIR-V do not, so libraries are linked optimized
-    /// there. EDEN_NX2_GPL_FAST_LINK=1 allows fast links on any driver, =0 on none.
+    /// there. Every other driver links fast.
     bool CanFastLinkGraphicsLibraries() const {
-        static const char forced = [] {
-            const char* value = std::getenv("EDEN_NX2_GPL_FAST_LINK");
-            return value == nullptr ? '\0' : value[0];
-        }();
-        if (forced == '0' || forced == '1') {
-            return forced == '1';
-        }
         return GetDriverID() != VK_DRIVER_ID_AMD_PROPRIETARY;
     }
 
@@ -735,7 +728,7 @@ FN_MAX_LIMIT_LIST
     }
 
     /// Graphics pipelines are linked from per-stage libraries: the use_graphics_pipeline_library
-    /// setting (or EDEN_NX2_GPL=1) is on and the device has VK_EXT_graphics_pipeline_library
+    /// setting is on and the device has VK_EXT_graphics_pipeline_library
     /// with fast linking.
     bool IsExtGraphicsPipelineLibrarySupported() const {
         return graphics_pipeline_library_enabled;
@@ -1395,8 +1388,8 @@ private:
     Features features{};
     Properties properties{};
 
-    /// EDEN_NX2_GPL: kept out of the extension tables so a run without the switch creates the
-    /// device exactly as before.
+    /// Shader libraries setting: kept out of the extension tables so a run without the setting
+    /// creates the device exactly as before.
     bool graphics_pipeline_library_requested{};
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT graphics_pipeline_library_features{};
     bool graphics_pipeline_library_enabled{};
