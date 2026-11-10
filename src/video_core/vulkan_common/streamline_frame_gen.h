@@ -54,4 +54,13 @@ void FrameGenAfterPresent(u32 index);
 /// Turns DLSS-G off before the swapchain is recreated or destroyed (present thread).
 void FrameGenSuspend();
 
+struct FrameGenRates {
+    f64 real_fps{};    ///< Frames the emulator presented
+    f64 shown_fps{};   ///< Frames on screen, generated ones included
+    bool generating{}; ///< DLSS-G is on and added frames at the last present
+};
+
+/// Any thread: the present rates over about the last second.
+[[nodiscard]] FrameGenRates FrameGenRecentRates();
+
 } // namespace Vulkan::Streamline

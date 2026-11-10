@@ -32,6 +32,7 @@ constexpr u32 FRAMES_TO_TURN_OFF = 3;
 // After DLSS-G reported a failure, how long it stays off before it is tried again.
 constexpr u32 RETRY_FRAMES = 600;
 constexpr auto REPORT_INTERVAL = std::chrono::seconds{5};
+constexpr auto RATES_INTERVAL = std::chrono::seconds{1};
 constexpr u32 NO_FRAME = std::numeric_limits<u32>::max();
 // Frames rendered ahead of the one presented whose constants are kept for its present.
 constexpr size_t KEPT_CONSTANTS = 16;
@@ -74,6 +75,16 @@ struct PresentState {
     u32 last_shown{};
     std::chrono::steady_clock::time_point report_from;
     VkFormat unsupported_format{VK_FORMAT_UNDEFINED}; ///< Last one logged
+    u32 rates_real{};
+    u32 rates_shown{};
+    std::optional<std::chrono::steady_clock::time_point> rates_from;
+};
+
+// Written by the present thread, read by the frontend.
+struct Rates {
+    std::atomic<f64> real_fps{};
+    std::atomic<f64> shown_fps{};
+    std::atomic<bool> generating{};
 };
 
 std::atomic<int> g_api_error{};
@@ -86,6 +97,11 @@ FrameState& Frames() {
 PresentState& Presents() {
     static PresentState state;
     return state;
+}
+
+Rates& PresentRates() {
+    static Rates rates;
+    return rates;
 }
 
 std::string ResultName(sl::Result result) {
@@ -293,6 +309,28 @@ void Report(PresentState& state, const sl::DLSSGState& dlssg) {
     state.report_from = now;
 }
 
+void CountPresent(PresentState& state, u32 shown, bool generating) {
+    Rates& rates = PresentRates();
+    rates.generating.store(generating, std::memory_order_relaxed);
+    const auto now = std::chrono::steady_clock::now();
+    if (!state.rates_from) {
+        state.rates_from = now;
+        return;
+    }
+    ++state.rates_real;
+    state.rates_shown += shown;
+    if (now - *state.rates_from < RATES_INTERVAL) {
+        return;
+    }
+    const f64 seconds = std::chrono::duration<f64>(now - *state.rates_from).count();
+    rates.real_fps.store(static_cast<f64>(state.rates_real) / seconds, std::memory_order_relaxed);
+    rates.shown_fps.store(static_cast<f64>(state.rates_shown) / seconds,
+                          std::memory_order_relaxed);
+    state.rates_real = 0;
+    state.rates_shown = 0;
+    state.rates_from = now;
+}
+
 } // Anonymous namespace
 
 std::unique_lock<std::mutex> LockFrameTokens() {
@@ -493,8 +531,11 @@ void FrameGenAfterPresent(u32 index) {
                     error);
     }
     sl::DLSSGState dlssg{};
-    if (const sl::Result result = api.dlssg_get_state(VIEWPORT, dlssg, nullptr);
-        result != sl::Result::eOk) {
+    const sl::Result result = api.dlssg_get_state(VIEWPORT, dlssg, nullptr);
+    const bool generating =
+        result == sl::Result::eOk && state.on && dlssg.numFramesActuallyPresented > 1;
+    CountPresent(state, generating ? dlssg.numFramesActuallyPresented : 1, generating);
+    if (result != sl::Result::eOk) {
         if (!state.state_failed) {
             LOG_WARNING(Render_Vulkan, "DLSS-G: slDLSSGGetState failed, result {}",
                         ResultName(result));
@@ -558,6 +599,15 @@ void FrameGenSuspend() {
     if (SetMode(state, false, present)) {
         LOG_INFO(Render_Vulkan, "DLSS-G: off while the swapchain is recreated or destroyed");
     }
+}
+
+FrameGenRates FrameGenRecentRates() {
+    const Rates& rates = PresentRates();
+    return {
+        .real_fps = rates.real_fps.load(std::memory_order_relaxed),
+        .shown_fps = rates.shown_fps.load(std::memory_order_relaxed),
+        .generating = rates.generating.load(std::memory_order_relaxed),
+    };
 }
 
 } // namespace Vulkan::Streamline
