@@ -9,6 +9,8 @@
 #include <limits>
 #include <vector>
 
+#include <fmt/format.h>
+
 #ifdef __ANDROID__
 #include <android/api-level.h>
 #endif
@@ -438,7 +440,26 @@ void Swapchain::CreateSwapchain(const VkSurfaceCapabilitiesKHR& capabilities) {
     const auto updated_capabilities = physical_device.GetSurfaceCapabilitiesKHR(VkSurfaceKHR(surface));
     swapchain_ci.imageExtent = ChooseSwapExtent(updated_capabilities, width, height);
     // Don't add code within this and the swapchain creation.
-    swapchain = device.GetLogical().CreateSwapchainKHR(swapchain_ci);
+    try {
+        swapchain = device.GetLogical().CreateSwapchainKHR(swapchain_ci);
+    } catch ([[maybe_unused]] const vk::Exception& exception) {
+        // A lost surface or a window still in use is transient: the present loop retries those.
+        const VkResult result = exception.GetResult();
+        if (!FrameGenPresents(surface_format.format) || result == VK_ERROR_SURFACE_LOST_KHR ||
+            result == VK_ERROR_NATIVE_WINDOW_IN_USE_KHR) {
+            throw;
+        }
+#ifdef EGLANTINE_STREAMLINE
+        // Keep the game running without frame generation: DLSS-G unloaded, the hooks reach the
+        // driver's swapchain.
+        Streamline::DisableFrameGen(
+            fmt::format("Streamline's swapchain failed ({})", exception.what()));
+#endif
+        present_mode =
+            ChooseSwapPresentMode(has_imm, has_mailbox, has_fifo_relaxed, surface_format.format);
+        swapchain_ci.presentMode = present_mode;
+        swapchain = device.GetLogical().CreateSwapchainKHR(swapchain_ci);
+    }
 
     extent = swapchain_ci.imageExtent;
 

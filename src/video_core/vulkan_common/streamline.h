@@ -92,6 +92,16 @@ bool AttachDevice(VkInstance instance, VkPhysicalDevice physical, VkDevice devic
 /// supported and GetApi() has their functions.
 [[nodiscard]] bool FrameGenAvailable();
 
+/// DLSS-G finds the game's window from the surface its swapchain is made for, and Streamline only
+/// learns a surface's window when the surface is created through sl.interposer.dll, which works
+/// only once the device is attached. Creates a surface for this HWND that way (VK_NULL_HANDLE on
+/// failure); destroy it with the instance's own vkDestroySurfaceKHR.
+[[nodiscard]] VkSurfaceKHR CreateFrameGenSurface(VkInstance instance, void* window);
+
+/// Turns DLSS Frame Generation off for the rest of the session (unloads DLSS-G, so the swapchain
+/// calls reach the driver's swapchain); the reason goes to the log.
+void DisableFrameGen(std::string_view reason);
+
 /// Shuts Streamline down; call before the device is destroyed.
 void Stop();
 

@@ -184,7 +184,7 @@ try
     , memory_allocator(device)
     , state_tracker()
     , scheduler(device, state_tracker)
-    , swapchain(*surface,
+    , swapchain(PresentationSurface(),
                 device,
                 scheduler,
                render_window.GetFramebufferLayout().width,
@@ -406,6 +406,27 @@ HdrPresent RendererVulkan::CaptureHdrPresent() const {
                                                Settings::values.hdr_reference_white.GetValue());
     return {VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, static_cast<f32>(told.reference_white),
             static_cast<f32>(told.peak_luminance)};
+}
+
+VkSurfaceKHR RendererVulkan::PresentationSurface() {
+#ifdef EGLANTINE_STREAMLINE
+    // DLSS-G looks the window up by the swapchain's surface: replace the surface made before the
+    // device with one made through Streamline, for the same window. Present support stays valid,
+    // as it belongs to the window and the queue family.
+    const auto& window_info = render_window.GetWindowInfo();
+    if (Streamline::FrameGenAvailable()) {
+        const VkSurfaceKHR registered =
+            window_info.type == Core::Frontend::WindowSystemType::Windows
+                ? Streamline::CreateFrameGenSurface(*instance, window_info.render_surface)
+                : VK_NULL_HANDLE;
+        if (registered) {
+            surface = vk::SurfaceKHR(registered, *instance, instance.Dispatch());
+        } else {
+            Streamline::DisableFrameGen("Streamline could not make the window's surface");
+        }
+    }
+#endif
+    return *surface;
 }
 
 void RendererVulkan::Report() const {

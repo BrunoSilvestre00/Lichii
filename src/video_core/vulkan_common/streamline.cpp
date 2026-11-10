@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdlib>
 #include <filesystem>
 #include <optional>
@@ -76,7 +77,7 @@ struct State {
     std::string frame_gen_needs;
     bool frame_gen_requested{};
     bool frame_gen_pending{};
-    bool frame_gen_available{};
+    std::atomic<bool> frame_gen_available{};
     bool started{};
     bool attached{};
 };
@@ -734,6 +735,46 @@ bool AttachDevice(VkInstance instance, VkPhysicalDevice physical, VkDevice devic
     }
     state.frame_gen_pending = false;
     return true;
+}
+
+VkSurfaceKHR CreateFrameGenSurface(VkInstance instance, void* window) {
+    const State& state = GetState();
+    if (!FrameGenAvailable() || !window) {
+        return VK_NULL_HANDLE;
+    }
+    const auto create = reinterpret_cast<PFN_vkCreateWin32SurfaceKHR>(
+        GetProcAddress(state.module, "vkCreateWin32SurfaceKHR"));
+    if (!create) {
+        LOG_WARNING(Render_Vulkan, "sl.interposer.dll has no vkCreateWin32SurfaceKHR");
+        return VK_NULL_HANDLE;
+    }
+    const VkWin32SurfaceCreateInfoKHR info{
+        .sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
+        .pNext = nullptr,
+        .flags = 0,
+        .hinstance = nullptr,
+        .hwnd = static_cast<HWND>(window),
+    };
+    VkSurfaceKHR surface{};
+    if (const VkResult result = create(instance, &info, nullptr, &surface);
+        result != VK_SUCCESS) {
+        LOG_WARNING(Render_Vulkan, "Streamline's vkCreateWin32SurfaceKHR failed ({})",
+                    static_cast<int>(result));
+        return VK_NULL_HANDLE;
+    }
+    return surface;
+}
+
+void DisableFrameGen(std::string_view reason) {
+    State& state = GetState();
+    if (!state.frame_gen_available.exchange(false)) {
+        return;
+    }
+    // The function pointers stay: another thread may be past its FrameGenAvailable() check.
+    if (state.api.set_feature_loaded) {
+        state.api.set_feature_loaded(sl::kFeatureDLSS_G, false);
+    }
+    LOG_WARNING(Render_Vulkan, "NVIDIA DLSS Frame Generation is off: {}", reason);
 }
 
 bool IsDlssAvailable() {
