@@ -1758,11 +1758,20 @@ u32 GraphicsWarmModeBits(const DynamicFeatures& features) {
     return NoInlineBits() | (MissingKeyDynamicStates(features) << WarmMissingDynamicStateShift);
 }
 
-/// The precache marker's variant: the build's SPIR-V emission stamp and the settings that change
+/// The graphics link mode, for the graphics precache marker: bit 0 when fast links are usable,
+/// which decides whether libraries keep link time optimization info and so changes what the
+/// driver caches. Bit 1 is kept for optimized links.
+u32 LinkModeBits(const Device& device) {
+    return device.CanFastLinkGraphicsLibraries() ? 1U : 0U;
+}
+
+/// The precache markers' variant: the build's SPIR-V emission stamp and the settings that change
 /// what the driver gets for a precache build. Resolution scaling bakes the scale into the
 /// rescaling code of the shaders; the loop safety checks and the bloom fix change the SPIR-V; the
-/// debug setting adds a create flag.
-u64 WarmVariant() {
+/// debug setting adds a create flag. Graphics (`graphics`) also takes the sample shading of the
+/// fragment libraries and the dynamic state settings, which decide their dynamic state list; the
+/// compute variant stays what it was without them.
+u64 WarmVariant(bool graphics) {
     const auto& resolution = Settings::values.resolution_info;
     const std::array<u64, 7> inputs{
         VideoCommon::ShaderWarm::EmissionStamp(),
@@ -1773,7 +1782,19 @@ u64 WarmVariant() {
         Settings::values.fix_bloom_effects.GetValue() ? 1ULL : 0ULL,
         Settings::values.renderer_debug.GetValue() ? 1ULL : 0ULL,
     };
-    return Common::CityHash64(reinterpret_cast<const char*>(inputs.data()), sizeof(inputs));
+    const u64 common =
+        Common::CityHash64(reinterpret_cast<const char*>(inputs.data()), sizeof(inputs));
+    if (!graphics) {
+        return common;
+    }
+    const std::array<u64, 4> graphics_inputs{
+        common,
+        static_cast<u64>(Settings::values.sample_shading.GetValue()),
+        static_cast<u64>(Settings::values.dyna_state.GetValue()),
+        Settings::values.vertex_input_dynamic_state.GetValue() ? 1ULL : 0ULL,
+    };
+    return Common::CityHash64(reinterpret_cast<const char*>(graphics_inputs.data()),
+                              sizeof(graphics_inputs));
 }
 } // Anonymous namespace
 
@@ -1793,9 +1814,12 @@ size_t PipelineCache::PrecacheGraphicsWarm(u64 title_id, size_t num_threads, siz
     }
     const u32 mode_bits = GraphicsWarmModeBits(dynamic_features);
     const u32 missing_dynamic_states = MissingKeyDynamicStates(dynamic_features);
+    const u32 link_mode = LinkModeBits(device);
+    const u64 variant = WarmVariant(true);
     const auto stamp = [&](u64 entries) {
         return ShaderWarm::CurrentWarmStamp(warm_file, entries, device.GetDriverVersion(),
-                                            device.GetDeviceID(), CACHE_VERSION, mode_bits);
+                                            device.GetDeviceID(), CACHE_VERSION, mode_bits,
+                                            link_mode, variant);
     };
     const auto current = stamp(0);
     const auto marker = ShaderWarm::ReadWarmMarker(warm_file);
@@ -1981,8 +2005,8 @@ void PipelineCache::PrecacheShaders(u64 title_id, std::vector<PrecacheJob> jobs,
     const std::string path = Common::FS::PathToUTF8String(warm_file);
     const auto stamp = [&](u64 entries) {
         return ShaderWarm::CurrentWarmStamp(warm_file, entries, device.GetDriverVersion(),
-                                            device.GetDeviceID(), CACHE_VERSION, NoInlineBits(),
-                                            WarmVariant());
+                                            device.GetDeviceID(), CACHE_VERSION, NoInlineBits(), 0,
+                                            WarmVariant(false));
     };
     // Compute programs of the precache file, unless a matching marker says they were built.
     size_t file_entries = 0;
@@ -2064,7 +2088,7 @@ void PipelineCache::PrecacheShaders(u64 title_id, std::vector<PrecacheJob> jobs,
         }
         const auto graphics_current = ShaderWarm::CurrentWarmStamp(
             graphics_file, 0, device.GetDriverVersion(), device.GetDeviceID(), CACHE_VERSION,
-            GraphicsWarmModeBits(dynamic_features));
+            GraphicsWarmModeBits(dynamic_features), LinkModeBits(device), WarmVariant(true));
         const auto graphics_marker = ShaderWarm::ReadWarmMarker(graphics_file);
         return !(graphics_current && graphics_marker &&
                  graphics_marker->Matches(*graphics_current));

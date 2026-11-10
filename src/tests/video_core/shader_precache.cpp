@@ -119,23 +119,28 @@ TEST_CASE("ShaderPrecache: the marker matches only the same file and driver", "[
     REQUIRE_FALSE(marker->Matches(*ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53)));
 }
 
-TEST_CASE("ShaderPrecache: the marker matches only the same variant", "[video_core]") {
+TEST_CASE("ShaderPrecache: the marker matches only the same link mode and variant",
+          "[video_core]") {
     TempDir dir;
-    const auto warm = dir.path / "warm-compute.bin";
+    const auto warm = dir.path / "warm-graphics.bin";
     WriteBytes(warm, "precache");
     const u64 variant = 0xfedcba9876543210ULL;
-    const auto stamp = ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53, 2, variant);
+    const auto stamp = ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53, 2, 1, variant);
     REQUIRE(stamp.has_value());
     REQUIRE(ShaderWarm::WriteWarmMarker(warm, *stamp));
 
     const auto marker = ShaderWarm::ReadWarmMarker(warm);
     REQUIRE(marker.has_value());
+    REQUIRE(marker->link_mode == 1);
     REQUIRE(marker->variant == variant);
-    REQUIRE(
-        marker->Matches(*ShaderWarm::CurrentWarmStamp(warm, 0, 0x1234, 0x2206, 53, 2, variant)));
+    REQUIRE(marker->Matches(
+        *ShaderWarm::CurrentWarmStamp(warm, 0, 0x1234, 0x2206, 53, 2, 1, variant)));
     REQUIRE_FALSE(marker->Matches(
-        *ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53, 2, variant + 1)));
-    REQUIRE_FALSE(marker->Matches(*ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53, 2)));
+        *ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53, 2, 0, variant)));
+    REQUIRE_FALSE(marker->Matches(
+        *ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53, 2, 1, variant + 1)));
+    REQUIRE_FALSE(
+        marker->Matches(*ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53, 2, 1)));
     REQUIRE(ShaderWarm::EmissionStamp() != 0);
 }
 
@@ -143,7 +148,7 @@ TEST_CASE("ShaderPrecache: a marker written before the variant is not read", "[v
     TempDir dir;
     const auto warm = dir.path / "warm-compute.bin";
     WriteBytes(warm, "precache");
-    const auto stamp = ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53, 1);
+    const auto stamp = ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53, 1, 0);
     REQUIRE(stamp.has_value());
     // The older format: every field up to the shader calls mode, then the line end.
     {

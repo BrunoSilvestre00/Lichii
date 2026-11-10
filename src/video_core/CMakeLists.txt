@@ -537,15 +537,16 @@ add_custom_command(
     DEPENDS ${lowering_inputs} "${PROJECT_SOURCE_DIR}/CMakeModules/GenerateShaderLoweringStamp.cmake"
     VERBATIM)
 target_sources(video_core PRIVATE "${lowering_stamp}")
-# Shader precache marker: a hash of every source that shapes the SPIR-V built from guest code
-# (the recompiler without its OpenGL backends and the native lowering), so a build that may emit
-# other SPIR-V runs the precache once more (ShaderWarm::EmissionStamp).
+# Shader precache markers: a hash of every source that shapes the SPIR-V built from guest code
+# (the recompiler without its OpenGL backends, the native lowering and the call inlining), so a
+# build that may emit other SPIR-V runs the precache once more (ShaderWarm::EmissionStamp).
 file(GLOB_RECURSE emission_sources CONFIGURE_DEPENDS RELATIVE "${lowering_source_dir}"
      "${lowering_source_dir}/shader_recompiler/*.cpp" "${lowering_source_dir}/shader_recompiler/*.h"
      "${lowering_source_dir}/shader_recompiler/*.inc")
 list(FILTER emission_sources EXCLUDE REGEX "^shader_recompiler/backend/(glasm|glsl)/")
 list(APPEND emission_sources video_core/mkw_wave_workaround.h video_core/native_lowering.cpp
-     video_core/native_lowering.h)
+     video_core/native_lowering.h video_core/spirv_inline_control.cpp
+     video_core/spirv_inline_control.h)
 list(SORT emission_sources)
 list(TRANSFORM emission_sources PREPEND "${lowering_source_dir}/" OUTPUT_VARIABLE emission_inputs)
 # Too many paths for a Windows command line: they go through a file, one per line.
