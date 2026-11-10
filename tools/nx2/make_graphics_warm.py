@@ -93,11 +93,19 @@ def runtime_code(sph, instructions, offsets):
 
 
 def read_override(path):
-    """Instructions, address map offsets and texture buffer index of a lowered override record."""
+    """Instructions, address map offsets and texture buffer index of a lowered override record.
+
+    Rejects what the emulator rejects (ProgramOverrideSourceSize in program_override.h): a source
+    that is empty or not whole instructions, a map count that does not match it, or a length that
+    does not match the header.
+    """
     data = Path(path).read_bytes()
     magic, version, source_size, count, texture_buffer, map_count = struct.unpack_from('<6I', data)
     if magic != 0x4E454445 or version != 0x3230564F:
         raise ValueError(f'{path}: not an override record')
+    if (not source_size or source_size % 16 or not count or map_count != source_size // 16 or
+            len(data) != 24 + source_size + count * 8 + map_count * 4):
+        raise ValueError(f'{path}: override map or length does not match its header')
     at = 24 + source_size
     instructions = struct.unpack_from(f'<{count}Q', data, at)
     offsets = struct.unpack_from(f'<{map_count}I', data, at + count * 8)
