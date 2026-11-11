@@ -107,19 +107,29 @@ struct MeshEmulationSetup {
 /// from shared per-stage libraries; `libraries_only` builds only the libraries (warm-up).
 struct GraphicsPipelineLibraryParams {
     GraphicsPipelineLibraryCache* library_cache{};
-    std::array<u128, Tegra::Engines::Maxwell3D::Regs::MaxShaderStage> spirv_hashes{};
     bool libraries_only{};
+};
+
+/// What an evicted graphics pipeline needs to be built again without translating its shaders
+struct KeptGraphicsStages {
+    static constexpr size_t NUM_STAGES = Tegra::Engines::Maxwell3D::Regs::MaxShaderStage;
+
+    std::array<std::vector<u8>, NUM_STAGES> spirv; ///< zstd, empty for absent stages
+    std::array<std::unique_ptr<Shader::Info>, NUM_STAGES> infos;
+    std::optional<MeshEmulationSetup> mesh_emulation;
+    VideoCommon::EvictedPointerSlots::Slots mapped_pointers;
+    /// The SPIR-V was emitted for shader libraries (one descriptor set per stage), so the
+    /// pipeline is built again with them
+    bool libraries{};
+
+    /// Memory it holds, roughly
+    [[nodiscard]] u64 Bytes() const noexcept;
 };
 
 class GraphicsPipeline {
     static constexpr size_t NUM_STAGES = Tegra::Engines::Maxwell3D::Regs::MaxShaderStage;
 
 public:
-    /// Emits the stages' SPIR-V on a worker; with libraries it also returns each stage's SPIR-V
-    /// hash (zero for absent stages).
-    using EmitStagesFunc = std::function<std::array<vk::ShaderModule, NUM_STAGES>(
-        std::array<u128, NUM_STAGES>& spirv_hashes)>;
-
     /// Graphics pipeline libraries: non-null `library_cache` builds the pipeline
     /// from per-stage libraries; the stages were emitted with one descriptor set per stage.
     /// `libraries_only` builds the shader libraries and nothing else (warm-up, no draw).
@@ -135,9 +145,9 @@ public:
         GuestDescriptorQueue& guest_descriptor_queue,
         DescriptorBufferRing& descriptor_buffer_ring, const PipelineBuildQueue& build_queue,
         PipelineStatistics* pipeline_statistics, RenderPassCache& render_pass_cache,
-        const GraphicsPipelineCacheKey& key, std::array<vk::ShaderModule, NUM_STAGES> stages,
+        const GraphicsPipelineCacheKey& key, std::array<std::vector<u32>, NUM_STAGES> stages,
         const std::array<const Shader::Info*, NUM_STAGES>& infos,
-        EmitStagesFunc emit_stages = {},
+        std::function<std::array<std::vector<u32>, NUM_STAGES>()> emit_stages = {},
         std::optional<MeshEmulationSetup> mesh_emulation = std::nullopt,
         LibraryParams library_params = {});
 
@@ -285,6 +295,10 @@ public:
         mapped_pointers = std::move(slots);
     }
 
+    /// Moves out the SPIR-V kept after the build, with the stage infos: for a built pipeline being
+    /// evicted
+    [[nodiscard]] KeptGraphicsStages TakeKeptStages();
+
     /// Forgets the transitions, which may point to pipelines the cache evicted.
     void ClearTransitions() noexcept {
         transition_keys.clear();
@@ -428,7 +442,9 @@ private:
     u64 last_use_frame{};
     bool used{};
 
+    std::array<std::vector<u32>, NUM_STAGES> spirv; ///< Until the build makes its modules
     std::array<vk::ShaderModule, NUM_STAGES> spv_modules;
+    std::array<std::vector<u8>, NUM_STAGES> kept_spirv; ///< zstd, after the build
 
     std::array<Shader::Info, NUM_STAGES> stage_infos;
     std::array<u32, 5> enabled_uniform_buffer_masks{};
