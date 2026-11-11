@@ -5929,7 +5929,7 @@ void MainWindow::filterBarSetChecked(bool state) {
 static void AdjustLinkColor() {
     QPalette new_pal(qApp->palette());
 
-    if (UISettings::values.theme == "lichii")
+    if (UISettings::IsLichiiTheme())
         new_pal.setColor(QPalette::Link, QColor(0xf4, 0x5a, 0x85));
     else if (UISettings::IsDarkTheme())
         new_pal.setColor(QPalette::Link, QColor(0, 190, 255, 255));
@@ -6046,7 +6046,7 @@ void MainWindow::UpdateUITheme() {
         current_theme = default_theme;
 
     static bool lichii_palette = false;
-    if (current_theme == QStringLiteral("lichii")) {
+    if (UISettings::IsLichiiTheme()) {
         qApp->setPalette(LichiiPalette());
         lichii_palette = true;
     } else if (lichii_palette) {
@@ -6085,7 +6085,15 @@ void MainWindow::UpdateUITheme() {
     QFile f(theme_uri);
     if (f.open(QFile::ReadOnly | QFile::Text)) {
         QTextStream ts(&f);
-        qApp->setStyleSheet(ts.readAll());
+        QString style_sheet = ts.readAll();
+        if (current_theme == QStringLiteral("lichii_modern")) {
+            // Lichii Modern only adds the modern library rules to the Lichii Dark stylesheet.
+            QFile base(QStringLiteral(":lichii/style.qss"));
+            if (base.open(QFile::ReadOnly | QFile::Text)) {
+                style_sheet = QTextStream(&base).readAll() + QLatin1Char('\n') + style_sheet;
+            }
+        }
+        qApp->setStyleSheet(style_sheet);
         setStyleSheet(ts.readAll());
     } else {
         LOG_ERROR(Frontend, "Unable to set style \"{}\", stylesheet file not found",

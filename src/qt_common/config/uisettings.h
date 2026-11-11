@@ -41,6 +41,9 @@ namespace UISettings {
 
 bool IsDarkTheme();
 
+/// Lichii Dark and Lichii Modern, which builds on it, share the Lichii palette and icons.
+bool IsLichiiTheme();
+
 struct ContextualShortcut {
     std::string keyseq;
     std::string controller_keyseq;
@@ -62,6 +65,7 @@ enum class Theme {
     MidnightBlue,
     MidnightBlueColorful,
     LichiiDark,
+    LichiiModern,
 };
 
 enum class GameLibraryStyle : u8 {
@@ -71,7 +75,7 @@ enum class GameLibraryStyle : u8 {
 
 static constexpr Theme default_theme{Theme::LichiiDark};
 
-using Themes = std::array<std::pair<const char*, const char*>, 7>;
+using Themes = std::array<std::pair<const char*, const char*>, 8>;
 extern const Themes themes;
 
 struct GameDir {
