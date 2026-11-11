@@ -200,9 +200,9 @@ cmake --build build
 
 Your compiled executable will be in:
 
-- `build/bin/lichii.exe` for Windows,
-- `build/bin/lichii.app/Contents/MacOS/lichii` for macOS,
-- and `build/bin/lichii` for others.
+- `build/bin/lichii.exe` on Windows with Ninja or MSYS Makefiles, or `build/bin/<Config>/lichii.exe` with Visual Studio,
+- `build/bin/lichii.app/Contents/MacOS/lichii` on macOS with Ninja, or `build/bin/<Config>/lichii.app/Contents/MacOS/lichii` with Xcode,
+- and `build/bin/lichii` for other single-configuration generators.
 
 ## Scripts
 
