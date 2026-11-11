@@ -2092,6 +2092,12 @@ void PipelineCache::PrecacheShaders(u64 title_id, std::vector<PrecacheJob> jobs,
                             return {};
                         }
                         return [&built, &done, index, build = std::move(build)]() mutable {
+                            // The pipeline is destroyed right after: its graphics libraries are
+                            // not kept either (TickFrame, which prunes them, is not running yet).
+                            GraphicsPipelineLibraryCache::SetNoRetainOnThisThread(true);
+                            SCOPE_EXIT {
+                                GraphicsPipelineLibraryCache::SetNoRetainOnThisThread(false);
+                            };
                             try {
                                 built[index] = build();
                             } catch (const std::exception& e) {
