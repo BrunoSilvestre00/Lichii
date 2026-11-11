@@ -3,6 +3,8 @@
 
 #include "qt_common/util/game.h"
 
+#include <fmt/format.h>
+
 #include "common/fs/fs.h"
 #include "common/fs/path_util.h"
 #include "core/file_sys/savedata_factory.h"
@@ -14,7 +16,10 @@
 #include "video_core/pipeline_cache_files.h"
 #include "video_core/shader_cache_v2/cache.h"
 
+#include <QBuffer>
 #include <QDesktopServices>
+#include <QFile>
+#include <QSaveFile>
 #include <QStandardPaths>
 #include <QUrl>
 
@@ -675,6 +680,53 @@ bool SaveIconToFile(const std::filesystem::path& icon_path, const QImage& image)
 #else
     return false;
 #endif
+}
+
+std::filesystem::path CustomArtworkPath(u64 program_id) {
+    return Common::FS::GetEdenPath(Common::FS::EdenPath::EdenDir) / "artwork" /
+           fmt::format("{:016X}.png", program_id);
+}
+
+std::vector<u8> ReadCustomArtwork(u64 program_id) {
+    if (program_id == 0) {
+        return {};
+    }
+    constexpr qint64 MaxArtworkBytes = 16 * 1024 * 1024;
+    QFile file(QString::fromStdString(Common::FS::PathToUTF8String(CustomArtworkPath(program_id))));
+    if (!file.open(QIODevice::ReadOnly) || file.size() > MaxArtworkBytes) {
+        return {};
+    }
+    const QByteArray bytes = file.readAll();
+    return std::vector<u8>(bytes.begin(), bytes.end());
+}
+
+bool SaveCustomArtwork(u64 program_id, const QImage& image) {
+    if (program_id == 0 || image.isNull()) {
+        return false;
+    }
+    constexpr int MaxSide = 1024;
+    const QImage scaled =
+        std::max(image.width(), image.height()) > MaxSide
+            ? image.scaled(MaxSide, MaxSide, Qt::KeepAspectRatio, Qt::SmoothTransformation)
+            : image;
+    const auto path = CustomArtworkPath(program_id);
+    if (!Common::FS::CreateDirs(path.parent_path())) {
+        LOG_ERROR(Frontend, "Cannot create the custom artwork folder");
+        return false;
+    }
+    // Write to a temporary file and swap it in, so a failed save never leaves a broken image.
+    QSaveFile file(QString::fromStdString(Common::FS::PathToUTF8String(path)));
+    if (!file.open(QIODevice::WriteOnly) || !scaled.save(&file, "PNG") || !file.commit()) {
+        LOG_ERROR(Frontend, "Cannot write custom artwork for {:016X}", program_id);
+        return false;
+    }
+    return true;
+}
+
+bool RemoveCustomArtwork(u64 program_id) {
+    std::error_code ec;
+    std::filesystem::remove(CustomArtworkPath(program_id), ec);
+    return !std::filesystem::exists(CustomArtworkPath(program_id), ec);
 }
 
 } // namespace QtCommon::Game
