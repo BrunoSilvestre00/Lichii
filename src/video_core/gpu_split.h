@@ -72,6 +72,7 @@ struct AcquireStats {
     std::atomic<u64> front_polls{};   ///< GPU thread waits for them in hardware (gpu_thread.cpp)
     std::atomic<u64> front_sleeps{};  ///< ...and in the OS
     std::atomic<u64> front_woken{};   ///< Of those: ended by a wake (Nx2PendingWake)
+    std::atomic<u64> front_stored{};  ///< ...by a store to a word a channel waits on (WordStored)
     std::atomic<u64> front_found_polling{}; ///< Channels found moving by a timed-out hardware wait
     std::atomic<u64> front_found_late{};    ///< ...and by a timed-out OS wait, after the poll
     std::atomic<u64> early_publishes{}; ///< Publishes to a back that waits for work (Commit)

@@ -74,40 +74,18 @@ void ThreadManager::StartThread(VideoCore::RendererBase& renderer, Core::Fronten
         CommandDataContainer next;
         // When a pending channel last moved or a command arrived (see the waits below).
         auto last_progress = std::chrono::steady_clock::now();
-        // How long after that the thread waits in hardware before it blocks in the OS
-        // (Common::NextPollWindow, up to MaxPendingPoll), and whether its last wait was woken.
-        constexpr std::chrono::nanoseconds MaxPendingPoll = std::chrono::microseconds{500};
+        // For this long after that the thread waits in hardware, then it blocks in the OS. In
+        // hardware it looks at the words the channels wait on every WordCheckPeriod and polls the
+        // channels in full every PendingPollPeriod.
+        constexpr std::chrono::nanoseconds PendingPoll = std::chrono::microseconds{500};
         constexpr std::chrono::nanoseconds PendingPollPeriod = std::chrono::microseconds{20};
-        std::chrono::nanoseconds pending_poll = MaxPendingPoll;
-        bool waited = false;
-        bool wait_woken = false;
-        auto wait_start = last_progress;
+        constexpr std::chrono::nanoseconds WordCheckPeriod = std::chrono::microseconds{2};
+        // How the last wait ended, counted when a channel moves after it.
+        enum class WaitEnd { None, Woken, PollTimedOut, SleepTimedOut };
+        WaitEnd last_wait = WaitEnd::None;
         auto& wake = Tegra::Nx2PendingWake::Get();
+        auto& waiters = Tegra::Nx2SemaphoreWaiters::Get();
         auto& acquire_stats = VideoCommon::g_acquire_stats;
-        // A channel moved or a command arrived after the thread waited: adapt the poll to how long
-        // that took and to whether a wake or a timed-out poll found it.
-        const auto end_wait = [&](std::chrono::steady_clock::time_point now) {
-            if (!waited) {
-                return;
-            }
-            waited = false;
-            const auto wait = now - last_progress;
-            if (wait_woken) {
-                if (wait > MaxPendingPoll) {
-                    pending_poll = Common::NextPollWindow(pending_poll, wait, MaxPendingPoll);
-                }
-                return;
-            }
-            VideoCommon::Count(wait <= pending_poll ? acquire_stats.front_found_polling
-                                                    : acquire_stats.front_found_late);
-            // A timed-out wait only bounds when the channel moved: after the wait started. One
-            // that started within MaxPendingPoll ends there, so count the move as within it.
-            const std::chrono::nanoseconds moved_by =
-                wait_start - last_progress < MaxPendingPoll
-                    ? std::min<std::chrono::nanoseconds>(wait, MaxPendingPoll)
-                    : wait;
-            pending_poll = Common::NextPollWindow(pending_poll, moved_by, MaxPendingPoll);
-        };
         namespace Profile = VideoCommon::Nx2Profile;
         auto& split = VideoCommon::GpuSplit::Get();
         while (!stop_token.stop_requested()) {
@@ -117,8 +95,9 @@ void ThreadManager::StartThread(VideoCore::RendererBase& renderer, Core::Fronten
                 split.ReportAcquire();
             }
             if (scheduler.HasPendingChannels()) {
-                // Suspended channels wait on semaphores: a new command or a GPU release wakes the
-                // wait below at once (Nx2PendingWake), so arm it before looking.
+                // Suspended channels wait on semaphores and list copies: a new command, a GPU
+                // release or a finished copy wakes the wait below at once (Nx2PendingWake), so
+                // arm it before looking.
                 wake.Arm();
                 bool resumed = false;
                 {
@@ -127,38 +106,57 @@ void ThreadManager::StartThread(VideoCore::RendererBase& renderer, Core::Fronten
                 }
                 const bool popped = state.queue.TryPop(next);
                 if (resumed || popped) {
-                    const auto now = std::chrono::steady_clock::now();
-                    end_wait(now);
-                    last_progress = now;
+                    if (last_wait == WaitEnd::PollTimedOut) {
+                        VideoCommon::Count(acquire_stats.front_found_polling);
+                    } else if (last_wait == WaitEnd::SleepTimedOut) {
+                        VideoCommon::Count(acquire_stats.front_found_late);
+                    }
+                    last_wait = WaitEnd::None;
+                    last_progress = std::chrono::steady_clock::now();
                 }
                 if (!popped) {
                     if (!scheduler.HasPendingChannels()) {
                         continue;
                     }
-                    // Guest CPU stores and GPU list copies send no wake, and the CPU usually
-                    // releases soon after: poll every 20 us in a hardware wait for up to half a
-                    // millisecond, then block in the OS for 500 us at a time. Ocarina of Time waits
-                    // here ~330 times a second and its present waits for the work behind them:
-                    // with 1 ms sleeps the present waited ~17 ms a frame in Kokiri village, with
-                    // 50 us ~1 ms. The hardware wait shrinks for channels that keep waiting longer.
+                    // Mario Kart World's channels wait for semaphores its CPU releases, stores
+                    // that send no wake, and the CPU usually releases soon after: for half a
+                    // millisecond wait in hardware, watching the semaphore words, then block in
+                    // the OS for 500 us at a time. A full poll every 20 us catches what sends no
+                    // wake and changes no word, such as a release a shader wrote to the caches.
+                    // Ocarina of Time waits here ~330 times a second and its present waits for the
+                    // work behind them: with 1 ms sleeps the present waited ~17 ms a frame in
+                    // Kokiri village, with 50 us ~1 ms.
                     Profile::Scope scope{Profile::Zone::PendingSleep};
                     split.SettleIdleBack();
                     const auto now = std::chrono::steady_clock::now();
-                    waited = true;
-                    wait_start = now;
-                    if (now - last_progress < pending_poll) {
+                    bool woken = false;
+                    if (now - last_progress < PendingPoll) {
                         VideoCommon::Count(acquire_stats.front_polls);
-                        wait_woken = wake.Poll(
-                            std::min(now + PendingPollPeriod, last_progress + pending_poll));
+                        last_wait = WaitEnd::PollTimedOut;
+                        const auto poll_end =
+                            std::min(now + PendingPollPeriod, last_progress + PendingPoll);
+                        auto until = now;
+                        do {
+                            until = std::min(std::chrono::steady_clock::now() + WordCheckPeriod,
+                                             poll_end);
+                            if (wake.Poll(until)) {
+                                woken = true;
+                                break;
+                            }
+                            if (waiters.WordStored()) {
+                                VideoCommon::Count(acquire_stats.front_stored);
+                                last_wait = WaitEnd::Woken;
+                                break;
+                            }
+                        } while (until < poll_end);
                     } else {
-                        // Up to MaxPendingPoll, sleeps end there (see end_wait).
-                        const auto horizon = last_progress + MaxPendingPoll;
                         VideoCommon::Count(acquire_stats.front_sleeps);
-                        wait_woken = wake.Sleep(now < horizon ? horizon - now
-                                                              : std::chrono::microseconds{500});
+                        last_wait = WaitEnd::SleepTimedOut;
+                        woken = wake.Sleep(std::chrono::microseconds{500});
                     }
-                    if (wait_woken) {
+                    if (woken) {
                         VideoCommon::Count(acquire_stats.front_woken);
+                        last_wait = WaitEnd::Woken;
                     }
                     continue;
                 }
