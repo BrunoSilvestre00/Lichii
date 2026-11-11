@@ -304,6 +304,8 @@ bool HvVm::MapFromPageTable(const Common::PageTable& page_table, u64 vaddr) {
     if ((vaddr >> page_table.GetAddressSpaceBits()) != 0) {
         return false;
     }
+    // Read under the table lock so an unmap either precedes the read or clears the entry after.
+    std::scoped_lock lk{m_table_mutex};
     const auto [pointer, type, block] = page_table.entries[vaddr >> 12].PointerTypeBlock(true);
     if (type == Common::PageType::Unmapped || pointer == 0) {
         return false;
@@ -314,7 +316,6 @@ bool HvVm::MapFromPageTable(const Common::PageTable& page_table, u64 vaddr) {
     }
 
     const bool cached = type == Common::PageType::RasterizerCachedMemory;
-    std::scoped_lock lk{m_table_mutex};
     if (const u64* pte = EntryFor(vaddr, false); pte != nullptr) {
         // A GPU-tracked page without access was protected on purpose (reactive flushing): mapping
         // it here would let the access through without syncing with the rasterizer.
