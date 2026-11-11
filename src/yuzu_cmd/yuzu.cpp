@@ -502,6 +502,9 @@ static bool BuildWarm(Core::System& system, int argc, char** argv) {
     for (int i = 5; i < argc; ++i) {
         if (std::string_view{argv[i]} == "--defaults") {
             defaults = true;
+        } else if (std::string_view{argv[i]}.starts_with("--")) {
+            fmt::print(stderr, "--build-warm: unknown option {}\n", argv[i]);
+            return false;
         } else {
             caches.emplace_back(Common::FS::ToU8String(argv[i]));
         }
