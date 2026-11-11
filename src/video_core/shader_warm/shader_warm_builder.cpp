@@ -424,8 +424,9 @@ bool TakeSkipWarm() {
     return skip_warm.exchange(false, std::memory_order_relaxed);
 }
 
-fs::path PrecachedPipelinesPath(u64 title_id) {
-    return TitleDir(title_id) / "precache-graphics.bin";
+fs::path PrecachedPipelinesPath(u64 title_id, bool libraries) {
+    return TitleDir(title_id) /
+           (libraries ? "precache-graphics-libraries.bin" : "precache-graphics.bin");
 }
 
 std::unordered_set<u64> ReadPrecachedPipelines(const fs::path& file, const DriverStamp& stamp) {
@@ -487,7 +488,8 @@ bool DeleteWarmFiles(u64 title_id, std::string* error) {
             remove(path);
         }
     }
-    remove(PrecachedPipelinesPath(title_id));
+    remove(PrecachedPipelinesPath(title_id, false));
+    remove(PrecachedPipelinesPath(title_id, true));
     return ok;
 }
 
