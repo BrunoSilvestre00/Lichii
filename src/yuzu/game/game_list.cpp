@@ -229,6 +229,12 @@ bool GameList::IsEmpty() const {
 }
 
 void GameList::OnPopulate() {
+    if (game_list_mode == Settings::GameListMode::GridView && grid_view->rootIndex().isValid()) {
+        grid_root_dir_index_to_restore =
+            grid_view->rootIndex().data(GameListDir::GameDirRole).toInt();
+    } else {
+        grid_root_dir_index_to_restore = -1;
+    }
     m_populating = true;
     m_currentView->setEnabled(false);
 
@@ -336,7 +342,9 @@ void GameList::ResetViewMode() {
 
     if (mode == Settings::GameListMode::GridView) {
         grid_view->setRootIndex(QModelIndex{});
-        grid_view->setRowHidden(0, true);
+        if (!m_populating && item_model->rowCount() > 0) {
+            grid_view->setRowHidden(0, true);
+        }
         UpdateFolderNavigation();
     } else {
         folder_navigation->hide();
@@ -407,9 +415,26 @@ void GameList::OnPopulatingCompleted(const QStringList& watch_list) {
                                UISettings::values.favorites_expanded.GetValue());
     }
 
+    const int root_dir_index = grid_root_dir_index_to_restore;
+    grid_root_dir_index_to_restore = -1;
     if (game_list_mode == Settings::GameListMode::GridView) {
-        grid_view->setRootIndex(QModelIndex{});
-        grid_view->setRowHidden(0, true);
+        QModelIndex root_index;
+        if (root_dir_index >= 0) {
+            for (int row = 1; row < item_model->rowCount() - 1; ++row) {
+                const QModelIndex directory = item_model->index(row, 0);
+                if (directory.data(GameListDir::GameDirRole).toInt() == root_dir_index) {
+                    root_index = directory;
+                    break;
+                }
+            }
+        }
+        grid_view->setRootIndex(root_index);
+        if (root_index.isValid()) {
+            grid_view->UpdateIconSize();
+            grid_view->scrollToTop();
+        } else {
+            grid_view->setRowHidden(0, true);
+        }
         UpdateFolderNavigation();
         for (int i = 1; i < item_model->rowCount() - 1; ++i) {
             if (auto* directory = item_model->item(i, 0)) {

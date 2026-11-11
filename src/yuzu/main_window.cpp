@@ -628,10 +628,6 @@ MainWindow::MainWindow(bool has_broken_vulkan)
             QString::fromStdString(hbl_path),
             LibraryAppletParameters(0x010000000000100Dull, Service::AM::AppletId::QLaunch));
     }
-    if (!direct_launch) {
-        // Offer the recommendation after the window is ready; direct launches offer it on stop.
-        QTimer::singleShot(0, this, &MainWindow::OfferRecommendedSettings);
-    }
 }
 
 void MainWindow::PromptGameLibraryStyle() {
@@ -2651,10 +2647,11 @@ void MainWindow::OnEmulationStopped() {
         // Ask after cleanup and rescan so a deferred first-run prompt cannot interrupt shutdown.
         if (deferred_library_style_prompt && isVisible()) {
             deferred_library_style_prompt = false;
-            PromptGameLibraryStyle();
-            SetGameListMode(UISettings::values.game_list_mode.GetValue());
+            if (!UISettings::values.has_selected_game_library_style.GetValue()) {
+                PromptGameLibraryStyle();
+                SetGameListMode(UISettings::values.game_list_mode.GetValue());
+            }
         }
-        QTimer::singleShot(0, this, &MainWindow::OfferRecommendedSettings);
     }
 }
 
