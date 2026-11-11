@@ -32,7 +32,6 @@ enum class LoadCallbackStage;
 
 class QBuffer;
 class QByteArray;
-class QGraphicsDropShadowEffect;
 class QGraphicsOpacityEffect;
 class QHideEvent;
 class QMovie;
@@ -107,7 +106,6 @@ private:
     std::size_t previous_total = 0;
     VideoCore::LoadCallbackStage previous_stage;
 
-    QGraphicsDropShadowEffect* logo_glow = nullptr;
     QGraphicsOpacityEffect* opacity_effect = nullptr;
     QPushButton* skip_button = nullptr;
     std::unique_ptr<QPropertyAnimation> fadeout_animation;

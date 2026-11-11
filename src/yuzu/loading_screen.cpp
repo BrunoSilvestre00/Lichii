@@ -8,7 +8,6 @@
 #include <QBuffer>
 #include <QByteArray>
 #include <QColor>
-#include <QGraphicsDropShadowEffect>
 #include <QGraphicsOpacityEffect>
 #include <QHideEvent>
 #include <QIODevice>
@@ -189,11 +188,8 @@ LoadingScreen::LoadingScreen(QWidget* parent)
     ui->value->setSizePolicy(value_size_policy);
     ui->value->setMinimumHeight(20);
 
-    logo_glow = new QGraphicsDropShadowEffect(ui->logo);
-    logo_glow->setBlurRadius(18);
-    logo_glow->setColor(QColor(166, 168, 171, 96));
-    logo_glow->setOffset(0, 0);
-    ui->logo->setGraphicsEffect(logo_glow);
+    // No graphics effect on the logo: fade_parent already has an opacity effect, and a child with
+    // its own effect inside it is not painted at all.
     logo_float_animation = std::make_unique<QPropertyAnimation>(ui->logo, "pos");
     logo_float_animation->setDuration(4200);
     logo_float_animation->setLoopCount(-1);
@@ -292,10 +288,6 @@ void LoadingScreen::ApplyArtwork(const Snapshot& snapshot) {
         if (!icon.isNull()) {
             ui->logo->setPixmap(RoundedGameIcon(icon));
             ui->logo->setVisible(true);
-            logo_accent = LiftLogoAccent(SampleLogoColor(icon.toImage(), 0, 100));
-            QColor glow_color = logo_accent;
-            glow_color.setAlpha(112);
-            logo_glow->setColor(glow_color);
             SetLogoBackground(this, icon);
             logo_loaded = true;
         }
@@ -333,9 +325,6 @@ void LoadingScreen::ApplyArtwork(const Snapshot& snapshot) {
                     .arg(logo_accent.name()));
         }
         ui->logo->setVisible(true);
-        QColor glow_color = logo_accent;
-        glow_color.setAlpha(112);
-        logo_glow->setColor(glow_color);
         SetLogoBackground(this, logo_accent, logo_accent);
     }
 }
