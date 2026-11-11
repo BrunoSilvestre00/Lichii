@@ -52,6 +52,7 @@ class GameList;
 class GImageInfo;
 class GRenderWindow;
 class OverlayDialog;
+class ClassicLoadingScreen;
 class ControllerDialog;
 class QLabel;
 class MultiplayerState;
@@ -538,6 +539,11 @@ private:
     GRenderWindow* render_window = nullptr;
     GameList* game_list = nullptr;
     LoadingScreen* loading_screen = nullptr;
+    /// The loading screen of the Classic library style, with the closing dialog it used.
+    ClassicLoadingScreen* classic_loading_screen = nullptr;
+    OverlayDialog* shutdown_dialog{};
+    /// Whether the running game uses the modern loading screen, chosen when it boots.
+    bool modern_loading_screen = true;
     /// Artwork captured before emulation starts, so shutdown never reads a loader being torn down.
     LoadingScreen::Snapshot closing_snapshot;
     /// Set when a direct launch skipped the first-run library style chooser; the choice is asked

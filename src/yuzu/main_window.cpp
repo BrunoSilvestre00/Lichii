@@ -37,6 +37,7 @@
 #include "install_dialog.h"
 
 #include "bootmanager.h"
+#include "classic_loading_screen.h"
 #include "loading_screen.h"
 #include "qt_common/util/vk.h"
 #include "ryujinx_dialog.h"
@@ -1058,6 +1059,17 @@ void MainWindow::InitializeWidgets() {
     ui->horizontalLayout->addWidget(loading_screen);
     connect(loading_screen, &LoadingScreen::Hidden, this, [&] {
         loading_screen->Clear();
+        if (emulation_running) {
+            render_window->show();
+            render_window->setFocus();
+        }
+    });
+
+    classic_loading_screen = new ClassicLoadingScreen(this);
+    classic_loading_screen->hide();
+    ui->horizontalLayout->addWidget(classic_loading_screen);
+    connect(classic_loading_screen, &ClassicLoadingScreen::Hidden, this, [&] {
+        classic_loading_screen->Clear();
         if (emulation_running) {
             render_window->show();
             render_window->setFocus();
@@ -2397,6 +2409,8 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
 
     connect(QtCommon::emu_thread.get(), &EmuThread::LoadProgress, loading_screen,
             &LoadingScreen::OnLoadProgress, Qt::QueuedConnection);
+    connect(QtCommon::emu_thread.get(), &EmuThread::LoadProgress, classic_loading_screen,
+            &ClassicLoadingScreen::OnLoadProgress, Qt::QueuedConnection);
 
     connect(
         QtCommon::emu_thread.get(), &EmuThread::ShaderCacheReloadStarted, this,
@@ -2406,8 +2420,13 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
             if (QtCommon::system->IsShuttingDown()) {
                 return;
             }
-            loading_screen->Prepare(closing_snapshot);
-            loading_screen->show();
+            if (modern_loading_screen) {
+                loading_screen->Prepare(closing_snapshot);
+                loading_screen->show();
+            } else {
+                classic_loading_screen->Prepare(QtCommon::system->GetAppLoader());
+                classic_loading_screen->show();
+            }
             render_window->hide();
         },
         Qt::QueuedConnection);
@@ -2415,7 +2434,11 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     connect(
         QtCommon::emu_thread.get(), &EmuThread::ShaderCacheReloadFinished, this,
         [this] {
-            loading_screen->OnLoadComplete();
+            if (modern_loading_screen) {
+                loading_screen->OnLoadComplete();
+            } else {
+                classic_loading_screen->OnLoadComplete();
+            }
         },
         Qt::QueuedConnection);
 
@@ -2474,13 +2497,23 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     const auto gpu_vendor = QtCommon::system->GPU().Renderer().GetDeviceVendor();
     UpdateWindowTitle(title_name, title_version, gpu_vendor);
 
+    // The modern loading screen belongs to the Modern library style; Classic keeps the
+    // original screen and closing dialog.
+    modern_loading_screen = UISettings::values.game_library_style.GetValue() ==
+                            static_cast<u8>(UISettings::GameLibraryStyle::Modern);
+    if (!modern_loading_screen) {
+        classic_loading_screen->Prepare(QtCommon::system->GetAppLoader());
+        classic_loading_screen->show();
+    }
     closing_snapshot = LoadingScreen::SnapshotLoader(QtCommon::system->GetAppLoader());
     // Same icon the game library shows; the installed control data covers loaders without one.
     if (closing_snapshot.icon.empty() && metadata.second != nullptr) {
         closing_snapshot.icon = metadata.second->ReadAllBytes();
     }
-    loading_screen->Prepare(closing_snapshot);
-    loading_screen->show();
+    if (modern_loading_screen) {
+        loading_screen->Prepare(closing_snapshot);
+        loading_screen->show();
+    }
 
     emulation_running = true;
     if (ui->action_Fullscreen->isChecked()) {
@@ -2562,6 +2595,13 @@ bool MainWindow::OnShutdownBegin() {
 }
 
 void MainWindow::OnShutdownBeginDialog() {
+    if (!modern_loading_screen) {
+        shutdown_dialog =
+            new OverlayDialog(this, *QtCommon::system, QString{}, tr("Closing software..."),
+                              QString{}, QString{}, Qt::AlignHCenter | Qt::AlignVCenter);
+        shutdown_dialog->open();
+        return;
+    }
     loading_screen->PrepareClosing(closing_snapshot);
     game_list->hide();
     game_list_placeholder->hide();
@@ -2607,6 +2647,11 @@ void MainWindow::OnEmulationStopped() {
         QtCommon::emu_thread.reset();
     }
 
+    if (shutdown_dialog) {
+        shutdown_dialog->deleteLater();
+        shutdown_dialog = nullptr;
+    }
+
     emulation_running = false;
 
     game_list->SetReportableProgramId(report_session ? report_session->program_id : 0);
@@ -2623,6 +2668,8 @@ void MainWindow::OnEmulationStopped() {
     render_window->hide();
     loading_screen->hide();
     loading_screen->Clear();
+    classic_loading_screen->hide();
+    classic_loading_screen->Clear();
     closing_snapshot = {};
     if (game_list->IsEmpty()) {
         game_list_placeholder->show();
@@ -3584,7 +3631,11 @@ bool MainWindow::ConfirmShutdownGame() {
 }
 
 void MainWindow::OnLoadComplete() {
-    loading_screen->OnLoadComplete();
+    if (modern_loading_screen) {
+        loading_screen->OnLoadComplete();
+    } else {
+        classic_loading_screen->OnLoadComplete();
+    }
 
     perf_overlay = new PerformanceOverlay(this);
     perf_overlay->setVisible(ui->action_Show_Performance_Overlay->isChecked());
