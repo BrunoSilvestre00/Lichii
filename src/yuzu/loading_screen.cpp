@@ -258,9 +258,6 @@ LoadingScreen::Snapshot LoadingScreen::SnapshotLoader(Loader::AppLoader& loader)
         snapshot.banner = buffer;
         buffer.clear();
     }
-    if (loader.ReadLogo(buffer) == Loader::ResultStatus::Success) {
-        snapshot.logo = buffer;
-    }
 
     std::string title;
     if (loader.ReadTitle(title) != Loader::ResultStatus::Success) {
@@ -319,22 +316,6 @@ void LoadingScreen::ApplyArtwork(const Snapshot& snapshot) {
         ui->banner->setMovie(animation.get());
 #endif
     }
-    if (!logo_loaded && !snapshot.logo.empty()) {
-        QPixmap map;
-        map.loadFromData(snapshot.logo.data(), static_cast<uint>(snapshot.logo.size()));
-        if (!map.isNull()) {
-            ui->logo->setPixmap(map.scaled(360, 100, Qt::KeepAspectRatio,
-                                           Qt::SmoothTransformation));
-            ui->logo->setVisible(true);
-            logo_accent = LiftLogoAccent(SampleLogoColor(map.toImage(), 0, 100));
-            QColor glow_color = logo_accent;
-            glow_color.setAlpha(112);
-            logo_glow->setColor(glow_color);
-            SetLogoBackground(this, map);
-            logo_loaded = true;
-        }
-    }
-
     game_title = snapshot.title;
 
     if (!logo_loaded) {

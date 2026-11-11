@@ -52,7 +52,6 @@ public:
     struct Snapshot {
         std::vector<u8> icon;
         std::vector<u8> banner;
-        std::vector<u8> logo;
         QString title;
     };
 
@@ -63,7 +62,7 @@ public:
     /// Reuses an already captured snapshot without accessing the application loader.
     void Prepare(const Snapshot& snapshot);
 
-    /// Reads the loader's banner, logo and title into a Snapshot.
+    /// Reads the loader's icon, banner and title into a Snapshot.
     static Snapshot SnapshotLoader(Loader::AppLoader& loader);
 
     /// Shows the closing screen from a snapshot captured before emulation starts.
@@ -95,8 +94,8 @@ signals:
 private:
     /// Resets header, stage and value widgets before Prepare or PrepareClosing.
     void ResetDisplay();
-    /// Applies the game icon, banner, logo and title from a Snapshot. The icon is preferred, then
-    /// the loader's logo, then the fallback placeholder.
+    /// Applies the game icon, banner and title from a Snapshot. Without an icon it shows the same
+    /// default art as the game library.
     void ApplyArtwork(const Snapshot& snapshot);
 
 #ifndef YUZU_QT_MOVIE_MISSING
