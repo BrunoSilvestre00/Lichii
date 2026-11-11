@@ -18,6 +18,7 @@
 #include <QPoint>
 #include <QPixmap>
 #include <QPropertyAnimation>
+#include <QVariantAnimation>
 #include <QPushButton>
 #include <QShowEvent>
 #include <QStyleOption>
@@ -128,6 +129,8 @@ QColor SampleLogoColor(const QImage& image, int begin, int end) {
 
 /// Edge length of the game icon shown on the loading card.
 constexpr int GameIconSize = 132;
+/// How far the logo floats up and down, in pixels.
+constexpr int LogoFloatRange = 7;
 
 /// Scales the game icon to the card size with rounded corners, like the library tiles.
 QPixmap RoundedGameIcon(const QPixmap& icon) {
@@ -182,7 +185,7 @@ LoadingScreen::LoadingScreen(QWidget* parent)
     ui->setupUi(this);
     setMinimumSize(Layout::MinimumSize::Width, Layout::MinimumSize::Height);
     ui->logo->setMinimumSize(100, 100);
-    ui->logo->setMaximumSize(360, GameIconSize);
+    ui->logo->setMaximumSize(360, GameIconSize + LogoFloatRange);
     auto value_size_policy = ui->value->sizePolicy();
     value_size_policy.setRetainSizeWhenHidden(true);
     ui->value->setSizePolicy(value_size_policy);
@@ -190,10 +193,21 @@ LoadingScreen::LoadingScreen(QWidget* parent)
 
     // No graphics effect on the logo: fade_parent already has an opacity effect, and a child with
     // its own effect inside it is not painted at all.
-    logo_float_animation = std::make_unique<QPropertyAnimation>(ui->logo, "pos");
+    // The logo floats by moving its pixmap inside the label through the contents margins. Moving
+    // the label itself fought the card layout and left it off center after a resize.
+    logo_float_animation = std::make_unique<QVariantAnimation>();
     logo_float_animation->setDuration(4200);
     logo_float_animation->setLoopCount(-1);
     logo_float_animation->setEasingCurve(QEasingCurve::InOutSine);
+    logo_float_animation->setStartValue(0);
+    logo_float_animation->setKeyValueAt(0.5, LogoFloatRange);
+    logo_float_animation->setEndValue(0);
+    connect(logo_float_animation.get(), &QVariantAnimation::valueChanged, this,
+            [this](const QVariant& value) {
+                const int lift = value.toInt();
+                ui->logo->setContentsMargins(0, LogoFloatRange - lift, 0, lift);
+            });
+    ui->logo->setContentsMargins(0, LogoFloatRange, 0, 0);
 
     // Fade the content layer to reveal the logo-tinted background behind it.
     opacity_effect = new QGraphicsOpacityEffect(this);
@@ -265,7 +279,7 @@ LoadingScreen::Snapshot LoadingScreen::SnapshotLoader(Loader::AppLoader& loader)
 
 void LoadingScreen::ResetDisplay() {
     logo_float_animation->stop();
-    logo_rest_position_valid = false;
+    ui->logo->setContentsMargins(0, LogoFloatRange, 0, 0);
     ui->banner->clear();
     ui->logo->clear();
     ui->logo->setWordWrap(false);
@@ -455,20 +469,12 @@ void LoadingScreen::showEvent(QShowEvent* event) {
         return;
     }
 
-    logo_rest_position = ui->logo->pos();
-    logo_rest_position_valid = true;
-    logo_float_animation->setStartValue(logo_rest_position);
-    logo_float_animation->setKeyValueAt(0.5, logo_rest_position + QPoint(0, -7));
-    logo_float_animation->setEndValue(logo_rest_position);
     logo_float_animation->start();
 }
 
 void LoadingScreen::hideEvent(QHideEvent* event) {
     logo_float_animation->stop();
-    if (logo_rest_position_valid) {
-        ui->logo->move(logo_rest_position);
-        logo_rest_position_valid = false;
-    }
+    ui->logo->setContentsMargins(0, LogoFloatRange, 0, 0);
     QWidget::hideEvent(event);
 }
 

@@ -36,6 +36,7 @@ class QGraphicsOpacityEffect;
 class QHideEvent;
 class QMovie;
 class QPropertyAnimation;
+class QVariantAnimation;
 class QShowEvent;
 class QPushButton;
 
@@ -109,9 +110,7 @@ private:
     QGraphicsOpacityEffect* opacity_effect = nullptr;
     QPushButton* skip_button = nullptr;
     std::unique_ptr<QPropertyAnimation> fadeout_animation;
-    std::unique_ptr<QPropertyAnimation> logo_float_animation;
-    QPoint logo_rest_position;
-    bool logo_rest_position_valid = false;
+    std::unique_ptr<QVariantAnimation> logo_float_animation;
 
     // Definitions for the differences in text and styling for each stage
     ::Common::unordered_map<VideoCore::LoadCallbackStage, const char*> progressbar_style;
