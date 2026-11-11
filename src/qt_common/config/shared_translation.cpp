@@ -413,7 +413,8 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "game."));
     INSERT(Settings, shader_warm_threads, tr("Shader precache threads:"),
            tr("CPU threads the shader precache uses on the loading screen. 0 uses every CPU "
-              "thread.\nTakes effect at the next game start."));
+              "thread that fits the free memory (fewer on Windows when memory is low).\nTakes "
+              "effect at the next game start."));
     INSERT(Settings, enable_compute_pipelines, tr("Enable Compute Pipelines (Intel Vulkan Only)"),
            tr("Required by some games.\nThis setting only exists for Intel "
               "proprietary drivers and may crash if enabled.\nCompute pipelines are always enabled "

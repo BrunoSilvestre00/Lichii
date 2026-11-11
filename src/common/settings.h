@@ -728,7 +728,8 @@ struct Values {
     SwitchableSetting<bool> use_graphics_pipeline_library{
         linkage, false, "use_graphics_pipeline_library", Category::RendererAdvanced};
 
-    // Threads of the shader precache on the loading screen, 0 for every CPU thread.
+    // Threads of the shader precache on the loading screen, 0 for every CPU thread that fits
+    // the free commit memory (Windows).
     SwitchableSetting<u32, true> shader_warm_threads{linkage,
                                                      0,
                                                      0,

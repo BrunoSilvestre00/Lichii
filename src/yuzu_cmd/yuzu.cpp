@@ -506,6 +506,10 @@ static bool BuildWarm(Core::System& system, int argc, char** argv) {
             caches.emplace_back(Common::FS::ToU8String(argv[i]));
         }
     }
+    if (defaults && !caches.empty()) {
+        fmt::print(stderr, "--build-warm: --defaults and cache files can't be used together\n");
+        return false;
+    }
     if (defaults || !caches.empty()) {
         options.runtime_caches = caches;
     }

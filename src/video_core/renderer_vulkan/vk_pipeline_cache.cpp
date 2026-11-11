@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <charconv>
 #include <chrono>
@@ -25,6 +26,7 @@
 #include <bit>
 #include <numeric>
 #include "common/cityhash.h"
+#include "common/settings.h"
 #include "common/scope_exit.h"
 #include "common/fs/fs.h"
 #include "common/fs/fs_util.h"
@@ -1785,11 +1787,41 @@ void PipelineCache::LoadPipelinesV2(u64 title_id,
 }
 
 namespace {
-/// Threads of the shader precache: the shader_warm_threads setting, where 0 is every CPU thread.
+/// Threads of the shader precache: the shader_warm_threads setting, where 0 is every CPU thread
+/// that fits the free commit memory.
 size_t PrecacheThreads() {
     const size_t all = std::clamp<size_t>(std::thread::hardware_concurrency(), 1, 64);
     const u32 setting = Settings::values.shader_warm_threads.GetValue();
-    return setting == 0 ? all : std::clamp<size_t>(setting, 1, 64);
+    if (setting != 0) {
+        return std::clamp<size_t>(setting, 1, 64);
+    }
+    // Every CPU thread, unless the system is short of commit memory: each warm-up thread holds a
+    // driver compile, and on a 16 GB machine all 12 threads plus the guest memory hit the commit
+    // limit (#741). Windows reports the commit charge; elsewhere the count stays as is.
+    constexpr u64 BytesPerThread = 2ULL << 30;
+    constexpr u64 Headroom = 2ULL << 30;
+    const auto usage = Common::GetProcessMemoryUsage();
+    if (usage.system_commit_limit == 0) {
+        return all;
+    }
+    if (usage.system_commit >= usage.system_commit_limit) {
+        LOG_INFO(Render_Vulkan,
+                 "Shader precache: no commit memory free, 1 thread instead of {} "
+                 "(shader_warm_threads sets a fixed count)",
+                 all);
+        return 1;
+    }
+    const u64 free_commit = usage.system_commit_limit - usage.system_commit;
+    const size_t fit = static_cast<size_t>(
+        std::max<u64>(free_commit > Headroom ? (free_commit - Headroom) / BytesPerThread : 0, 1));
+    if (fit < all) {
+        LOG_INFO(Render_Vulkan,
+                 "Shader precache: {} MiB of commit memory free, {} threads instead of {} "
+                 "(shader_warm_threads sets a fixed count)",
+                 free_commit >> 20, fit, all);
+        return fit;
+    }
+    return all;
 }
 
 /// Graphics marker mode bit 7, set when the device lacks an adaptable dynamic state
@@ -1807,7 +1839,46 @@ u32 GraphicsWarmModeBits(const DynamicFeatures& features) {
     return missing | (adapted ? WarmAdaptedDynamicStateBit : 0U);
 }
 
-/// The graphics marker stamp of `warm_file` as it is now, for this device.
+/// The graphics link mode, for the graphics precache marker: bit 0 when fast links are usable,
+/// which decides whether libraries keep link time optimization info and so changes what the
+/// driver caches. Bit 1 is kept for optimized links.
+u32 LinkModeBits(const Device& device) {
+    return device.CanFastLinkGraphicsLibraries() ? 1U : 0U;
+}
+
+/// The precache markers' variant: the build's SPIR-V emission stamp and the settings that change
+/// what the driver gets for a precache build. Resolution scaling bakes the scale into the
+/// rescaling code of the shaders; the loop safety checks and the bloom fix change the SPIR-V; the
+/// debug setting adds a create flag. Graphics (`graphics`) also takes the sample shading of the
+/// fragment libraries and the dynamic state settings, which decide their dynamic state list; the
+/// compute variant stays what it was without them.
+u64 WarmVariant(bool graphics) {
+    const auto& resolution = Settings::values.resolution_info;
+    const std::array<u64, 7> inputs{
+        VideoCommon::ShaderWarm::EmissionStamp(),
+        resolution.active ? 1ULL : 0ULL,
+        resolution.up_scale,
+        resolution.down_shift,
+        Settings::values.disable_shader_loop_safety_checks.GetValue() ? 1ULL : 0ULL,
+        Settings::values.fix_bloom_effects.GetValue() ? 1ULL : 0ULL,
+        Settings::values.renderer_debug.GetValue() ? 1ULL : 0ULL,
+    };
+    const u64 common =
+        Common::CityHash64(reinterpret_cast<const char*>(inputs.data()), sizeof(inputs));
+    if (!graphics) {
+        return common;
+    }
+    const std::array<u64, 4> graphics_inputs{
+        common,
+        static_cast<u64>(Settings::values.sample_shading.GetValue()),
+        static_cast<u64>(Settings::values.dyna_state.GetValue()),
+        Settings::values.vertex_input_dynamic_state.GetValue() ? 1ULL : 0ULL,
+    };
+    return Common::CityHash64(reinterpret_cast<const char*>(graphics_inputs.data()),
+                              sizeof(graphics_inputs));
+}
+
+/// The graphics marker stamp of `warm_file` as it is now, for this device and these settings.
 std::optional<VideoCommon::ShaderWarm::WarmStamp> GraphicsWarmStamp(
     const std::filesystem::path& warm_file, u64 entries, const Device& device,
     const DynamicFeatures& features) {
@@ -1815,7 +1886,8 @@ std::optional<VideoCommon::ShaderWarm::WarmStamp> GraphicsWarmStamp(
     return ShaderWarm::CurrentWarmStamp(warm_file, entries, device.GetDriverVersion(),
                                         device.GetDeviceID(), CACHE_VERSION,
                                         ShaderWarm::GraphicsWarmMarkerVersion,
-                                        GraphicsWarmModeBits(features));
+                                        GraphicsWarmModeBits(features), LinkModeBits(device),
+                                        WarmVariant(true));
 }
 } // Anonymous namespace
 
@@ -2043,7 +2115,9 @@ void PipelineCache::PrecacheShaders(u64 title_id, std::vector<PrecacheJob> jobs,
     const std::string path = Common::FS::PathToUTF8String(warm_file);
     const auto stamp = [&](u64 entries) {
         return ShaderWarm::CurrentWarmStamp(warm_file, entries, device.GetDriverVersion(),
-                                            device.GetDeviceID(), CACHE_VERSION);
+                                            device.GetDeviceID(), CACHE_VERSION,
+                                            ShaderWarm::WarmMarkerVersion, 0, 0,
+                                            WarmVariant(false));
     };
     // Compute programs of the precache file, unless a matching marker says they were built.
     size_t file_entries = 0;
