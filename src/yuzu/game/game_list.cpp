@@ -403,6 +403,10 @@ void GameList::SetGameTitle(u64 program_id, const QString& title) {
             copy->setData(sort, GameListItem::SortRole);
         }
     }
+    // A new name can match the search text, or stop matching it.
+    if (!search_field->filterText().isEmpty()) {
+        OnTextChanged(search_field->filterText());
+    }
 }
 
 void GameList::RefreshGameDirectory() {
