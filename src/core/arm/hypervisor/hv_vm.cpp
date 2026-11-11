@@ -326,12 +326,10 @@ bool HvVm::MapFromPageTable(const Common::PageTable& page_table, u64 vaddr) {
     }
 
     const bool cached = type == Common::PageType::RasterizerCachedMemory;
-    if (const u64* pte = EntryFor(vaddr, false); pte != nullptr) {
-        // A GPU-tracked page without access was protected on purpose (reactive flushing): mapping
-        // it here would let the access through without syncing with the rasterizer.
-        if ((*pte & DescValid) != 0 || (cached && (*pte & AddressMask) != 0)) {
-            return false;
-        }
+    // Only absent entries are zero: an invalid entry with an output address was protected on
+    // purpose (guest permissions or GPU tracking), and mapping it here would bypass that.
+    if (const u64* pte = EntryFor(vaddr, false); pte != nullptr && *pte != 0) {
+        return false;
     }
     // The emulated page table doesn't record permissions. GPU-tracked pages get the access
     // RasterizerMarkRegionCached gives them, so CPU accesses still fault into the rasterizer.
