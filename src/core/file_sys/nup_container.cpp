@@ -306,7 +306,12 @@ constexpr std::uintmax_t SpillDirCap = 8ULL * 1024 * 1024 * 1024;
 constexpr auto AbandonedSpillAge = std::chrono::hours{1};
 
 /// Names a spilled member after its contents, so a later session can reuse the decoded file.
+/// Empty when the TOC carries no hash for the member: those members would all share one name,
+/// so they keep random temporary files instead.
 std::string SpillKey(const std::array<u8, 0x20>& sha256, u64 size) {
+    if (std::ranges::all_of(sha256, [](u8 byte) { return byte == 0; })) {
+        return {};
+    }
     std::string key;
     key.reserve(sha256.size() * 2 + 17);
     for (const u8 byte : sha256) {
