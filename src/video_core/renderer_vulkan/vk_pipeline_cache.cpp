@@ -484,8 +484,13 @@ vk::ShaderModule EmitComputeModule(const Device& device, const Shader::Profile& 
                                    std::span<const u32> reference = {}) {
     const std::vector<u32> code{EmitComputeShader(profile, program, shader_hash, reference)};
     device.SaveShader(code);
-    // Saved as emitted, built from ComputeModuleCode's words
-    vk::ShaderModule spv_module{BuildShader(device, ComputeModuleCode(code, shader_hash))};
+    // Built from ComputeModuleCode's words. Aftermath matches crash reports by the hash of the
+    // submitted module, so a changed copy is saved as well, as on the graphics path.
+    const std::vector<u32> words{ComputeModuleCode(code, shader_hash)};
+    if (words != code) {
+        device.SaveShader(words);
+    }
+    vk::ShaderModule spv_module{BuildShader(device, words)};
 
     // Text log + .spv dump. Same split as the graphics path.
     const bool should_log = GPU::Logging::IsActive();
