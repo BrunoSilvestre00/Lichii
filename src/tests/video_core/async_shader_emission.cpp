@@ -15,6 +15,7 @@
 #include "shader_recompiler/frontend/ir/ir_emitter.h"
 #include "shader_recompiler/frontend/ir/program.h"
 #include "shader_recompiler/frontend/maxwell/translate_program.h"
+#include "shader_recompiler/host_translate_info.h"
 #include "shader_recompiler/object_pool.h"
 #include "video_core/renderer_vulkan/pipeline_build.h"
 #include "video_core/renderer_vulkan/pipeline_shader_emission.h"
@@ -140,7 +141,8 @@ struct GraphicsPrograms {
             {{}, IR::AbstractSyntaxNode::Type::Return},
         };
         VertexEnvironment env;
-        programs[0] = Shader::Maxwell::MergeDualVertexPrograms(vertex_a, vertex_b, env);
+        programs[0] = Shader::Maxwell::MergeDualVertexPrograms(vertex_a, vertex_b, env,
+                                                               Shader::HostTranslateInfo{});
         for (size_t index = 0; index < programs[0].blocks.size(); ++index) {
             programs[0].blocks[index]->SetOrder(index);
         }
@@ -204,8 +206,8 @@ TEST_CASE("Production verification preserves merged vertex control flow and stag
     const auto fragment_info = job->programs[1].info;
     const auto reference = job->Emit();
     std::array<std::vector<u32>, 2> emitted, verified;
-    Common::ThreadWorker workers{1, "PipelineTest"};
-    Vulkan::PipelineBuild build{&workers, [&] {
+    VideoCommon::ShaderJobScheduler jobs{{.name = "PipelineTest"}};
+    Vulkan::PipelineBuild build{{.jobs = &jobs}, [&] {
                                     emitted = job->Emit();
                                     verified = job->Emit(reference);
                                 }};
@@ -236,4 +238,18 @@ TEST_CASE("Production verification selects the reference when emitted words diff
     reference[0][2] ^= 1;
     REQUIRE(job.Emit(reference) == reference);
     REQUIRE(job.Emit() == emitted);
+}
+
+TEST_CASE("Queued IR past its budget is emitted where it was translated", "[video_core]") {
+    Vulkan::QueuedIrBudget budget{100};
+    auto first = budget.TryReserve(60);
+    REQUIRE(first);
+    REQUIRE_FALSE(budget.TryReserve(41));
+    auto second = budget.TryReserve(40);
+    REQUIRE(second);
+    REQUIRE_FALSE(budget.TryReserve(1));
+    first.reset();
+    REQUIRE(budget.TryReserve(60));
+    REQUIRE_FALSE(budget.TryReserve(61));
+    REQUIRE_FALSE(budget.TryReserve(101));
 }
