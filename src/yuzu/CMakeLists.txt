@@ -80,6 +80,8 @@ add_executable(yuzu
     configuration/configure_general.ui
     configuration/configure_graphics.cpp
     configuration/configure_graphics.h
+    configuration/amd_fsr4_panel.cpp
+    configuration/amd_fsr4_panel.h
     configuration/nvidia_dlss_panel.cpp
     configuration/nvidia_dlss_panel.h
     configuration/configure_graphics.ui
@@ -234,6 +236,8 @@ add_executable(yuzu
     migration_dialog.h migration_dialog.cpp
     nup_dialogs.h nup_dialogs.cpp
     shader_warm_dialog.h shader_warm_dialog.cpp
+    recommended_settings_dialog.h recommended_settings_dialog.cpp
+    whats_new_dialog.h whats_new_dialog.cpp
     migration_worker.h migration_worker.cpp
     libqt_common.h libqt_common.cpp
 
@@ -248,7 +252,7 @@ add_executable(yuzu
     configuration/system/profile_avatar_dialog.h configuration/system/profile_avatar_dialog.cpp
     configuration/addon/mod_select_dialog.h configuration/addon/mod_select_dialog.cpp configuration/addon/mod_select_dialog.ui
 
-    render/performance_overlay.h render/performance_overlay.cpp render/performance_overlay.ui
+    render/performance_overlay.h render/performance_overlay.cpp
     updater/update_dialog.h updater/update_dialog.cpp updater/update_dialog.ui
     game/common.h
     game/carousel.h game/carousel.cpp
@@ -257,7 +261,7 @@ add_executable(yuzu
 set_target_properties(yuzu PROPERTIES OUTPUT_NAME "lichii")
 
 # Shipped next to the executable: the NX2 switches a GUI launch cannot set another way. Read at
-# startup (LoadNx2Switches in main.cpp); a user copy in %APPDATA%\eden overrides it.
+# startup (LoadNx2Switches in main.cpp); a user copy in %APPDATA%\lichii overrides it.
 add_custom_command(TARGET yuzu POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${PROJECT_SOURCE_DIR}/dist/nx2_switches.txt" "$<TARGET_FILE_DIR:yuzu>/nx2_switches.txt"
@@ -422,7 +426,7 @@ endif()
 
 target_link_libraries(yuzu PRIVATE nlohmann_json::nlohmann_json)
 target_link_libraries(yuzu PRIVATE common core input_common frontend_common network video_core qt_common)
-target_link_libraries(yuzu PRIVATE Boost::headers Qt6::Widgets Qt6::Charts Qt6::Concurrent Qt6::Network)
+target_link_libraries(yuzu PRIVATE Boost::headers Qt6::Widgets Qt6::Concurrent Qt6::Network)
 # Unpacks NVIDIA's files from the Streamline release (nvidia_dlss_panel.cpp).
 target_link_libraries(yuzu PRIVATE ZLIB::ZLIB)
 if (WIN32)
@@ -495,4 +499,10 @@ endif()
 # Remember that the linker is incredibly stupid.
 target_link_libraries(yuzu PRIVATE OpenSSL::SSL OpenSSL::Crypto SDL3::SDL3)
 
+# NX archive conversion and editing (nx_tools.cpp) runs nxformat in the process, linked statically.
+if (TARGET nxformat::static_nozstd)
+    target_sources(yuzu PRIVATE nx_tools.h nx_tools.cpp)
+    target_link_libraries(yuzu PRIVATE nxformat::static_nozstd)
+    target_compile_definitions(yuzu PRIVATE LICHII_NX_TOOLS)
+endif()
 create_target_directory_groups(yuzu)
