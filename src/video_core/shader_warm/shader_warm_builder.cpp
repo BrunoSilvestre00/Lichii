@@ -864,6 +864,9 @@ Result BuildWarmFilesWith(Core::System& system, const fs::path& game_path, u64 t
         return types;
     };
 
+    if (stop.stop_requested()) {
+        return fail("Stopped");
+    }
     report(StageWriting, 0, written_vertices.size() + held_vertices.size());
     std::set<std::pair<u128, u64>> vertex_keys; // (environment, attribute types)
     std::vector<std::pair<u64, u64>> patches;  // key offset, attribute types
@@ -909,6 +912,10 @@ Result BuildWarmFilesWith(Core::System& system, const fs::path& game_path, u64 t
         if (!patch) {
             return fail("Writing the precache files failed");
         }
+    }
+    // Stopped while writing: the old files stay as they are.
+    if (stop.stop_requested()) {
+        return fail("Stopped");
     }
     // New files: the markers and counts of the old ones no longer apply. Each is removed right
     // before its file is replaced, so a failed replacement leaves the other file's marker intact.
