@@ -82,6 +82,14 @@ std::vector<u8> ReadFile(const std::filesystem::path& path) {
     return bytes;
 }
 
+// The same path, or another link to the same existing file (a hard link passes the path check).
+bool SameFile(const std::filesystem::path& a, const std::filesystem::path& b) {
+    if (std::filesystem::weakly_canonical(a) == std::filesystem::weakly_canonical(b))
+        return true;
+    std::error_code error;
+    return std::filesystem::equivalent(a, b, error) && !error;
+}
+
 class Reader {
 public:
     explicit Reader(std::span<const u8> bytes_) : bytes{bytes_} {}
@@ -1329,18 +1337,14 @@ int main(int argc, char** argv) {
         }
         if (format != "instructions" && format != "native-header")
             throw std::runtime_error("Invalid input format");
-        if (!override_out.empty() && std::filesystem::weakly_canonical(output) ==
-                                         std::filesystem::weakly_canonical(override_out)) {
+        if (!override_out.empty() && SameFile(output, override_out))
             throw std::runtime_error("--override-out must not name the output file");
-        }
         for (const auto& target : {output, override_out}) {
             if (target.empty())
                 continue;
             for (const auto& path : {input, environment, pipeline_key}) {
-                if (!path.empty() && std::filesystem::weakly_canonical(path) ==
-                                         std::filesystem::weakly_canonical(target)) {
+                if (!path.empty() && SameFile(path, target))
                     throw std::runtime_error("Output must not overwrite an input");
-                }
             }
         }
         OfflineEnvironment env;
