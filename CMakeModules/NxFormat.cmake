@@ -19,6 +19,11 @@
 set(LICHII_NXFORMAT_ROOT "" CACHE PATH "Unpacked nxformat release (empty: download the pinned one)")
 
 function(lichii_find_nxformat)
+    if (WIN32 AND NOT MSVC)
+        message(WARNING "NX converter disabled: MinGW cannot link the MSVC nxformat library. "
+                        "Loading .nx games is not affected.")
+        return()
+    endif()
     set(version 1.0.3)
     set(tag V1.0.3)
     set(root "${LICHII_NXFORMAT_ROOT}")
