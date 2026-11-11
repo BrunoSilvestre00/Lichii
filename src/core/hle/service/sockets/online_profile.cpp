@@ -58,7 +58,10 @@ std::string ServerFileKey(const std::string& server) {
     for (const char ch : server) {
         hash = (hash ^ static_cast<u8>(ch)) * 1099511628211ULL;
     }
-    const std::string hashed = fmt::format("{}-{:016x}", key, hash);
+    // At most 64 readable characters: with the hash and ".ca.der.part" the name stays far below
+    // the usual 255-byte limit.
+    constexpr size_t ReadablePrefix = 64;
+    const std::string hashed = fmt::format("{}-{:016x}", key.substr(0, ReadablePrefix), hash);
     std::error_code ec;
     if (std::filesystem::exists(ProfilesDir() / (hashed + ".txt"), ec)) {
         return hashed;
@@ -190,7 +193,13 @@ std::optional<Profile> LoadProfile(const std::string& server, bool create) {
                           profile->server, server);
                 return std::nullopt;
             }
-            profile->server = server;
+            if (profile->server.empty()) {
+                // An old profile without a server= line: it now belongs to this server, so another
+                // server whose name reads alike gets a file of its own.
+                profile->server = server;
+                std::ofstream claim(ProfilePath(server), std::ios::trunc);
+                claim << ProfileText(*profile);
+            }
             return profile;
         }
         LOG_ERROR(Network, "Online: {} is damaged; making a new friend code",

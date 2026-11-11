@@ -29,9 +29,10 @@
 // settings (Network: online_server, online_server_ca) or, overriding them, the environment:
 //   EDEN_NX2_ONLINE_SERVER=<ipv4>[:<port>]  resolve the redirected host names to <ipv4>, and send
 //       connections to <ipv4>:443 to <port> (an unprivileged port on the host). While it is set,
-//       no other host name resolves, and TCP connections may only go to loopback, private
-//       (RFC 1918) and link-local addresses. UDP may also go to public addresses (other players),
-//       so a game that knows a public address can still send datagrams there.
+//       no other host name resolves, and TCP connections may only go to the server, loopback,
+//       private (RFC 1918), link-local and shared (100.64.0.0/10, mesh VPNs) addresses. UDP may
+//       also go to public addresses (other players), so a game that knows a public address can
+//       still send datagrams there.
 //   EDEN_NX2_ONLINE_HOSTS=<suffix>,...  host names (and their subdomains) to redirect. The default
 //       is Nintendo's NPLN hosts, Pia's NAT check servers (nncs1/nncs2) and Pia's monitoring
 //       server (connection-quality reports, UDP 34343; g<id>.<env>.p.srv.nintendo.net).

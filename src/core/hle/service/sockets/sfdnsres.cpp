@@ -382,8 +382,11 @@ static std::pair<u32, GetAddrInfoError> GetAddrInfoRequestImpl(HLERequestContext
     const auto host_buffer = ctx.ReadBuffer(0);
     const std::string host = NsdResolve(Common::StringFromBuffer(host_buffer));
 
+    // One Config for the whole lookup, so a server change meanwhile can't skip both checks.
+    const auto online = OnlineRedirect::Get();
+
     // Prevent resolution of Nintendo servers
-    if (!OnlineRedirect::Get()->enabled && IsBlockedHost(host)) {
+    if (!online->enabled && IsBlockedHost(host)) {
         LOG_WARNING(Network, "Resolution of hostname {} requested, returning EAI_AGAIN", host);
         return {0, GetAddrInfoError::AGAIN};
     }
@@ -396,7 +399,7 @@ static std::pair<u32, GetAddrInfoError> GetAddrInfoRequestImpl(HLERequestContext
 
     // Serialized hints are also passed in a buffer, but are ignored for now.
 
-    if (const auto online = OnlineRedirect::Get(); online->enabled) {
+    if (online->enabled) {
         std::vector<Network::AddrInfo> redirected;
         if (const auto error = OnlineRedirectResolve(*online, host, service, redirected);
             error != GetAddrInfoError::SUCCESS) {
