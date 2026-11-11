@@ -329,7 +329,7 @@ bool HvVm::MapFromPageTable(const Common::PageTable& page_table, u64 vaddr) {
     if (cached) {
         perm_bits =
             PermissionBits(Common::MemoryPermission::Read | Common::MemoryPermission::Execute);
-        if (Settings::values.use_reactive_flushing.GetValue()) {
+        if (Settings::ReactiveFlushing()) {
             perm_bits &= ~DescValid;
         }
     }
