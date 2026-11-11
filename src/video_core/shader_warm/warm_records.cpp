@@ -397,6 +397,13 @@ RuntimeStats ReadRuntimeStats(const std::vector<std::filesystem::path>& caches) 
         std::memcpy(target.data() + 3, key + 56, 8);
         return Hash128(target);
     };
+    // Whether a key's state can be built as libraries: not with transform feedback (key bytes
+    // 48-51, bit 6), which the warm-up build refuses, so such a state makes no template.
+    const auto library_state = [&](size_t i) {
+        u32 raw1;
+        std::memcpy(&raw1, occurrences[i].key + 48, sizeof(raw1));
+        return ((raw1 >> 6) & 1) == 0;
+    };
     // The rest of the draw state, without what differs per shader: the hash slots (bytes 0-47)
     // and the vertex attribute types (overwritten per vertex entry anyway).
     const auto draw_state = [&](size_t i) {
@@ -432,13 +439,13 @@ RuntimeStats ReadRuntimeStats(const std::vector<std::filesystem::path>& caches) 
             }
             return best == nullptr ? std::nullopt : std::optional<size_t>{best->first};
         };
-        const auto target_record = most_common(render_target, [](size_t) { return true; });
+        const auto target_record = most_common(render_target, library_state);
         if (!target_record) {
             continue;
         }
         const u128 target = render_target(*target_record);
-        const auto state_record =
-            most_common(draw_state, [&](size_t i) { return render_target(i) == target; });
+        const auto state_record = most_common(
+            draw_state, [&](size_t i) { return library_state(i) && render_target(i) == target; });
         GraphicsKey key;
         std::memcpy(key.data(), occurrences[*state_record].key, key.size());
         std::fill(key.begin(), key.begin() + 48, u8{0});
