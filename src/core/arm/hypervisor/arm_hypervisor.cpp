@@ -295,7 +295,7 @@ void ArmHypervisor::FinishTrackedAccess() {
     m_step_process->GetMemory().ReprotectRasterizerPage(m_step_page);
 }
 
-bool ArmHypervisor::EmulateMemoryTagging(Kernel::KProcess* process, u64 pc) {
+bool ArmHypervisor::EmulateMemoryTagging(Kernel::KProcess* process, u64 pc, u64& pstate) {
     // Apple Silicon has no MTE, so its instructions are undefined there. The emulated memory
     // keeps no tags either: tag stores only write back their base (STZG/STZ2G also zero the
     // granules, STGP stores its pair) and LDG reads tag 0, matching Dynarmic.
@@ -369,6 +369,26 @@ bool ArmHypervisor::EmulateMemoryTagging(Kernel::KProcess* process, u64 pc) {
         const u64 address = finish((insn >> 23) & 3, offset);
         memory.Write64(address, get_data(rt));
         memory.Write64(address + 8, get_data(rt2));
+        return true;
+    }
+    if ((insn & 0xDFE0FC00) == 0x9AC00000) {
+        // SUBP, SUBPS: subtract the 56-bit addresses; Xn and Xm are SP when 31, Xd is XZR.
+        const auto untag = [](u64 value) {
+            return static_cast<u64>(static_cast<s64>(value << 8) >> 8);
+        };
+        const u64 lhs = untag(base);
+        const u64 rhs = untag(GetBaseRegister((insn >> 16) & 0x1F));
+        const u64 result = lhs - rhs;
+        if (rd != 31) {
+            SetBaseRegister(rd, result);
+        }
+        if ((insn & (1U << 29)) != 0) {
+            const u64 n = result >> 63;
+            const u64 z = result == 0 ? 1 : 0;
+            const u64 c = lhs >= rhs ? 1 : 0;
+            const u64 v = ((lhs ^ rhs) & (lhs ^ result)) >> 63;
+            pstate = (pstate & ~(u64{0xF} << 28)) | (n << 31) | (z << 30) | (c << 29) | (v << 28);
+        }
         return true;
     }
     return false;
@@ -719,7 +739,7 @@ HaltReason ArmHypervisor::HandleGuestException(Kernel::KThread* thread) {
         return HaltReason::InstructionBreakpoint;
 
     case ExceptionClassUnknown:
-        if (EmulateMemoryTagging(thread->GetOwnerProcess(), elr)) {
+        if (EmulateMemoryTagging(thread->GetOwnerProcess(), elr, spsr)) {
             return_to(elr + 4);
             return {};
         }

@@ -62,8 +62,9 @@ private:
     /// Performs a load or store to GPU-tracked memory through the emulated memory, as Dynarmic
     /// does. Returns false for instructions it doesn't decode.
     bool EmulateTrackedAccess(Kernel::KProcess* process, u64 pc);
-    /// Emulates the MTE instructions (STG, STZG, ST2G, STZ2G, STGP, LDG). Returns false for others.
-    bool EmulateMemoryTagging(Kernel::KProcess* process, u64 pc);
+    /// Emulates the MTE instructions (STG, STZG, ST2G, STZ2G, STGP, LDG, SUBP, SUBPS); SUBPS sets
+    /// the flags in pstate. Returns false for others.
+    bool EmulateMemoryTagging(Kernel::KProcess* process, u64 pc, u64& pstate);
     u64 GetBaseRegister(u32 index);
     void SetBaseRegister(u32 index, u64 value);
 
