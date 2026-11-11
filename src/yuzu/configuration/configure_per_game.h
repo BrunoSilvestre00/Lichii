@@ -9,6 +9,7 @@
 #include <atomic>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -68,6 +69,12 @@ public:
 
     void LoadFromFile(FileSys::VirtualFile file_);
 
+    /// The name the library should show when the user renamed the game in this dialog: the custom
+    /// name, or the game's own name after the field was cleared.
+    std::optional<QString> RenamedTitle() const {
+        return renamed_title;
+    }
+
 private:
     void done(int result) override;
     void changeEvent(QEvent* event) override;
@@ -79,7 +86,7 @@ private:
     void UpdateIconPreview(const QPixmap& map);
     void OnUploadNupIcon();
     void OnDetectNupIcon();
-    bool SaveNupMetadata(bool show_error = false);
+    bool SaveCustomMetadata(bool show_error = false);
 
     struct DetectIconResult {
         std::vector<u8> icon_bytes;
@@ -92,7 +99,9 @@ private:
     std::filesystem::path file_path;
     u64 title_id;
     bool is_nup_file{false};
-    std::string initial_nup_title;
+    std::string original_title;
+    std::string initial_title;
+    std::optional<QString> renamed_title;
     std::vector<u8> pending_nup_icon;
     bool nup_icon_modified{false};
     QFutureWatcher<DetectIconResult> detect_watcher;

@@ -729,4 +729,44 @@ bool RemoveCustomArtwork(u64 program_id) {
     return !std::filesystem::exists(CustomArtworkPath(program_id), ec);
 }
 
+std::filesystem::path CustomTitlePath(u64 program_id) {
+    return Common::FS::GetEdenPath(Common::FS::EdenPath::EdenDir) / "names" /
+           fmt::format("{:016X}.txt", program_id);
+}
+
+std::string ReadCustomTitle(u64 program_id) {
+    if (program_id == 0) {
+        return {};
+    }
+    constexpr qint64 MaxTitleBytes = 4096;
+    QFile file(QString::fromStdString(Common::FS::PathToUTF8String(CustomTitlePath(program_id))));
+    if (!file.open(QIODevice::ReadOnly) || file.size() > MaxTitleBytes) {
+        return {};
+    }
+    return QString::fromUtf8(file.readAll()).simplified().toStdString();
+}
+
+bool SaveCustomTitle(u64 program_id, const std::string& title) {
+    if (program_id == 0) {
+        return false;
+    }
+    const QString name = QString::fromStdString(title).simplified();
+    const auto path = CustomTitlePath(program_id);
+    if (name.isEmpty()) {
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        return !std::filesystem::exists(path, ec);
+    }
+    if (!Common::FS::CreateDirs(path.parent_path())) {
+        LOG_ERROR(Frontend, "Cannot create the custom name folder");
+        return false;
+    }
+    QSaveFile file(QString::fromStdString(Common::FS::PathToUTF8String(path)));
+    if (!file.open(QIODevice::WriteOnly) || file.write(name.toUtf8()) < 0 || !file.commit()) {
+        LOG_ERROR(Frontend, "Cannot write the custom name for {:016X}", program_id);
+        return false;
+    }
+    return true;
+}
+
 } // namespace QtCommon::Game

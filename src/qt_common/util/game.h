@@ -93,4 +93,16 @@ std::vector<u8> ReadCustomArtwork(u64 program_id);
 /// Deletes the program's custom artwork. Returns true when none is left.
 bool RemoveCustomArtwork(u64 program_id);
 
+// Custom name //
+
+/// Where the name the user gave a program is stored (one UTF-8 line). Like custom artwork it
+/// lives outside the game file, so a rename never rewrites the game.
+std::filesystem::path CustomTitlePath(u64 program_id);
+
+/// The program's custom name, or empty when none is set.
+std::string ReadCustomTitle(u64 program_id);
+
+/// Stores the program's custom name; an empty name removes it. Returns true on success.
+[[nodiscard]] bool SaveCustomTitle(u64 program_id, const std::string& title);
+
 } // namespace QtCommon::Game
