@@ -936,12 +936,16 @@ void BufferCacheRuntime::ReserveNullBuffer() {
     }
 }
 
+VkDeviceSize BufferCacheRuntime::NullBufferSize() const {
+    return device.IsMoltenVK() ? MOLTENVK_BUFFER_TAIL : 4;
+}
+
 vk::Buffer BufferCacheRuntime::CreateNullBuffer() {
     VkBufferCreateInfo create_info{
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .pNext = nullptr,
         .flags = 0,
-        .size = device.IsMoltenVK() ? MOLTENVK_BUFFER_TAIL : 4,
+        .size = NullBufferSize(),
         .usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                  VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
@@ -971,7 +975,7 @@ vk::Buffer BufferCacheRuntime::CreateNullBuffer() {
             .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
             .dstAccessMask = VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_INDEX_READ_BIT |
                              VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT |
-                             VK_ACCESS_SHADER_READ_BIT,
+                             VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT,
         };
         cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                                0, barrier);
