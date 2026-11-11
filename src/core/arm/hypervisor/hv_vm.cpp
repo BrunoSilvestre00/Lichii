@@ -124,8 +124,18 @@ bool HvVm::Initialize(System& system) {
         return false;
     }
 
-    if (!MapDram(system)) {
+    // Only one VM can exist per process; a failed setup destroys it.
+    const auto fail = [this] {
+        hv_vm_destroy();
+        if (m_tables != nullptr && m_tables != MAP_FAILED) {
+            munmap(m_tables, TableRegionSize);
+        }
+        m_tables = nullptr;
         return false;
+    };
+
+    if (!MapDram(system)) {
+        return fail();
     }
 
     m_tables = static_cast<u8*>(
@@ -134,7 +144,7 @@ bool HvVm::Initialize(System& system) {
         hv_vm_map(m_tables, TableBaseIpa, TableRegionSize,
                   HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC) != HV_SUCCESS) {
         LOG_ERROR(Core_ARM, "Hypervisor: failed to map the page table region");
-        return false;
+        return fail();
     }
 
     Reset();
