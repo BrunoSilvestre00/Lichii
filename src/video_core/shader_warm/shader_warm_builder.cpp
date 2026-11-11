@@ -151,7 +151,7 @@ u128 Hash128(std::span<const u8> bytes) {
 }
 
 /// One unique vertex or fragment program (make_graphics_warm.py: first manifest program per
-/// code hash, with the origins of that program's code + control identity).
+/// code and constants hash, with the origins of that program's code + control identity).
 struct GraphicsProgram {
     u32 stage{};
     u128 control{};
