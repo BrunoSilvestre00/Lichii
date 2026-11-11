@@ -59,6 +59,7 @@ class QPushButton;
 class QProgressDialog;
 class NupProgressDialog;
 class ShaderWarmDialog;
+class NxTools;
 class QSlider;
 class QHBoxLayout;
 class WaitTreeWidget;
@@ -183,6 +184,16 @@ public:
     void AcceptDropEvent(QDropEvent* event);
 
     std::filesystem::path GetShortcutPath(QtCommon::Game::ShortcutTarget target);
+
+    /// Frames per second frame generation added since the last status bar update.
+    [[nodiscard]] double FrameGenFps() const {
+        return frame_gen_fps;
+    }
+
+    /// What NVIDIA DLSS ran as since the last status bar update, empty when it didn't run
+    [[nodiscard]] const QString& DlssStatusText() const {
+        return dlss_status_text;
+    }
 
 signals:
 
@@ -405,6 +416,8 @@ private slots:
     void OnInstallDecryptionKeys();
     void OnAbout();
     void OnEdenDependencies();
+    void OnApplyRecommendedSettings();
+    void OnRestorePreviousSettings();
     void OnDataDialog();
     void OnToggleFilterBar();
     void OnToggleStatusBar();
@@ -454,6 +467,7 @@ private slots:
 #endif
 
 private:
+    void OnGameListNxTool(const std::string& game_path, void (NxTools::*tool)(const std::string&));
     void RemovePlayTimeData(u64 program_id);
     bool SelectRomFSDumpTarget(const FileSys::ContentProvider&, u64 program_id,
                                u64* selected_title_id, u8* selected_content_record_type);
@@ -513,8 +527,6 @@ private:
 #endif
 
     MultiplayerState* multiplayer_state = nullptr;
-    bool use_recommended_mkw_settings = false;
-    bool asked_recommended_mkw_settings = false;
 
     GRenderWindow* render_window = nullptr;
     GameList* game_list = nullptr;
@@ -537,6 +549,7 @@ private:
     QLabel* res_scale_label = nullptr;
     QLabel* emu_speed_label = nullptr;
     QLabel* game_fps_label = nullptr;
+    QLabel* dlss_status_label = nullptr;
     QLabel* emu_frametime_label = nullptr;
     QLabel* tas_label = nullptr;
     QLabel* firmware_label = nullptr;
@@ -550,7 +563,11 @@ private:
     QPushButton* frame_gen_status_button = nullptr;
     VideoCore::FrameGenState frame_gen_state{};
     u64 frame_gen_frames = 0;
+    u64 dlss_evaluations = 0;
+    QString dlss_status_text;
     bool frame_gen_generating = false;
+    double frame_gen_fps = 0.0;
+    QElapsedTimer frame_gen_fps_timer;
     VolumeButton* volume_button = nullptr;
     QWidget* volume_popup = nullptr;
     QSlider* volume_slider = nullptr;
@@ -603,6 +620,7 @@ private:
     std::shared_ptr<std::atomic_bool> nup_cancel;
     bool nup_running{};
     QPointer<ShaderWarmDialog> shader_warm_dialog;
+    NxTools* nx_tools = nullptr;
     std::string nup_source_path;
 
     // Last game booted, used for multi-process apps

@@ -16,6 +16,7 @@
 #include <utility>
 #include <queue>
 #include <source_location>
+#include <span>
 #include <vector>
 
 #include "common/alignment.h"
@@ -41,6 +42,7 @@ class Device;
 class Framebuffer;
 class GraphicsPipeline;
 class StateTracker;
+class UploadBatch;
 
 struct QueryCacheParams;
 
@@ -186,6 +188,10 @@ public:
         on_submit = std::move(func);
     }
 
+    /// Consecutive in-order staging uploads share barriers until their destinations overlap,
+    /// a source depends on a pending copy, or the batch is full. Call outside a render pass.
+    void RecordUpload(VkBuffer src, VkBuffer dst, std::span<const VkBufferCopy> copies);
+
     /// Send work to a separate thread.
     template <typename T>
         requires std::is_invocable_v<T, vk::CommandBuffer, vk::CommandBuffer>
@@ -193,6 +199,11 @@ public:
         if (VideoCommon::GpuSplit::check_owner) [[unlikely]] {
             VideoCommon::GpuSplit::CheckOwner("Scheduler::Record");
         }
+        if (uploads_pending) {
+            // Pending uploads precede every other recorded command, including upload-buffer work.
+            FlushUploads();
+        }
+        ++record_serial;
         if (chunk->Record(command)) {
             return;
         }
@@ -208,6 +219,15 @@ public:
                 command(cmdbuf);
             });
     }
+
+    /// Whether anything was recorded since the last Flush or Finish, or waits to be: batched
+    /// uploads and a deferred clear reach the command buffer only at the next record or submit.
+    [[nodiscard]] bool RecordedSinceSubmit() const noexcept {
+        return record_serial != submitted_serial || uploads_pending ||
+               deferred_clear.framebuffer != nullptr;
+    }
+    /// Counts a flush skipped because nothing was recorded (GPU profile).
+    static void CountSkippedFlush();
 
     /// Whether the recording thread submitted `tick` within 20 ms.
     [[nodiscard]] bool WaitForSubmission(u64 tick) const {
@@ -323,6 +343,8 @@ public:
 private:
     std::chrono::steady_clock::time_point last_flush{};
     bool flush_pending{};
+    u64 record_serial{};    ///< Commands recorded
+    u64 submitted_serial{}; ///< record_serial at the last Flush or Finish
 
     class Command {
     public:
@@ -462,6 +484,11 @@ private:
     bool graphics_pipeline_missing{};
     u64 render_pass_serial{};
     std::unique_ptr<CommandPool> command_pool;
+
+    std::unique_ptr<UploadBatch> upload_batch;
+    bool uploads_pending{};
+    /// Records pending uploads before another command, worker handoff, or submission tick.
+    void FlushUploads();
 
     vk::QueryPool trace_query_pool;
     static constexpr u32 TraceMaxSubmissions = 512;
