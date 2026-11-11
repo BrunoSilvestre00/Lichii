@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 Droplet
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <mutex>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -138,6 +139,10 @@ FriendLists Call(const Profile& profile, const std::string& ca, const std::strin
 } // namespace
 
 std::string FetchServerCa(const std::string& server) {
+    // Every certificate store calls this: one fetch at a time, so a second one sees the first's
+    // saved certificate instead of replacing it.
+    static std::mutex fetch_mutex;
+    std::scoped_lock lock{fetch_mutex};
     std::string host;
     int port = 0;
     if (!ApiAddress(server, host, port)) {
