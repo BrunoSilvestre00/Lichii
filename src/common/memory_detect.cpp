@@ -7,6 +7,25 @@
 #include <sysinfoapi.h>
 #include <psapi.h>
 // clang-format on
+#if defined(__MINGW32__)
+// MinGW's psapi.h lacks it; the layout is the Windows SDK's.
+struct LichiiProcessMemoryCountersEx2 {
+    DWORD cb;
+    DWORD PageFaultCount;
+    SIZE_T PeakWorkingSetSize;
+    SIZE_T WorkingSetSize;
+    SIZE_T QuotaPeakPagedPoolUsage;
+    SIZE_T QuotaPagedPoolUsage;
+    SIZE_T QuotaPeakNonPagedPoolUsage;
+    SIZE_T QuotaNonPagedPoolUsage;
+    SIZE_T PagefileUsage;
+    SIZE_T PeakPagefileUsage;
+    SIZE_T PrivateUsage;
+    SIZE_T PrivateWorkingSetSize;
+    ULONG64 SharedCommitUsage;
+};
+#define PROCESS_MEMORY_COUNTERS_EX2 LichiiProcessMemoryCountersEx2
+#endif
 #else
 #include <sys/types.h>
 #if defined(__APPLE__) || defined(__FreeBSD__)
