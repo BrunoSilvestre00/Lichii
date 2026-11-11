@@ -13,7 +13,9 @@
 #include <QHideEvent>
 #include <QIODevice>
 #include <QImage>
+#include <QApplication>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPoint>
 #include <QPixmap>
 #include <QPropertyAnimation>
@@ -125,6 +127,29 @@ QColor SampleLogoColor(const QImage& image, int begin, int end) {
     return QColor::fromRgbF(red / weight_total, green / weight_total, blue / weight_total);
 }
 
+/// Edge length of the game icon shown on the loading card.
+constexpr int GameIconSize = 132;
+
+/// Scales the game icon to the card size with rounded corners, like the library tiles.
+QPixmap RoundedGameIcon(const QPixmap& icon) {
+    const qreal ratio = qApp->devicePixelRatio();
+    const int side = static_cast<int>(GameIconSize * ratio);
+    QPixmap rounded(side, side);
+    rounded.fill(Qt::transparent);
+    QPainter painter(&rounded);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    QPainterPath clip;
+    clip.addRoundedRect(QRectF(0, 0, side, side), 16 * ratio, 16 * ratio);
+    painter.setClipPath(clip);
+    painter.drawPixmap(QRect(0, 0, side, side),
+                       icon.scaled(side, side, Qt::KeepAspectRatioByExpanding,
+                                   Qt::SmoothTransformation));
+    painter.end();
+    rounded.setDevicePixelRatio(ratio);
+    return rounded;
+}
+
 QColor LiftLogoAccent(QColor color) {
     return color.lightness() < 112 ? color.lighter(165) : color;
 }
@@ -158,7 +183,7 @@ LoadingScreen::LoadingScreen(QWidget* parent)
     ui->setupUi(this);
     setMinimumSize(Layout::MinimumSize::Width, Layout::MinimumSize::Height);
     ui->logo->setMinimumSize(100, 100);
-    ui->logo->setMaximumSize(360, 100);
+    ui->logo->setMaximumSize(360, GameIconSize);
     auto value_size_policy = ui->value->sizePolicy();
     value_size_policy.setRetainSizeWhenHidden(true);
     ui->value->setSizePolicy(value_size_policy);
@@ -225,6 +250,10 @@ LoadingScreen::~LoadingScreen() = default;
 LoadingScreen::Snapshot LoadingScreen::SnapshotLoader(Loader::AppLoader& loader) {
     Snapshot snapshot;
     std::vector<u8> buffer;
+    if (loader.ReadIcon(buffer) == Loader::ResultStatus::Success) {
+        snapshot.icon = buffer;
+    }
+    buffer.clear();
     if (loader.ReadBanner(buffer) == Loader::ResultStatus::Success) {
         snapshot.banner = buffer;
         buffer.clear();
@@ -260,6 +289,20 @@ void LoadingScreen::ResetDisplay() {
 void LoadingScreen::ApplyArtwork(const Snapshot& snapshot) {
     QColor logo_accent{166, 168, 171};
     bool logo_loaded = false;
+    if (!snapshot.icon.empty()) {
+        QPixmap icon;
+        icon.loadFromData(snapshot.icon.data(), static_cast<uint>(snapshot.icon.size()));
+        if (!icon.isNull()) {
+            ui->logo->setPixmap(RoundedGameIcon(icon));
+            ui->logo->setVisible(true);
+            logo_accent = LiftLogoAccent(SampleLogoColor(icon.toImage(), 0, 100));
+            QColor glow_color = logo_accent;
+            glow_color.setAlpha(112);
+            logo_glow->setColor(glow_color);
+            SetLogoBackground(this, icon);
+            logo_loaded = true;
+        }
+    }
     if (!snapshot.banner.empty()) {
 #ifdef YUZU_QT_MOVIE_MISSING
         QPixmap map;
@@ -276,7 +319,7 @@ void LoadingScreen::ApplyArtwork(const Snapshot& snapshot) {
         ui->banner->setMovie(animation.get());
 #endif
     }
-    if (!snapshot.logo.empty()) {
+    if (!logo_loaded && !snapshot.logo.empty()) {
         QPixmap map;
         map.loadFromData(snapshot.logo.data(), static_cast<uint>(snapshot.logo.size()));
         if (!map.isNull()) {
@@ -295,10 +338,9 @@ void LoadingScreen::ApplyArtwork(const Snapshot& snapshot) {
     game_title = snapshot.title;
 
     if (!logo_loaded) {
-        const QPixmap fallback = GameListFallbackIcon(100);
+        const QPixmap fallback = GameListFallbackIcon(GameIconSize);
         if (!fallback.isNull()) {
-            ui->logo->setPixmap(
-                fallback.scaled(360, 100, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+            ui->logo->setPixmap(RoundedGameIcon(fallback));
             logo_accent = LiftLogoAccent(SampleLogoColor(fallback.toImage(), 0, 100));
         } else {
             const QString wordmark = game_title.isEmpty() ? tr("Lichii") : game_title;

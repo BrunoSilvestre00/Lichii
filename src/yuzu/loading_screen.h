@@ -50,6 +50,7 @@ public:
 
     /// A copy of the artwork and title read from the application loader.
     struct Snapshot {
+        std::vector<u8> icon;
         std::vector<u8> banner;
         std::vector<u8> logo;
         QString title;
@@ -94,8 +95,8 @@ signals:
 private:
     /// Resets header, stage and value widgets before Prepare or PrepareClosing.
     void ResetDisplay();
-    /// Applies the banner, logo and title from a Snapshot, with the fallback wordmark when the
-    /// loader provided no artwork.
+    /// Applies the game icon, banner, logo and title from a Snapshot. The icon is preferred, then
+    /// the loader's logo, then the fallback placeholder.
     void ApplyArtwork(const Snapshot& snapshot);
 
 #ifndef YUZU_QT_MOVIE_MISSING

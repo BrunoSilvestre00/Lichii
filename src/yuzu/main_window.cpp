@@ -2474,7 +2474,12 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     const auto gpu_vendor = QtCommon::system->GPU().Renderer().GetDeviceVendor();
     UpdateWindowTitle(title_name, title_version, gpu_vendor);
 
-    closing_snapshot = loading_screen->Prepare(QtCommon::system->GetAppLoader());
+    closing_snapshot = LoadingScreen::SnapshotLoader(QtCommon::system->GetAppLoader());
+    // Same icon the game library shows; the installed control data covers loaders without one.
+    if (closing_snapshot.icon.empty() && metadata.second != nullptr) {
+        closing_snapshot.icon = metadata.second->ReadAllBytes();
+    }
+    loading_screen->Prepare(closing_snapshot);
     loading_screen->show();
 
     emulation_running = true;
