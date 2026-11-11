@@ -53,7 +53,8 @@ u64 ReadWarmCount(const std::filesystem::path& warm_file);
 
 /// What a marker records: the precache file's size and last-write time, its entry count, the GPU
 /// driver version and device ID, the pipeline cache version, the marker version and a mode field
-/// of the precache's own (graphics: the dynamic states the device lacks; 0 for compute).
+/// of the precache's own (graphics: the dynamic states the device lacks, plus a bit when the
+/// entries were built without an adaptable one, see GraphicsWarmModeBits; 0 for compute).
 /// A marker without the mode field (written before it) reads with a mode of 0.
 struct WarmStamp {
     u64 size{};
