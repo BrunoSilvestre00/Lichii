@@ -60,8 +60,9 @@ def read_override(path):
     ValueError or struct.error on others.
 
     Rejects what the emulator rejects (ProgramOverrideSourceSize in program_override.h): a source
-    that is empty or not whole instructions, no instructions, or a length that does not match the
-    header.
+    that is empty or not whole instructions, no instructions, a length that does not match the
+    header, or an address map that points past the instructions or goes backwards
+    (DecodeProgramOverride).
     """
     data = Path(path).read_bytes()
     magic, version, source_size, count, texture_buffer, map_count = struct.unpack_from('<6I', data)
@@ -73,6 +74,9 @@ def read_override(path):
     at = 24 + source_size
     instructions = struct.unpack_from(f'<{count}Q', data, at)
     offsets = struct.unpack_from(f'<{map_count}I', data, at + count * 8)
+    if any(offset >= count for offset in offsets) or any(
+            left > right for left, right in zip(offsets, offsets[1:])):
+        raise ValueError(f'{path}: invalid override address map')
     return instructions, offsets, texture_buffer
 
 
