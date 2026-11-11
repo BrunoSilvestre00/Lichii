@@ -31,6 +31,7 @@
 #include "core/file_sys/vfs/vfs_real.h"
 #include "core/loader/loader.h"
 #include "video_core/pipeline_cache_files.h"
+#include "video_core/shader_warm/emission_stamp.h"
 #include "video_core/shader_warm/shader_archives.h"
 #include "video_core/shader_warm/shader_warm_builder.h"
 #include "video_core/shader_warm/warm_records.h"
@@ -365,9 +366,13 @@ u64 ReadWarmCount(const fs::path& warm_file) {
     return !ec && actual == size ? entries : 0;
 }
 
+u64 EmissionStamp() {
+    return GeneratedEmissionStamp;
+}
+
 std::optional<WarmStamp> CurrentWarmStamp(const fs::path& warm_file, u64 entries, u32 driver,
                                           u32 device_id, u32 cache_version, u32 marker_version,
-                                          u32 mode) {
+                                          u32 mode, u32 link_mode, u64 variant) {
     std::error_code ec;
     const auto size = fs::file_size(warm_file, ec);
     if (ec) {
@@ -380,19 +385,17 @@ std::optional<WarmStamp> CurrentWarmStamp(const fs::path& warm_file, u64 entries
     return WarmStamp{size,      static_cast<s64>(time.time_since_epoch().count()),
                      entries,   driver,
                      device_id, cache_version,
-                     marker_version, mode};
+                     marker_version, mode,
+                     link_mode,      variant};
 }
 
 std::optional<WarmStamp> ReadWarmMarker(const fs::path& warm_file) {
     std::ifstream in(WarmMarkerPath(warm_file));
     WarmStamp stamp;
     if (!(in >> stamp.size >> stamp.write_time >> stamp.entries >> stamp.driver >>
-          stamp.device_id >> stamp.cache_version >> stamp.marker_version)) {
+          stamp.device_id >> stamp.cache_version >> stamp.marker_version >> stamp.mode >>
+          stamp.link_mode >> stamp.variant)) {
         return std::nullopt;
-    }
-    // Markers written before the mode field have none: mode 0.
-    if (!(in >> stamp.mode)) {
-        stamp.mode = 0;
     }
     return stamp;
 }
@@ -401,7 +404,7 @@ bool WriteWarmMarker(const fs::path& warm_file, const WarmStamp& stamp) {
     std::ofstream out(WarmMarkerPath(warm_file), std::ios::trunc);
     out << stamp.size << ' ' << stamp.write_time << ' ' << stamp.entries << ' ' << stamp.driver
         << ' ' << stamp.device_id << ' ' << stamp.cache_version << ' ' << stamp.marker_version
-        << ' ' << stamp.mode << '\n';
+        << ' ' << stamp.mode << ' ' << stamp.link_mode << ' ' << stamp.variant << '\n';
     out.close();
     return static_cast<bool>(out);
 }

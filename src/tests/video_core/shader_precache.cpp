@@ -122,6 +122,48 @@ TEST_CASE("ShaderPrecache: the marker matches only the same file and driver", "[
     REQUIRE_FALSE(marker->Matches(*ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53)));
 }
 
+TEST_CASE("ShaderPrecache: the marker matches only the same link mode and variant",
+          "[video_core]") {
+    TempDir dir;
+    const auto warm = dir.path / "warm-graphics.bin";
+    WriteBytes(warm, "precache");
+    const u64 variant = 0xfedcba9876543210ULL;
+    const auto graphics_stamp = [&](u64 entries, u32 link_mode, u64 stamp_variant) {
+        return ShaderWarm::CurrentWarmStamp(warm, entries, 0x1234, 0x2206, 53,
+                                            ShaderWarm::GraphicsWarmMarkerVersion, 2, link_mode,
+                                            stamp_variant);
+    };
+    const auto stamp = graphics_stamp(12, 1, variant);
+    REQUIRE(stamp.has_value());
+    REQUIRE(ShaderWarm::WriteWarmMarker(warm, *stamp));
+
+    const auto marker = ShaderWarm::ReadWarmMarker(warm);
+    REQUIRE(marker.has_value());
+    REQUIRE(marker->link_mode == 1);
+    REQUIRE(marker->variant == variant);
+    REQUIRE(marker->Matches(*graphics_stamp(0, 1, variant)));
+    REQUIRE_FALSE(marker->Matches(*graphics_stamp(12, 0, variant)));
+    REQUIRE_FALSE(marker->Matches(*graphics_stamp(12, 1, variant + 1)));
+    REQUIRE_FALSE(marker->Matches(*graphics_stamp(12, 1, 0)));
+    REQUIRE(ShaderWarm::EmissionStamp() != 0);
+}
+
+TEST_CASE("ShaderPrecache: a marker written before the variant is not read", "[video_core]") {
+    TempDir dir;
+    const auto warm = dir.path / "warm-compute.bin";
+    WriteBytes(warm, "precache");
+    const auto stamp = ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53);
+    REQUIRE(stamp.has_value());
+    // The older format: every field up to the mode, then the line end.
+    {
+        std::ofstream out(ShaderWarm::WarmMarkerPath(warm), std::ios::trunc);
+        out << stamp->size << ' ' << stamp->write_time << ' ' << stamp->entries << ' '
+            << stamp->driver << ' ' << stamp->device_id << ' ' << stamp->cache_version << ' '
+            << stamp->marker_version << ' ' << stamp->mode << '\n';
+    }
+    REQUIRE_FALSE(ShaderWarm::ReadWarmMarker(warm).has_value());
+}
+
 TEST_CASE("ShaderPrecache: the marker records its version", "[video_core]") {
     TempDir dir;
     const auto warm = dir.path / "warm-compute.bin";
@@ -172,26 +214,12 @@ TEST_CASE("ShaderPrecache: the graphics marker records its version and mode", "[
     // A device that gains a dynamic state no longer matches, so its entries get built.
     REQUIRE_FALSE(marker->Matches(*graphics_stamp(0x01)));
 
-    // A marker written before the mode field: seven fields, read with a mode of 0.
-    const auto write_seven_fields = [&](u32 seventh) {
-        WriteBytes(ShaderWarm::WarmMarkerPath(warm),
-                   std::to_string(stamp->size) + ' ' + std::to_string(stamp->write_time) +
-                       " 12 4660 8710 53 " + std::to_string(seventh) + '\n');
-    };
-    // Earlier graphics markers held mode bits (below 1024) in the version field: none matches,
-    // so the graphics warm-up runs once more.
-    for (const u32 old_bits : {0U, 3U, 3U | (1U << 2), 1023U}) {
-        write_seven_fields(old_bits);
-        const auto old_marker = ShaderWarm::ReadWarmMarker(warm);
-        REQUIRE(old_marker.has_value());
-        REQUIRE(old_marker->mode == 0);
-        REQUIRE_FALSE(old_marker->Matches(*graphics_stamp(0)));
-    }
-    // A compute marker written before the mode field still matches.
-    write_seven_fields(ShaderWarm::WarmMarkerVersion);
-    const auto compute_marker = ShaderWarm::ReadWarmMarker(warm);
-    REQUIRE(compute_marker.has_value());
-    REQUIRE(compute_marker->Matches(*ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 53)));
+    // A marker written before the mode field (seven fields) no longer reads, so the graphics
+    // warm-up runs once more.
+    WriteBytes(ShaderWarm::WarmMarkerPath(warm),
+               std::to_string(stamp->size) + ' ' + std::to_string(stamp->write_time) +
+                   " 12 4660 8710 53 3\n");
+    REQUIRE_FALSE(ShaderWarm::ReadWarmMarker(warm).has_value());
 }
 
 TEST_CASE("ShaderPrecache: precached pipelines are kept per driver", "[video_core]") {
