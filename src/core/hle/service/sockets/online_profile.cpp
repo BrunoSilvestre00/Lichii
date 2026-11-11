@@ -176,7 +176,9 @@ std::optional<Profile> LoadProfile(const std::string& server, bool create) {
     out << ProfileText(*profile);
     out.close();
     if (!out) {
+        // An identity that is not saved would change at the next sign-in.
         LOG_ERROR(Network, "Online: could not save the friend code to {}", path.string());
+        return std::nullopt;
     }
     std::filesystem::permissions(path, std::filesystem::perms::owner_read |
                                            std::filesystem::perms::owner_write, ec);

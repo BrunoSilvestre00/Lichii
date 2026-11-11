@@ -263,9 +263,10 @@ inline bool IsRedirectedHost(std::string_view host) {
 }
 
 // Destinations a game may connect or send to while the redirect is on.
-// Where a UDP datagram may go in online mode: the TCP rules below plus other players' public
-// addresses, so games reach each other directly over the internet as on a Switch (Pia's peer
-// traffic is UDP). Nintendo stays out by name: only the redirected names resolve, to the server.
+// Where a UDP datagram may go in online mode: the TCP rules below plus any public unicast address,
+// so games reach other players directly over the internet as on a Switch (Pia's peer traffic is
+// UDP). This does not keep UDP away from public servers: a game that knows an address can send
+// to it. Only name lookups are limited, to the redirected names resolving to the server.
 inline bool IsAllowedDestination(const std::array<u8, 4>& ip);
 inline bool IsAllowedPeerDestination(const std::array<u8, 4>& ip) {
     const bool unicast = ip[0] != 0 && ip[0] != 127 && ip[0] < 224;

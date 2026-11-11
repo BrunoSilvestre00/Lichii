@@ -68,25 +68,11 @@ static std::vector<u8> LoadOnlineCa(const std::string& path) {
 }
 
 CertStore::CertStore(Core::System& system) {
-    // Private-server mode (sockets/online_redirect.h, from Droplet): the server's CA stands in for
-    // the console's built-in certificates.
-    if (std::string ca = Sockets::OnlineRedirect::ServerCa(); !ca.empty()) {
-        auto der = LoadOnlineCa(ca);
-        if (der.empty()) {
-            LOG_CRITICAL(Service_SSL, "Online server CA {} holds no certificate", ca);
-            m_online_ca_missing = true;
-        } else {
-            LOG_WARNING(Service_SSL, "Using the private server CA ({} bytes) as the built-in CA",
-                        der.size());
-            m_certs.emplace(CaCertificateId::NintendoCAG3,
-                            Certificate{.status = TrustedCertStatus::EnabledTrusted,
-                                        .der_data = std::move(der)});
-        }
-        return;
-    }
-    // A server is set but its certificate is not here yet: EnsureOnlineCa gets it, and it then
-    // stands in for the console's certificates loaded below.
-    m_online_ca_missing = !Sockets::OnlineRedirect::ConfiguredServer().empty();
+    // Private-server mode (sockets/online_redirect.h, from Droplet): with a server set, its CA
+    // stands in for the console's certificates once online play is on (EnsureOnlineCa, also when
+    // it is turned on mid-game). Until then, and if the CA can't be read, the console's stay.
+    m_online_ca_missing = !Sockets::OnlineRedirect::ConfiguredServer().empty() ||
+                          !Sockets::OnlineRedirect::ServerCa().empty();
 
     constexpr u64 CertStoreDataId = 0x0100000000000800ULL;
 
@@ -181,8 +167,8 @@ void CertStore::EnsureOnlineCa() {
         m_next_ca_fetch = now + std::chrono::seconds(10);
         const std::string saved =
             Common::FS::PathToUTF8String(Sockets::OnlineRedirect::SavedServerCa(server));
-        // A certificate saved earlier is used as it is; only a missing one is fetched.
-        auto der = LoadOnlineCa(saved);
+        // The configured or saved certificate is used as it is; only a missing one is fetched.
+        auto der = LoadOnlineCa(Sockets::OnlineRedirect::ServerCa());
         std::string error;
         if (der.empty()) {
             error = Sockets::OnlineRedirect::FetchServerCa(server);

@@ -8,6 +8,7 @@
 #include <iterator>
 
 #include <nlohmann/json.hpp>
+#include <openssl/x509.h>
 
 #include "common/fs/fs_util.h"
 #include "common/fs/path_util.h"
@@ -158,9 +159,17 @@ std::string FetchServerCa(const std::string& server) {
                httplib::to_string(result.error()) + ")";
     }
     const std::string& der = result->body;
-    // A DER certificate: an X.509 SEQUENCE of a few hundred bytes to a few kilobytes
-    if (result->status != 200 || der.size() < 64 || der.size() > 16 * 1024 ||
-        static_cast<u8>(der[0]) != 0x30) {
+    // A DER certificate of a few hundred bytes to a few kilobytes, all of it one X.509 certificate
+    // (a saved file is never replaced, so a bad one would stay).
+    const auto is_certificate = [&der] {
+        const auto* begin = reinterpret_cast<const unsigned char*>(der.data());
+        const unsigned char* cursor = begin;
+        X509* certificate = d2i_X509(nullptr, &cursor, static_cast<long>(der.size()));
+        const bool whole = certificate != nullptr && cursor == begin + der.size();
+        X509_free(certificate);
+        return whole;
+    };
+    if (result->status != 200 || der.size() < 64 || der.size() > 16 * 1024 || !is_certificate()) {
         return result->status == 404 ? "this server doesn't hand out its certificate (an older server)"
                                      : "the server's answer wasn't a certificate";
     }

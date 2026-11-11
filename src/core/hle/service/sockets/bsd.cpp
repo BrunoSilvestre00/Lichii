@@ -2430,6 +2430,12 @@ std::optional<std::pair<s32, Errno>> BSD_USA::SendMMsgImpl(HLERequestContext& ct
                     return Translate(descriptor->socket->Send(rest, FLAG_MSG_DONTWAIT));
                 }
                 const Network::SockAddrIn addr_in = Translate(GetValue<SockAddrIn>(fields->name));
+                if (OnlineRedirect::Get()->enabled &&
+                    !OnlineRedirect::IsAllowedPeerDestination(addr_in.ip)) {
+                    LOG_WARNING(Service, "Online redirect: dropping datagram to {}:{}",
+                                Network::IPv4AddressToString(addr_in.ip), addr_in.portno);
+                    return std::pair{-1, Errno::CONNREFUSED};
+                }
                 return Translate(descriptor->socket->SendTo(FLAG_MSG_DONTWAIT, rest, &addr_in));
             }();
             if (ret < 0) {

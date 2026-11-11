@@ -120,15 +120,33 @@ static bool OnlineRedirectResolve(const std::string& host, const std::optional<s
         LOG_WARNING(Network, "Online redirect: not resolving {}", host);
         return false;
     }
-    const u16 port =
-        service ? static_cast<u16>(std::strtoul(service->c_str(), nullptr, 10)) : u16{0};
-    out.push_back(Network::AddrInfo{
-        .family = Network::Domain::INET,
-        .socket_type = Network::Type::STREAM,
-        .protocol = Network::Protocol::TCP,
-        .addr = {.family = Network::Domain::INET, .ip = OnlineRedirect::Get()->ip, .portno = port},
-        .canon_name = std::nullopt,
-    });
+    u16 port = 0;
+    if (service && !service->empty()) {
+        char* end{};
+        const unsigned long number = std::strtoul(service->c_str(), &end, 10);
+        if (*end == '\0' && number <= 65535) {
+            port = static_cast<u16>(number);
+        } else if (*service == "https") {
+            port = 443;
+        } else if (*service == "http") {
+            port = 80;
+        } else {
+            LOG_WARNING(Network, "Online redirect: unknown service {} for {}", *service, host);
+            return false;
+        }
+    }
+    // The hints are not read, so both socket types are offered, as a normal lookup does.
+    const auto ip = OnlineRedirect::Get()->ip;
+    for (const auto [type, protocol] : {std::pair{Network::Type::STREAM, Network::Protocol::TCP},
+                                        std::pair{Network::Type::DGRAM, Network::Protocol::UDP}}) {
+        out.push_back(Network::AddrInfo{
+            .family = Network::Domain::INET,
+            .socket_type = type,
+            .protocol = protocol,
+            .addr = {.family = Network::Domain::INET, .ip = ip, .portno = port},
+            .canon_name = std::nullopt,
+        });
+    }
     LOG_INFO(Network, "Online redirect: {} -> {}", host,
              Network::IPv4AddressToString(OnlineRedirect::Get()->ip));
     return true;
