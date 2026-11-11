@@ -820,6 +820,10 @@ HaltReason ArmHypervisor::RunThread(Kernel::KThread* thread) {
                 // instruction: deliver that exception before acting on an interrupt, or the
                 // thread is saved with the vector's PC and resumes there at EL0.
                 check_in_vector();
+                // A step that ends at EL0 completed the access, so a later fault there is new.
+                if (!in_vector) {
+                    m_fault_repeat = 0;
+                }
             } else if (ec == ExceptionClassBrk64) {
                 hr |= HaltReason::InstructionBreakpoint;
             } else if (ec == ExceptionClassWfx) {
