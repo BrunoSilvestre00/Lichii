@@ -1472,6 +1472,11 @@ int main(int argc, char** argv) {
                 const auto record = Shader::Ampere::EncodeProgramOverride(native, lowered);
                 if (record.empty())
                     throw std::runtime_error("Cannot encode the lowering as an override record");
+                // Larger records still serve the warm-file scripts; the emulator's loader
+                // (shader_environment.cpp) would refuse them as an override.
+                diagnostic["override_within_emulator_limits"] =
+                    Shader::Ampere::ProgramOverrideSourceSize(record) != 0 &&
+                    record.size() <= size_t{16} * 1024 * 1024;
                 WriteFile(override_out, record);
             }
             if (lower_only) {
