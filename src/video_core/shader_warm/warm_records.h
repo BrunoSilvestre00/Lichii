@@ -112,8 +112,9 @@ struct RuntimeStats {
 /// cache from before it (vulkan.fork-v<version>.bin), else none (the built-in defaults).
 std::vector<std::filesystem::path> FindRuntimeCaches(const std::filesystem::path& title_dir);
 
-/// The Vulkan disk cache from before the v2 log that FindRuntimeCaches picks when there is no
-/// v2 log, even when one exists. Used when the v2 log has no graphics records.
+/// The Vulkan disk caches from before the v2 log that exist, newest first (FindRuntimeCaches picks
+/// the first when there is no v2 log), even when a v2 log exists. Tried one by one when the cache
+/// read first has no graphics records.
 std::vector<std::filesystem::path> FindOlderRuntimeCaches(const std::filesystem::path& title_dir);
 
 /// Reads pipeline caches like make_graphics_warm.py's runtime_records(): Vulkan disk caches
