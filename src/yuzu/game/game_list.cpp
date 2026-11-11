@@ -372,6 +372,11 @@ void GameList::SetGameTitle(u64 program_id, const QString& title) {
     if (program_id == 0 || title.isEmpty()) {
         return;
     }
+    // Favorites are plain copies of a library entry that store their shown text, so they take it
+    // from an updated library entry afterwards.
+    QList<QStandardItem*> copies;
+    QVariant display;
+    QVariant sort;
     const std::function<void(QStandardItem*)> visit = [&](QStandardItem* parent) {
         for (int row = 0; row < parent->rowCount(); ++row) {
             QStandardItem* item = parent->child(row);
@@ -379,6 +384,12 @@ void GameList::SetGameTitle(u64 program_id, const QString& title) {
                 GameListItemType::Game) {
                 if (item->data(GameListItemPath::ProgramIdRole).toULongLong() == program_id) {
                     item->setData(title, GameListItemPath::TitleRole);
+                    if (dynamic_cast<GameListItemPath*>(item) == nullptr) {
+                        copies.append(item);
+                    } else if (!display.isValid()) {
+                        display = item->data(Qt::DisplayRole);
+                        sort = item->data(GameListItem::SortRole);
+                    }
                 }
             } else {
                 visit(item);
@@ -386,6 +397,12 @@ void GameList::SetGameTitle(u64 program_id, const QString& title) {
         }
     };
     visit(item_model->invisibleRootItem());
+    if (display.isValid()) {
+        for (QStandardItem* copy : copies) {
+            copy->setData(display, Qt::DisplayRole);
+            copy->setData(sort, GameListItem::SortRole);
+        }
+    }
 }
 
 void GameList::RefreshGameDirectory() {
