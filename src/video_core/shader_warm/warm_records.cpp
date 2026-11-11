@@ -317,22 +317,25 @@ std::vector<std::filesystem::path> FindRuntimeCaches(const std::filesystem::path
     if (std::filesystem::exists(log, error)) {
         return {log};
     }
-    return FindOlderRuntimeCaches(title_dir);
+    auto older = FindOlderRuntimeCaches(title_dir);
+    older.resize(std::min<size_t>(older.size(), 1));
+    return older;
 }
 
 std::vector<std::filesystem::path> FindOlderRuntimeCaches(const std::filesystem::path& title_dir) {
     std::error_code error;
-    // The current version's disk cache, or the newest older one with the same record layout
+    // The current version's disk cache, then the older ones with the same record layout
     std::vector<u32> versions{WarmCacheVersion};
     versions.insert(versions.end(), CompatibleRuntimeCacheVersions.begin(),
                     CompatibleRuntimeCacheVersions.end());
+    std::vector<std::filesystem::path> caches;
     for (const u32 version : versions) {
         auto cache = VideoCommon::VersionedPipelineCachePath(title_dir, "vulkan", version);
         if (std::filesystem::exists(cache, error)) {
-            return {std::move(cache)};
+            caches.push_back(std::move(cache));
         }
     }
-    return {};
+    return caches;
 }
 
 RuntimeStats ReadRuntimeStats(const std::vector<std::filesystem::path>& caches) {

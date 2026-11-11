@@ -545,12 +545,19 @@ Result BuildWarmFilesWith(Core::System& system, const fs::path& game_path, u64 t
     }
     RuntimeStats stats = ReadRuntimeStats(caches);
     if (!options.runtime_caches && stats.occurrences == 0 && !caches.empty()) {
-        // A v2 log without graphics records (unreadable, or only compute so far): the older
-        // disk cache may still hold the title's draw states
-        auto older = FindOlderRuntimeCaches(TitleDir(title_id));
-        if (!older.empty() && older != caches) {
-            caches = std::move(older);
-            stats = ReadRuntimeStats(caches);
+        // A cache without graphics records (a v2 log unreadable or with only compute so far, or
+        // a disk cache barely used): an older disk cache may still hold the title's draw states
+        for (auto& older : FindOlderRuntimeCaches(TitleDir(title_id))) {
+            std::vector<fs::path> candidate{std::move(older)};
+            if (candidate == caches) {
+                continue;
+            }
+            RuntimeStats older_stats = ReadRuntimeStats(candidate);
+            if (older_stats.occurrences != 0) {
+                caches = std::move(candidate);
+                stats = std::move(older_stats);
+                break;
+            }
         }
     }
     const bool use_stats = stats.occurrences != 0;
