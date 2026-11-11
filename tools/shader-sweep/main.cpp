@@ -90,6 +90,14 @@ bool SameFile(const std::filesystem::path& a, const std::filesystem::path& b) {
     return std::filesystem::equivalent(a, b, error) && !error;
 }
 
+// Range-checked before narrowing, so a value wider than 32 bits cannot wrap into a valid one.
+u32 ParseOptionValue(const std::string& option, const std::string& value, int base, u64 max) {
+    const u64 parsed = std::stoull(value, nullptr, base);
+    if (parsed > max)
+        throw std::runtime_error("Invalid " + option);
+    return static_cast<u32>(parsed);
+}
+
 class Reader {
 public:
     explicit Reader(std::span<const u8> bytes_) : bytes{bytes_} {}
@@ -1253,18 +1261,17 @@ int main(int argc, char** argv) {
             else if (arg == "--pipeline-key")
                 pipeline_key = value;
             else if (arg == "--guess-cbuf0")
-                guesses.cbuf0 = static_cast<u32>(std::stoul(value, nullptr, 16));
+                guesses.cbuf0 = ParseOptionValue(arg, value, 16, std::numeric_limits<u32>::max());
             else if (arg == "--guess-cbuf-other")
-                guesses.cbuf_other = static_cast<u32>(std::stoul(value, nullptr, 16));
-            else if (arg == "--guess-texture-type") {
-                guesses.texture_type = static_cast<u32>(std::stoul(value, nullptr, 0));
-                if (guesses.texture_type >= Shader::NUM_TEXTURE_TYPES)
-                    throw std::runtime_error("Invalid --guess-texture-type");
-            } else if (arg == "--guess-pixel-format") {
-                guesses.pixel_format = static_cast<u32>(std::stoul(value, nullptr, 0));
-                if (guesses.pixel_format > std::numeric_limits<u8>::max())
-                    throw std::runtime_error("Invalid --guess-pixel-format");
-            } else if (arg == "--guess-storage-pointer") {
+                guesses.cbuf_other =
+                    ParseOptionValue(arg, value, 16, std::numeric_limits<u32>::max());
+            else if (arg == "--guess-texture-type")
+                guesses.texture_type =
+                    ParseOptionValue(arg, value, 0, Shader::NUM_TEXTURE_TYPES - 1);
+            else if (arg == "--guess-pixel-format")
+                guesses.pixel_format =
+                    ParseOptionValue(arg, value, 0, std::numeric_limits<u8>::max());
+            else if (arg == "--guess-storage-pointer") {
                 if (value != "0" && value != "1")
                     throw std::runtime_error("Expected --guess-storage-pointer 0 or 1");
                 guesses.storage_pointer = value == "1";
