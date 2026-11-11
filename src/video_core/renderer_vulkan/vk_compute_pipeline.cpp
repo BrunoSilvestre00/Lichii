@@ -210,15 +210,19 @@ double Milliseconds(std::chrono::steady_clock::duration duration) {
 }
 
 // A dispatch that reached its pipeline before the build finished waits on the scheduler thread.
+// `builder` is the thread that ran the build, or no thread when SPIR-V emission failed and no
+// build ran.
 void ReportDispatchWait(u64 shader_hash, std::chrono::steady_clock::duration elapsed,
-                        bool built_here) {
+                        std::thread::id builder) {
     if (elapsed < std::chrono::milliseconds{20}) {
         return;
     }
     LOG_INFO(Render_Vulkan,
              "Nx2Perf compute first dispatch: {:016x} waited {:.1f} ms for its pipeline ({})",
              shader_hash, Milliseconds(elapsed),
-             built_here ? "built on the scheduler thread" : "built by a worker");
+             builder == std::thread::id{}            ? "no build, emission failed"
+             : builder == std::this_thread::get_id() ? "built on the scheduler thread"
+                                                     : "built by a worker");
 }
 } // Anonymous namespace
 
@@ -709,9 +713,8 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
             std::unique_lock lock{build_mutex};
             build_condvar.wait(lock, [this] { return is_built.load(std::memory_order::relaxed); });
             // The thread that ran the build, read after the wait instead of guessed before it
-            const bool built_here =
-                build_thread.load(std::memory_order::relaxed) == std::this_thread::get_id();
-            ReportDispatchWait(shader_hash, std::chrono::steady_clock::now() - begin, built_here);
+            ReportDispatchWait(shader_hash, std::chrono::steady_clock::now() - begin,
+                               build_thread.load(std::memory_order::relaxed));
         });
     }
 

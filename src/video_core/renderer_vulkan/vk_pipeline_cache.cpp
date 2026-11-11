@@ -1151,7 +1151,8 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
     std::unordered_set<u64> precached_pipelines;
     if (precache) {
         precached_pipelines = ShaderWarm::ReadPrecachedPipelines(
-            ShaderWarm::PrecachedPipelinesPath(title_id),
+            ShaderWarm::PrecachedPipelinesPath(title_id,
+                                               device.IsExtGraphicsPipelineLibrarySupported()),
             {device.GetDriverVersion(), device.GetDeviceID(), CACHE_VERSION});
     }
     if (use_vulkan_pipeline_cache) {
@@ -2216,7 +2217,8 @@ void PipelineCache::PrecacheShaders(u64 title_id, std::vector<PrecacheJob> jobs,
     }
     if (precached.size() != precached_before) {
         ShaderWarm::WritePrecachedPipelines(
-            ShaderWarm::PrecachedPipelinesPath(title_id),
+            ShaderWarm::PrecachedPipelinesPath(title_id,
+                                               device.IsExtGraphicsPipelineLibrarySupported()),
             {device.GetDriverVersion(), device.GetDeviceID(), CACHE_VERSION}, precached);
     }
     if (!stop_loading.stop_requested() && total_built != 0) {

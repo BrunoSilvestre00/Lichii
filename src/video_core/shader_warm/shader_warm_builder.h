@@ -53,7 +53,8 @@ u64 ReadWarmCount(const std::filesystem::path& warm_file);
 
 /// What a marker records: the precache file's size and last-write time, its entry count, the GPU
 /// driver version and device ID, the pipeline cache version, the marker version, a mode field of
-/// the precache's own (graphics: the dynamic states the device lacks; 0 for compute), the
+/// the precache's own (graphics: the dynamic states the device lacks, plus a bit when the entries
+/// were built without an adaptable one, see GraphicsWarmModeBits; 0 for compute), the
 /// graphics link mode (bit 0 fast links usable: it decides whether libraries keep link time
 /// optimization info, which changes what the driver caches; 0 for compute) and the variant: a
 /// hash of the build's SPIR-V emission sources (EmissionStamp) and of the settings that change
@@ -142,8 +143,9 @@ struct DriverStamp {
 };
 
 /// The title's list of cached graphics pipelines an earlier precache built
-/// (<shader dir>/<title id>/precache-graphics.bin).
-std::filesystem::path PrecachedPipelinesPath(u64 title_id);
+/// (<shader dir>/<title id>/precache-graphics.bin). Builds with shader libraries emit other
+/// SPIR-V, so they keep their own list (precache-graphics-libraries.bin).
+std::filesystem::path PrecachedPipelinesPath(u64 title_id, bool libraries);
 
 /// The pipeline key hashes in `file`, empty when there is none or it was written for another
 /// driver, device or cache version, or before shared shader functions were built as calls.

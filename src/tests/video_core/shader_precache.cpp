@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <array>
 #include <chrono>
 #include <cstring>
 #include <filesystem>
@@ -300,6 +301,31 @@ TEST_CASE("ShaderPrecache: a compute entry reads back like a pipeline cache entr
     REQUIRE(env.ReadTextureType(5) == guess.texture_type);
     REQUIRE(env.IsCbufStorageBufferPointer(0, 0x10) == guess.storage_pointer_bank0);
     REQUIRE(env.IsCbufStorageBufferPointer(1, 0x10) == guess.storage_pointer_other);
+}
+
+TEST_CASE("ShaderPrecache: a graphics entry records the program's constants as bank 1",
+          "[video_core]") {
+    ShaderWarm::LoweredCode lowered;
+    lowered.code.resize(16 * sizeof(u64));
+    const std::vector<u8> program(128 + 16 * 16);
+    const std::array<u32, 3> words{0x11223344, 0x55667788, 0x99AABBCC};
+    std::vector<u8> constants(sizeof(words));
+    std::memcpy(constants.data(), words.data(), constants.size());
+    const auto bytes = ShaderWarm::GraphicsEnv(4, lowered, program, constants);
+
+    TempDir dir;
+    const auto file = dir.path / "env.bin";
+    WriteBytes(file, std::string_view{reinterpret_cast<const char*>(bytes.data()), bytes.size()});
+
+    std::ifstream in(file, std::ios::binary);
+    in.exceptions(std::ifstream::failbit);
+    VideoCommon::FileEnvironment env;
+    env.Deserialize(in, static_cast<std::streamoff>(bytes.size()));
+    REQUIRE(in.tellg() == static_cast<std::streamoff>(bytes.size()));
+    REQUIRE(env.ShaderStage() == Shader::Stage::Fragment);
+    for (u32 i = 0; i < words.size(); ++i) {
+        REQUIRE(env.ReadCbufValue(1, i * 4) == words[i]);
+    }
 }
 
 TEST_CASE("ShaderPrecache: a program naming no texture bank reads bank 0", "[video_core]") {
