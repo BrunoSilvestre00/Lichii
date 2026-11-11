@@ -7,9 +7,11 @@
 #pragma once
 
 #include <chrono>
+#include <future>
 #include <map>
 #include <mutex>
 #include <span>
+#include <string>
 #include <vector>
 
 #include "core/hle/result.h"
@@ -48,6 +50,9 @@ private:
     bool m_online_ca_missing = false;
     std::mutex m_online_ca_mutex;
     std::chrono::steady_clock::time_point m_next_ca_fetch{};
+    /// A running fetch of the server's CA (FetchServerCa's error, empty on success), kept off the
+    /// SSL service thread.
+    std::future<std::string> m_ca_fetch;
 };
 
 } // namespace Service::SSL

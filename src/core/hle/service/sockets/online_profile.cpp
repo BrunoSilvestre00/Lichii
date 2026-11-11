@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <string>
+#include <optional>
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -32,14 +34,44 @@ std::string ProfileKey(const std::string& server) {
     return key.empty() ? "default" : key;
 }
 
+// The server a profile file was written for (its server= line), or nothing.
+std::optional<std::string> StoredServer(const std::filesystem::path& path) {
+    std::ifstream in(path);
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.starts_with("server=")) {
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) {
+                line.pop_back();
+            }
+            return line.substr(7);
+        }
+    }
+    return std::nullopt;
+}
+
+// The file name for a server's profile and certificate. Servers whose names map to the same key
+// ("foo:443" and "foo_443") keep separate files: a later one gets the key with a hash of its name.
+std::string ServerFileKey(const std::string& server) {
+    const std::string key = ProfileKey(server);
+    const auto stored = StoredServer(ProfilesDir() / (key + ".txt"));
+    if (!stored || *stored == server) {
+        return key;
+    }
+    u64 hash = 14695981039346656037ULL; // FNV-1a
+    for (const char ch : server) {
+        hash = (hash ^ static_cast<u8>(ch)) * 1099511628211ULL;
+    }
+    return fmt::format("{}-{:016x}", key, hash);
+}
+
 std::filesystem::path ProfilePath(const std::string& server) {
-    return ProfilesDir() / (ProfileKey(server) + ".txt");
+    return ProfilesDir() / (ServerFileKey(server) + ".txt");
 }
 
 } // namespace
 
 std::filesystem::path SavedServerCa(const std::string& server) {
-    return ProfilesDir() / (ProfileKey(server) + ".ca.der");
+    return ProfilesDir() / (ServerFileKey(server) + ".ca.der");
 }
 
 namespace {

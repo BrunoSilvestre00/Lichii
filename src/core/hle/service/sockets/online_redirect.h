@@ -188,8 +188,11 @@ inline Config Parse(const std::string& server_setting) {
         const auto found = Network::GetAddressInfo(name, std::nullopt);
         const auto* addresses = std::get_if<std::vector<Network::AddrInfo>>(&found);
         if (addresses == nullptr || addresses->empty()) {
-            LOG_CRITICAL(Network, "Online server {}: {} has no address; online play is off", server,
-                         name);
+            // Online play stays on with no server: no name resolves and only private addresses can
+            // be reached, so nothing connects to the internet before the next lookup succeeds.
+            LOG_CRITICAL(Network, "Online server {}: {} has no address yet; trying again in 10 s",
+                         server, name);
+            c.enabled = true;
             c.lookup_failed = true;
             return c;
         }

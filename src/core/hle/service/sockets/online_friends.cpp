@@ -153,12 +153,22 @@ std::string FetchServerCa(const std::string& server) {
     client.set_connection_timeout(3);
     client.set_read_timeout(5);
     client.enable_server_certificate_verification(false);
-    const auto result = client.Get("/v1/ca.der");
+    // A whole-request deadline and a size cap: a server that keeps sending can't hold the fetch.
+    client.set_max_timeout(8000);
+    constexpr size_t MaxCertificateBytes = 16 * 1024;
+    std::string body;
+    const auto result = client.Get("/v1/ca.der", [&body](const char* data, size_t length) {
+        body.append(data, length);
+        return body.size() <= MaxCertificateBytes;
+    });
+    if (!result && body.size() > MaxCertificateBytes) {
+        return "the server's answer wasn't a certificate";
+    }
     if (!result) {
         return "the server didn't answer on port " + std::to_string(port) + " (" +
                httplib::to_string(result.error()) + ")";
     }
-    const std::string& der = result->body;
+    const std::string& der = body;
     // A DER certificate of a few hundred bytes to a few kilobytes, all of it one X.509 certificate
     // (a saved file is never replaced, so a bad one would stay).
     const auto is_certificate = [&der] {
@@ -169,7 +179,8 @@ std::string FetchServerCa(const std::string& server) {
         X509_free(certificate);
         return whole;
     };
-    if (result->status != 200 || der.size() < 64 || der.size() > 16 * 1024 || !is_certificate()) {
+    if (result->status != 200 || der.size() < 64 || der.size() > MaxCertificateBytes ||
+        !is_certificate()) {
         return result->status == 404 ? "this server doesn't hand out its certificate (an older server)"
                                      : "the server's answer wasn't a certificate";
     }

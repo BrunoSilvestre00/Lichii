@@ -162,32 +162,41 @@ void CertStore::EnsureOnlineCa() {
     if (server.empty()) {
         return;
     }
-    const auto now = std::chrono::steady_clock::now();
-    if (now >= m_next_ca_fetch) {
-        m_next_ca_fetch = now + std::chrono::seconds(10);
-        const std::string saved =
-            Common::FS::PathToUTF8String(Sockets::OnlineRedirect::SavedServerCa(server));
-        // The configured or saved certificate is used as it is; only a missing one is fetched.
-        auto der = LoadOnlineCa(Sockets::OnlineRedirect::ServerCa());
-        std::string error;
-        if (der.empty()) {
-            error = Sockets::OnlineRedirect::FetchServerCa(server);
-            if (error.empty()) {
-                der = LoadOnlineCa(saved);
-            }
-        }
-        if (!der.empty()) {
-            LOG_WARNING(Service_SSL, "Using the private server's CA for {} ({} bytes)", server,
-                        der.size());
-            m_certs.clear();
-            m_certs[CaCertificateId::NintendoCAG3] =
-                Certificate{.status = TrustedCertStatus::EnabledTrusted, .der_data = std::move(der)};
-            m_online_ca_missing = false;
+    // The configured or saved certificate is used as it is; only a missing one is fetched, on a
+    // thread of its own, so a slow server never holds up the SSL service.
+    std::string error;
+    auto der = LoadOnlineCa(Sockets::OnlineRedirect::ServerCa());
+    if (der.empty() && m_ca_fetch.valid()) {
+        if (m_ca_fetch.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+            Sockets::OnlineRedirect::NoteMissingCaAttempt();
             return;
         }
-        LOG_WARNING(Service_SSL, "Could not get the private server's CA from {}: {}", server,
-                    error.empty() ? "it holds no certificate" : error);
+        error = m_ca_fetch.get();
+        if (error.empty()) {
+            der = LoadOnlineCa(
+                Common::FS::PathToUTF8String(Sockets::OnlineRedirect::SavedServerCa(server)));
+        }
+    } else if (der.empty()) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= m_next_ca_fetch) {
+            m_next_ca_fetch = now + std::chrono::seconds(10);
+            m_ca_fetch = std::async(std::launch::async, Sockets::OnlineRedirect::FetchServerCa,
+                                    server);
+        }
+        Sockets::OnlineRedirect::NoteMissingCaAttempt();
+        return;
     }
+    if (!der.empty()) {
+        LOG_WARNING(Service_SSL, "Using the private server's CA for {} ({} bytes)", server,
+                    der.size());
+        m_certs.clear();
+        m_certs[CaCertificateId::NintendoCAG3] =
+            Certificate{.status = TrustedCertStatus::EnabledTrusted, .der_data = std::move(der)};
+        m_online_ca_missing = false;
+        return;
+    }
+    LOG_WARNING(Service_SSL, "Could not get the private server's CA from {}: {}", server,
+                error.empty() ? "it holds no certificate" : error);
     Sockets::OnlineRedirect::NoteMissingCaAttempt();
 }
 
