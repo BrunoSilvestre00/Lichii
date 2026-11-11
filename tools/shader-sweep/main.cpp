@@ -1316,23 +1316,24 @@ int main(int argc, char** argv) {
         }
         if (!list.empty()) {
             if (!input.empty() || !environment.empty() || !pipeline_key.empty() ||
-                !output.empty() || !pipeline.empty() || requested_stage || capture_extent ||
-                version != 0 || output_dir.empty() || (!programs_log.empty() && path != "v2")) {
+                !override_out.empty() || !output.empty() || !pipeline.empty() || requested_stage ||
+                capture_extent || version != 0 || output_dir.empty() ||
+                (!programs_log.empty() && path != "v2")) {
                 throw std::runtime_error("Invalid arguments; see --help");
             }
             return RunList(list, path, programs_log, output_dir, diagnostic);
         }
         if (!pipeline.empty()) {
             if (!input.empty() || !environment.empty() || !pipeline_key.empty() ||
-                !output.empty() || requested_stage || capture_extent || version == 0 ||
-                output_dir.empty() || !programs_log.empty()) {
+                !override_out.empty() || !output.empty() || requested_stage || capture_extent ||
+                version == 0 || output_dir.empty() || !programs_log.empty()) {
                 throw std::runtime_error("Invalid arguments; see --help");
             }
             return RunPipeline(pipeline, version, path, output_dir, diagnostic);
         }
         if (output.empty() || !output_dir.empty() || !programs_log.empty() || path != "legacy" ||
             (input.empty() && environment.empty()) || (environment.empty() != (version == 0)) ||
-            (lower_only && input.empty()) || (capture_extent && input.empty())) {
+            (input.empty() && (lower_only || capture_extent || !override_out.empty()))) {
             throw std::runtime_error("Invalid arguments; see --help");
         }
         if (format != "instructions" && format != "native-header")
