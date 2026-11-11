@@ -1772,7 +1772,7 @@ Errno BSD_USA::ConnectImpl(s32 fd, std::span<const u8> addr) {
     ASSERT(addr.size() >= 16);
 
     Network::SockAddrIn addr_in = Translate(GetValue<SockAddrIn>(addr));
-    if (const auto& online = OnlineRedirect::Get(); online.enabled) {
+    if (const auto online = OnlineRedirect::Get(); online->enabled) {
         const bool allowed = descriptor->is_connection_based
                                  ? OnlineRedirect::IsAllowedDestination(addr_in.ip)
                                  : OnlineRedirect::IsAllowedPeerDestination(addr_in.ip);
@@ -1781,8 +1781,8 @@ Errno BSD_USA::ConnectImpl(s32 fd, std::span<const u8> addr) {
                         Network::IPv4AddressToString(addr_in.ip), addr_in.portno);
             return Errno::CONNREFUSED;
         }
-        if (addr_in.ip == online.ip && addr_in.portno == 443) {
-            addr_in.portno = online.port;
+        if (addr_in.ip == online->ip && addr_in.portno == 443) {
+            addr_in.portno = online->port;
         }
     }
 
@@ -2097,7 +2097,7 @@ std::pair<s32, Errno> BSD_USA::SendToImpl(s32 fd, u32 flags, std::span<const u8>
         auto guest_addr_in = GetValue<SockAddrIn>(addr);
         addr_in = Translate(guest_addr_in);
         p_addr_in = &addr_in;
-        if (OnlineRedirect::Get().enabled && !OnlineRedirect::IsAllowedPeerDestination(addr_in.ip)) {
+        if (OnlineRedirect::Get()->enabled && !OnlineRedirect::IsAllowedPeerDestination(addr_in.ip)) {
             LOG_WARNING(Service, "Online redirect: dropping datagram to {}:{}",
                         Network::IPv4AddressToString(addr_in.ip), addr_in.portno);
             return {-1, Errno::CONNREFUSED};

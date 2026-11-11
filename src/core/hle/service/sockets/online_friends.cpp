@@ -161,6 +161,11 @@ std::string FetchServerCa(const std::string& server) {
     }
     const auto path = SavedServerCa(server);
     std::error_code ec;
+    // A saved certificate is never replaced from the network: an on-path attacker could swap it.
+    if (std::filesystem::exists(path, ec)) {
+        return "a certificate is already saved in " + Common::FS::PathToUTF8String(path) +
+               "; delete it to get a new one";
+    }
     std::filesystem::create_directories(path.parent_path(), ec);
     const auto part = std::filesystem::path{path}.concat(".part");
     {

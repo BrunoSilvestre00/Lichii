@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <chrono>
+#include <memory>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -76,12 +78,18 @@ struct Config {
     std::array<u8, 4> ip{};
     u16 port = 443;
     std::vector<std::string> suffixes;
+    bool lookup_failed = false; ///< The server's name had no address: tried again later
 };
 
 // The environment wins over the emulator's settings (scripts and tests).
 inline std::string FromEnvOr(const char* name, const std::string& setting) {
     const char* value = std::getenv(name);
     return value != nullptr && *value != '\0' ? std::string{value} : setting;
+}
+
+// The server set in the environment or the settings, whether online play is on or not.
+inline std::string ConfiguredServer() {
+    return FromEnvOr("EDEN_NX2_ONLINE_SERVER", Settings::values.online_server.GetValue());
 }
 
 inline std::string ServerAddress() {
@@ -99,8 +107,7 @@ inline std::string ServerCa() {
     // and turning online play on mid-game must find the server's certificate there.
     std::string path = FromEnvOr("EDEN_NX2_ONLINE_CA", Settings::values.online_server_ca.GetValue());
     if (path.empty()) {
-        const std::string server =
-            FromEnvOr("EDEN_NX2_ONLINE_SERVER", Settings::values.online_server.GetValue());
+        const std::string server = ConfiguredServer();
         std::vector<std::filesystem::path> found{OnlineDir() / "ca.der", OnlineDir() / "ca.pem"};
         if (!server.empty()) {
             found.insert(found.begin(), SavedServerCa(server));
@@ -183,6 +190,7 @@ inline Config Parse(const std::string& server_setting) {
         if (addresses == nullptr || addresses->empty()) {
             LOG_CRITICAL(Network, "Online server {}: {} has no address; online play is off", server,
                          name);
+            c.lookup_failed = true;
             return c;
         }
         const auto& ip = addresses->front().addr.ip;
@@ -215,17 +223,28 @@ inline Config Parse(const std::string& server_setting) {
     return c;
 }
 
-// The redirect for the current server setting (read again when it changes between games).
-inline const Config& Get() {
+// The redirect for the current server setting (read again when it changes between games). Socket
+// threads keep the Config they got while another thread replaces it.
+inline std::shared_ptr<const Config> Get() {
+    constexpr auto LookupRetry = std::chrono::seconds(10);
     static std::mutex mutex;
     static std::string current = "\x01";
-    static Config config;
+    static std::shared_ptr<const Config> config = std::make_shared<const Config>();
+    static std::chrono::steady_clock::time_point retry_at;
     const std::string server = ServerAddress();
-    std::scoped_lock lock{mutex};
-    if (server != current) {
-        current = server;
-        config = Parse(server);
+    {
+        std::scoped_lock lock{mutex};
+        const bool retry = config->lookup_failed && std::chrono::steady_clock::now() >= retry_at;
+        if (server == current && !retry) {
+            return config;
+        }
     }
+    // Parse looks the server's name up and reads its profile: not under the lock.
+    auto parsed = std::make_shared<const Config>(Parse(server));
+    std::scoped_lock lock{mutex};
+    current = server;
+    config = std::move(parsed);
+    retry_at = std::chrono::steady_clock::now() + LookupRetry;
     return config;
 }
 
@@ -234,7 +253,7 @@ inline bool IsRedirectedHost(std::string_view host) {
     if (!host.empty() && host.back() == '.') {
         host.remove_suffix(1);
     }
-    for (const std::string& suffix : Get().suffixes) {
+    for (const std::string& suffix : Get()->suffixes) {
         if (host == suffix || (host.size() > suffix.size() && host.ends_with(suffix) &&
                                host[host.size() - suffix.size() - 1] == '.')) {
             return true;
@@ -254,7 +273,8 @@ inline bool IsAllowedPeerDestination(const std::array<u8, 4>& ip) {
 }
 
 inline bool IsAllowedDestination(const std::array<u8, 4>& ip) {
-    const Config& c = Get();
+    const auto config = Get();
+    const Config& c = *config;
     // 100.64.0.0/10 is shared address space: mesh VPNs (Tailscale) give each PC one, so friends
     // in other places reach each other's games through the mesh. Not routable on the internet.
     return ip == c.ip || ip[0] == 127 || ip[0] == 10 || (ip[0] == 172 && (ip[1] & 0xf0) == 16) ||

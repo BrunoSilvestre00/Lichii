@@ -138,6 +138,7 @@ std::filesystem::path ProfilesDir() {
 
 std::optional<Profile> LoadProfile(const std::string& server, bool create) {
     std::scoped_lock lock{profile_mutex};
+    bool damaged = false;
     std::ifstream in(ProfilePath(server));
     if (in) {
         std::stringstream text;
@@ -148,7 +149,9 @@ std::optional<Profile> LoadProfile(const std::string& server, bool create) {
         }
         LOG_ERROR(Network, "Online: {} is damaged; making a new friend code",
                   ProfilePath(server).string());
+        damaged = true;
     }
+    in.close();
     std::optional<Profile> profile;
     if (!HasProfiles()) {
         profile = LegacyIdentity(server);
@@ -162,6 +165,13 @@ std::optional<Profile> LoadProfile(const std::string& server, bool create) {
     std::error_code ec;
     std::filesystem::create_directories(ProfilesDir(), ec);
     const auto path = ProfilePath(server);
+    if (damaged) {
+        // Keep the old friend code, secret and friends for hand repair.
+        auto backup = path;
+        backup += ".bad";
+        std::filesystem::rename(path, backup, ec);
+        LOG_WARNING(Network, "Online: kept the damaged profile as {}", backup.string());
+    }
     std::ofstream out(path, std::ios::trunc);
     out << ProfileText(*profile);
     out.close();

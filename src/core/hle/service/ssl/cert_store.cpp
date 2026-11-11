@@ -84,6 +84,9 @@ CertStore::CertStore(Core::System& system) {
         }
         return;
     }
+    // A server is set but its certificate is not here yet: EnsureOnlineCa gets it, and it then
+    // stands in for the console's certificates loaded below.
+    m_online_ca_missing = !Sockets::OnlineRedirect::ConfiguredServer().empty();
 
     constexpr u64 CertStoreDataId = 0x0100000000000800ULL;
 
@@ -176,13 +179,21 @@ void CertStore::EnsureOnlineCa() {
     const auto now = std::chrono::steady_clock::now();
     if (now >= m_next_ca_fetch) {
         m_next_ca_fetch = now + std::chrono::seconds(10);
-        const std::string error = Sockets::OnlineRedirect::FetchServerCa(server);
-        auto der = error.empty() ? LoadOnlineCa(Common::FS::PathToUTF8String(
-                                       Sockets::OnlineRedirect::SavedServerCa(server)))
-                                 : std::vector<u8>{};
+        const std::string saved =
+            Common::FS::PathToUTF8String(Sockets::OnlineRedirect::SavedServerCa(server));
+        // A certificate saved earlier is used as it is; only a missing one is fetched.
+        auto der = LoadOnlineCa(saved);
+        std::string error;
+        if (der.empty()) {
+            error = Sockets::OnlineRedirect::FetchServerCa(server);
+            if (error.empty()) {
+                der = LoadOnlineCa(saved);
+            }
+        }
         if (!der.empty()) {
-            LOG_WARNING(Service_SSL, "Got the private server's CA from {} ({} bytes)", server,
+            LOG_WARNING(Service_SSL, "Using the private server's CA for {} ({} bytes)", server,
                         der.size());
+            m_certs.clear();
             m_certs[CaCertificateId::NintendoCAG3] =
                 Certificate{.status = TrustedCertStatus::EnabledTrusted, .der_data = std::move(der)};
             m_online_ca_missing = false;
@@ -196,8 +207,6 @@ void CertStore::EnsureOnlineCa() {
 
 Result CertStore::GetCertificates(u32* out_num_entries, std::span<u8> out_data,
                                   std::span<const CaCertificateId> certificate_ids) {
-    EnsureOnlineCa();
-
     // Ensure the buffer is large enough to hold the output.
     u32 required_size;
     R_TRY(this->GetCertificateBufSize(std::addressof(required_size), out_num_entries,
@@ -244,6 +253,9 @@ Result CertStore::GetCertificates(u32* out_num_entries, std::span<u8> out_data,
 
 Result CertStore::GetCertificateBufSize(u32* out_size, u32* out_num_entries,
                                         std::span<const CaCertificateId> certificate_ids) {
+    // Before the size: a certificate fetched by GetCertificates would outgrow the caller's buffer.
+    EnsureOnlineCa();
+
     // Output size is at least the size of the terminator entry.
     *out_size = sizeof(BuiltInCertificateInfo);
     *out_num_entries = 0;

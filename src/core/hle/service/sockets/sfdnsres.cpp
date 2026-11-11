@@ -126,11 +126,11 @@ static bool OnlineRedirectResolve(const std::string& host, const std::optional<s
         .family = Network::Domain::INET,
         .socket_type = Network::Type::STREAM,
         .protocol = Network::Protocol::TCP,
-        .addr = {.family = Network::Domain::INET, .ip = OnlineRedirect::Get().ip, .portno = port},
+        .addr = {.family = Network::Domain::INET, .ip = OnlineRedirect::Get()->ip, .portno = port},
         .canon_name = std::nullopt,
     });
     LOG_INFO(Network, "Online redirect: {} -> {}", host,
-             Network::IPv4AddressToString(OnlineRedirect::Get().ip));
+             Network::IPv4AddressToString(OnlineRedirect::Get()->ip));
     return true;
 }
 
@@ -234,7 +234,7 @@ static std::pair<u32, GetAddrInfoError> GetHostByNameRequestImpl(HLERequestConte
     const std::string host = NsdResolve(Common::StringFromBuffer(host_buffer));
     // For now, ignore options, which are in input buffer 1 for GetHostByNameRequestWithOptions.
 
-    if (OnlineRedirect::Get().enabled) {
+    if (OnlineRedirect::Get()->enabled) {
         std::vector<Network::AddrInfo> redirected;
         if (!OnlineRedirectResolve(host, std::nullopt, redirected)) {
             return {0, GetAddrInfoError::AGAIN};
@@ -361,7 +361,7 @@ static std::pair<u32, GetAddrInfoError> GetAddrInfoRequestImpl(HLERequestContext
     const std::string host = NsdResolve(Common::StringFromBuffer(host_buffer));
 
     // Prevent resolution of Nintendo servers
-    if (!OnlineRedirect::Get().enabled && IsBlockedHost(host)) {
+    if (!OnlineRedirect::Get()->enabled && IsBlockedHost(host)) {
         LOG_WARNING(Network, "Resolution of hostname {} requested, returning EAI_AGAIN", host);
         return {0, GetAddrInfoError::AGAIN};
     }
@@ -374,7 +374,7 @@ static std::pair<u32, GetAddrInfoError> GetAddrInfoRequestImpl(HLERequestContext
 
     // Serialized hints are also passed in a buffer, but are ignored for now.
 
-    if (OnlineRedirect::Get().enabled) {
+    if (OnlineRedirect::Get()->enabled) {
         std::vector<Network::AddrInfo> redirected;
         if (!OnlineRedirectResolve(host, service, redirected)) {
             return {0, GetAddrInfoError::AGAIN};

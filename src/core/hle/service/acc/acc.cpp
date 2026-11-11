@@ -47,10 +47,15 @@ static u32 WriteOnlineIdToken(HLERequestContext& ctx, const Core::System& system
         build += fmt::format("{:02x}", id[i]);
     }
     const std::string token = Sockets::OnlineRedirect::IdentityToken(build);
-    if (!token.empty() && token.size() < token_data.size()) {
+    const size_t capacity = ctx.GetWriteBufferSize();
+    if (!token.empty() && token.size() < capacity) {
         std::memcpy(token_data.data(), token.data(), token.size());
         (void)ctx.WriteBuffer(token_data.data(), token.size() + 1);
         return static_cast<u32>(token.size());
+    }
+    if (!token.empty()) {
+        LOG_WARNING(Service_ACC, "Online ID token ({} bytes) does not fit the {}-byte buffer",
+                    token.size(), capacity);
     }
     (void)ctx.WriteBuffer(token_data.data(), std::min<size_t>(token_data.size(), 0x100));
     return 0x100;
