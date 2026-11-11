@@ -199,6 +199,12 @@ std::optional<Profile> LoadProfile(const std::string& server, bool create) {
                 profile->server = server;
                 std::ofstream claim(ProfilePath(server), std::ios::trunc);
                 claim << ProfileText(*profile);
+                claim.close();
+                if (!claim) {
+                    LOG_ERROR(Network, "Online: could not claim {} for {}",
+                              ProfilePath(server).string(), server);
+                    return std::nullopt;
+                }
             }
             return profile;
         }
