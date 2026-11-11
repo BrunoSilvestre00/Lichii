@@ -57,11 +57,19 @@ def runtime_code(instructions, offsets):
 
 def read_override(path):
     """Instructions, address map offsets and texture bank of a lowered override record; raises
-    ValueError or struct.error on others."""
+    ValueError or struct.error on others.
+
+    Rejects what the emulator rejects (ProgramOverrideSourceSize in program_override.h): a source
+    that is empty or not whole instructions, no instructions, or a length that does not match the
+    header.
+    """
     data = Path(path).read_bytes()
     magic, version, source_size, count, texture_buffer, map_count = struct.unpack_from('<6I', data)
     if magic != 0x4E454445 or version != 0x3230564F or map_count != source_size // 16:
         raise ValueError(f'{path}: not a mapped override record')
+    if (not source_size or source_size % 16 or not count or
+            len(data) != 24 + source_size + count * 8 + map_count * 4):
+        raise ValueError(f'{path}: override length does not match its header')
     at = 24 + source_size
     instructions = struct.unpack_from(f'<{count}Q', data, at)
     offsets = struct.unpack_from(f'<{map_count}I', data, at + count * 8)
