@@ -1833,6 +1833,18 @@ size_t PipelineCache::PrecacheGraphicsWarm(u64 title_id, size_t num_threads, siz
                             }
                             env.Deserialize(reader.file, reader.end);
                             reader.file.read(reinterpret_cast<char*>(&key), sizeof(key));
+                            // One program, in the vertex B or fragment slot its stage names: a
+                            // damaged key would send the build past the one environment.
+                            VideoCommon::CheckGraphicsRecord(key.unique_hashes, 1);
+                            const bool vertex_slot = key.unique_hashes[1] != 0 &&
+                                                     env.ShaderStage() == Shader::Stage::VertexB;
+                            const bool fragment_slot =
+                                key.unique_hashes[Maxwell::MaxShaderProgram - 1] != 0 &&
+                                env.ShaderStage() == Shader::Stage::Fragment;
+                            if (!vertex_slot && !fragment_slot) {
+                                throw std::ios_base::failure(
+                                    "Graphics entry key and program stage disagree");
+                            }
                             ++reader.read;
                             reader.position = reader.file.tellg();
                         } catch (const std::exception& e) {
