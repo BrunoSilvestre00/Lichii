@@ -4135,6 +4135,10 @@ void MainWindow::OpenPerGameConfiguration(u64 title_id, const std::string& file_
     }
 
     if (result != QDialog::Accepted && !UISettings::values.configuration_applied) {
+        // Artwork saved before a failed save of the rest stays saved after Cancel: show it.
+        if (UISettings::values.is_game_list_reload_pending.exchange(false)) {
+            OnGameListRefresh();
+        }
         Settings::RestoreGlobalState(QtCommon::system->IsPoweredOn());
         return;
     } else if (result == QDialog::Accepted) {
