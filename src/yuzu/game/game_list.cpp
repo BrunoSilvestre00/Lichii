@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <array>
+#include <functional>
 #include <utility>
 
 #include <QAbstractItemView>
@@ -546,6 +547,26 @@ void GameList::OnPopulatingCompleted(const QStringList& watch_list) {
     }
 
     emit PopulatingCompleted();
+}
+
+void GameList::SetGameTitle(u64 program_id, const QString& title) {
+    if (program_id == 0 || title.isEmpty()) {
+        return;
+    }
+    const std::function<void(QStandardItem*)> visit = [&](QStandardItem* parent) {
+        for (int row = 0; row < parent->rowCount(); ++row) {
+            QStandardItem* item = parent->child(row);
+            if (item->data(GameListItem::TypeRole).value<GameListItemType>() ==
+                GameListItemType::Game) {
+                if (item->data(GameListItemPath::ProgramIdRole).toULongLong() == program_id) {
+                    item->setData(title, GameListItemPath::TitleRole);
+                }
+            } else {
+                visit(item);
+            }
+        }
+    };
+    visit(item_model->invisibleRootItem());
 }
 
 void GameList::RefreshGameDirectory() {

@@ -56,7 +56,6 @@
 #include "core/core.h"
 #include "core/file_sys/control_metadata.h"
 #include "core/file_sys/nup_container.h"
-#include "core/file_sys/nup_writer.h"
 #include "core/file_sys/patch_manager.h"
 #include "core/file_sys/xts_archive.h"
 #include "core/loader/loader.h"
@@ -64,6 +63,7 @@
 #include "qt_common/abstract/frontend.h"
 #include "qt_common/config/uisettings.h"
 #include "qt_common/qt_common.h"
+#include "qt_common/util/game.h"
 #include "qt_common/util/vk.h"
 #include "ui_configure_per_game.h"
 #include "yuzu/configuration/configuration_shared.h"
@@ -493,7 +493,7 @@ ConfigurePerGame::~ConfigurePerGame() {
 }
 
 void ConfigurePerGame::done(int result) {
-    if (result == QDialog::Accepted && (detect_watcher.isRunning() || !SaveNupMetadata(true))) {
+    if (result == QDialog::Accepted && (detect_watcher.isRunning() || !SaveCustomMetadata(true))) {
         return;
     }
     if (detect_cancel) {
@@ -535,7 +535,7 @@ void ConfigurePerGame::RetranslateUI() {
 }
 
 void ConfigurePerGame::HandleApplyButtonClicked() {
-    if (detect_watcher.isRunning() || !SaveNupMetadata(true)) {
+    if (detect_watcher.isRunning() || !SaveCustomMetadata(true)) {
         return;
     }
     UISettings::values.configuration_applied = true;
@@ -568,13 +568,16 @@ void ConfigurePerGame::LoadConfiguration() {
         connect(apply_button, &QAbstractButton::clicked, this,
                 &ConfigurePerGame::HandleApplyButtonClicked);
     }
-    ui->nup_icon_widget->setVisible(is_nup_file);
-    ui->nup_icon_widget->setEnabled(!system.IsPoweredOn());
-    ui->display_name->setReadOnly(!is_nup_file || system.IsPoweredOn());
-    ui->display_name->setClearButtonEnabled(is_nup_file && !system.IsPoweredOn());
-    ui->display_name->setPlaceholderText(is_nup_file ? tr("Enter game name...") : QString{});
+    // Custom artwork is stored per program ID, outside the game file, so it works for every
+    // format and while a game runs.
+    ui->nup_icon_widget->setVisible(title_id != 0);
+    ui->nup_icon_widget->setEnabled(true);
+    // The name is stored per program ID too: a rename never touches the game file.
+    ui->display_name->setReadOnly(title_id == 0);
+    ui->display_name->setClearButtonEnabled(title_id != 0);
     ui->display_name->setToolTip(
-        is_nup_file ? tr("Edit the game name stored in the NUP metadata") : QString{});
+        title_id != 0 ? tr("Name shown in the library. Clear it to use the game's own name.")
+                      : QString{});
 
     if (!is_nup_file && control.first != nullptr) {
         ui->display_version->setText(QString::fromStdString(control.first->GetVersionString()));
@@ -599,12 +602,22 @@ void ConfigurePerGame::LoadConfiguration() {
             ui->display_version->setText(QStringLiteral("1.0.0"));
         }
     }
-    initial_nup_title = ui->display_name->text().trimmed().toStdString();
+    original_title = ui->display_name->text().simplified().toStdString();
+    ui->display_name->setPlaceholderText(QString::fromStdString(original_title));
+    if (const auto custom = QtCommon::Game::ReadCustomTitle(title_id); !custom.empty()) {
+        ui->display_name->setText(QString::fromStdString(custom));
+    }
+    initial_title = ui->display_name->text().simplified().toStdString();
     nup_icon_modified = false;
     pending_nup_icon.clear();
 
     scene->clear();
-    if (!is_nup_file && control.second != nullptr) {
+    if (const auto custom = QtCommon::Game::ReadCustomArtwork(title_id); !custom.empty()) {
+        QPixmap map;
+        if (map.loadFromData(custom.data(), static_cast<u32>(custom.size()))) {
+            UpdateIconPreview(map);
+        }
+    } else if (!is_nup_file && control.second != nullptr) {
         QPixmap map;
         const auto bytes = control.second->ReadAllBytes();
         if (map.loadFromData(bytes.data(), static_cast<u32>(bytes.size()))) {
@@ -641,7 +654,7 @@ void ConfigurePerGame::UpdateIconPreview(const QPixmap& map) {
 }
 
 void ConfigurePerGame::OnUploadNupIcon() {
-    if (!is_nup_file || system.IsPoweredOn() || detect_watcher.isRunning()) {
+    if (title_id == 0 || detect_watcher.isRunning()) {
         return;
     }
     const QString default_dir =
@@ -673,7 +686,7 @@ void ConfigurePerGame::OnUploadNupIcon() {
 }
 
 void ConfigurePerGame::OnDetectNupIcon() {
-    if (!is_nup_file || system.IsPoweredOn() || detect_watcher.isRunning()) {
+    if (title_id == 0 || detect_watcher.isRunning()) {
         return;
     }
     QString query_qstr = ui->display_name->text().trimmed();
@@ -891,49 +904,44 @@ void ConfigurePerGame::OnDetectNupIcon() {
         }));
 }
 
-bool ConfigurePerGame::SaveNupMetadata(bool show_error) {
-    if (!is_nup_file) {
-        return true;
-    }
-    const std::string new_title = ui->display_name->text().trimmed().toStdString();
-    const bool title_changed = new_title != initial_nup_title;
-    if (!title_changed && !nup_icon_modified) {
-        return true;
-    }
-    if (system.IsPoweredOn()) {
-        if (show_error) {
-            QMessageBox::warning(this, tr("Update NUP Metadata"),
-                                 tr("Stop emulation before changing NUP metadata."));
-        }
-        return false;
-    }
-    FileSys::Nup::MetadataUpdate update;
-    if (title_changed) {
-        update.title_name = new_title;
-    }
+bool ConfigurePerGame::SaveCustomMetadata(bool show_error) {
     if (nup_icon_modified) {
-        update.icon = pending_nup_icon;
+        // Saved as the game's custom artwork: rewriting the whole archive to embed it took a full
+        // copy of the game on the UI thread (25 GB for some NUPs) and failed when the game file
+        // was in use.
+        QImage image;
+        image.loadFromData(pending_nup_icon.data(), static_cast<u32>(pending_nup_icon.size()));
+        if (!QtCommon::Game::SaveCustomArtwork(title_id, image)) {
+            if (show_error) {
+                QMessageBox::warning(this, tr("Game Artwork"),
+                                     tr("The artwork could not be saved."));
+            }
+            return false;
+        }
+        nup_icon_modified = false;
+        pending_nup_icon.clear();
+        UISettings::values.is_game_list_reload_pending.exchange(true);
     }
-    std::string error;
-    addons_tab->SetFile(nullptr);
-    file.reset();
-    const auto res = FileSys::Nup::UpdateMetadata(file_path, update, &error);
-    file = Core::GetGameFileFromPath(system.GetFilesystem(),
-                                   Common::FS::PathToUTF8String(file_path));
-    addons_tab->SetFile(file);
-    if (res != FileSys::Nup::PackResult::Success) {
+    const std::string new_title = ui->display_name->text().simplified().toStdString();
+    if (title_id == 0 || new_title == initial_title) {
+        return true;
+    }
+    // Stored next to the custom artwork; the game file is never rewritten for a rename. The game's
+    // own name, or an empty field, removes the custom name.
+    const std::string custom_title = new_title == original_title ? std::string{} : new_title;
+    if (!QtCommon::Game::SaveCustomTitle(title_id, custom_title)) {
         if (show_error) {
-            QMessageBox::warning(
-                this, tr("Update NUP Metadata"),
-                tr("Failed to update NUP metadata:\n%1").arg(QString::fromStdString(error)));
+            QMessageBox::warning(this, tr("Game Name"), tr("The game name could not be saved."));
         }
         return false;
     }
-    initial_nup_title = new_title;
-    nup_icon_modified = false;
-    if (file) {
-        ui->display_size->setText(QtCommon::ReadableByteSize(file->GetSize()));
+    initial_title = new_title;
+    const std::string shown = custom_title.empty() ? original_title : custom_title;
+    if (shown.empty()) {
+        // No name to show in place: let the library read it again.
+        UISettings::values.is_game_list_reload_pending.exchange(true);
+    } else {
+        renamed_title = QString::fromStdString(shown);
     }
-    UISettings::values.is_game_list_reload_pending.exchange(true);
     return true;
 }
