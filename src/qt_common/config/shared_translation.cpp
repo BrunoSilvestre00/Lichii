@@ -407,8 +407,9 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "graphics shaders found in the game files.\nTakes effect after restarting the "
               "game."));
     INSERT(Settings, shader_warm_threads, tr("Shader precache threads:"),
-           tr("CPU threads the shader precache uses on the loading screen. 0 uses every CPU "
-              "thread.\nTakes effect at the next game start."));
+           tr("CPU threads the shader precache uses on the loading screen for the graphics "
+              "shaders found in the game files. 0 uses every CPU thread.\nTakes effect at the "
+              "next game start."));
     INSERT(Settings, enable_compute_pipelines, tr("Enable Compute Pipelines (Intel Vulkan Only)"),
            tr("Required by some games.\nThis setting only exists for Intel "
               "proprietary drivers and may crash if enabled.\nCompute pipelines are always enabled "

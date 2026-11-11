@@ -273,14 +273,14 @@ private:
         u64 cpu_bytes{};
     };
 
-    /// Shader precache before the game starts (precache_shaders), on every CPU thread unless
-    /// shader_warm_threads says otherwise: the cached
+    /// Shader precache before the game starts (precache_shaders), as shader jobs: the cached
     /// graphics pipelines this boot skipped (`jobs`; `precached` holds those built by earlier
     /// precaches) and the compute programs of the title's precache file (made from the game files,
     /// missing reads guessed) are built, then thrown away. They only fill the driver's shader
     /// cache, so a later build of the same pipeline finds the driver's work done. Reports progress
     /// through `callback` and returns when it is done, skipped from the loading screen or the load
-    /// is stopped. The graphics programs of warm-graphics.bin come last (PrecacheGraphicsWarm).
+    /// is stopped. The graphics programs of warm-graphics.bin come last (PrecacheGraphicsWarm),
+    /// on the shader_warm_threads threads.
     void PrecacheShaders(u64 title_id, std::vector<PrecacheJob> jobs,
                          std::unordered_set<u64> precached, std::stop_token stop_loading,
                          const VideoCore::DiskResourceLoadCallback& callback);
