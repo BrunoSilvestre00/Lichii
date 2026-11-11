@@ -49,19 +49,28 @@ std::optional<std::string> StoredServer(const std::filesystem::path& path) {
     return std::nullopt;
 }
 
-// The file name for a server's profile and certificate. Servers whose names map to the same key
-// ("foo:443" and "foo_443") keep separate files: a later one gets the key with a hash of its name.
+// The file name for a server's profile and certificate: the readable key and a hash of the exact
+// name, so servers whose names read alike ("foo:443", "foo_443") never share files. A profile
+// saved before under the readable key alone is still used if it was written for this server.
 std::string ServerFileKey(const std::string& server) {
     const std::string key = ProfileKey(server);
-    const auto stored = StoredServer(ProfilesDir() / (key + ".txt"));
-    if (!stored || *stored == server) {
-        return key;
-    }
     u64 hash = 14695981039346656037ULL; // FNV-1a
     for (const char ch : server) {
         hash = (hash ^ static_cast<u8>(ch)) * 1099511628211ULL;
     }
-    return fmt::format("{}-{:016x}", key, hash);
+    const std::string hashed = fmt::format("{}-{:016x}", key, hash);
+    std::error_code ec;
+    if (std::filesystem::exists(ProfilesDir() / (hashed + ".txt"), ec)) {
+        return hashed;
+    }
+    const auto legacy = ProfilesDir() / (key + ".txt");
+    if (std::filesystem::exists(legacy, ec)) {
+        const auto stored = StoredServer(legacy);
+        if (!stored || *stored == server) {
+            return key;
+        }
+    }
+    return hashed;
 }
 
 std::filesystem::path ProfilePath(const std::string& server) {
@@ -176,6 +185,11 @@ std::optional<Profile> LoadProfile(const std::string& server, bool create) {
         std::stringstream text;
         text << in.rdbuf();
         if (auto profile = ParseProfile(text.str())) {
+            if (!profile->server.empty() && profile->server != server) {
+                LOG_ERROR(Network, "Online: {} belongs to {}, not {}", ProfilePath(server).string(),
+                          profile->server, server);
+                return std::nullopt;
+            }
             profile->server = server;
             return profile;
         }

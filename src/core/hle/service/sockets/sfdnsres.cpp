@@ -114,11 +114,14 @@ static std::string NsdResolve(std::string host) {
 
 // Private-server redirect (see online_redirect.h, from Droplet): the redirected host names resolve
 // to the private server, and no other name resolves at all.
-static bool OnlineRedirectResolve(const std::string& host, const std::optional<std::string>& service,
-                                  std::vector<Network::AddrInfo>& out) {
-    if (!OnlineRedirect::IsRedirectedHost(host)) {
+// One Config for the whole lookup, so a server change meanwhile can't mix two servers' rules.
+static GetAddrInfoError OnlineRedirectResolve(const OnlineRedirect::Config& config,
+                                              const std::string& host,
+                                              const std::optional<std::string>& service,
+                                              std::vector<Network::AddrInfo>& out) {
+    if (!OnlineRedirect::IsRedirectedHost(config, host)) {
         LOG_WARNING(Network, "Online redirect: not resolving {}", host);
-        return false;
+        return GetAddrInfoError::AGAIN;
     }
     u16 port = 0;
     if (service && !service->empty()) {
@@ -132,11 +135,11 @@ static bool OnlineRedirectResolve(const std::string& host, const std::optional<s
             port = 80;
         } else {
             LOG_WARNING(Network, "Online redirect: unknown service {} for {}", *service, host);
-            return false;
+            return GetAddrInfoError::SERVICE;
         }
     }
     // The hints are not read, so both socket types are offered, as a normal lookup does.
-    const auto ip = OnlineRedirect::Get()->ip;
+    const auto ip = config.ip;
     for (const auto [type, protocol] : {std::pair{Network::Type::STREAM, Network::Protocol::TCP},
                                         std::pair{Network::Type::DGRAM, Network::Protocol::UDP}}) {
         out.push_back(Network::AddrInfo{
@@ -148,8 +151,8 @@ static bool OnlineRedirectResolve(const std::string& host, const std::optional<s
         });
     }
     LOG_INFO(Network, "Online redirect: {} -> {}", host,
-             Network::IPv4AddressToString(OnlineRedirect::Get()->ip));
-    return true;
+             Network::IPv4AddressToString(ip));
+    return GetAddrInfoError::SUCCESS;
 }
 
 static NetDbError GetAddrInfoErrorToNetDbError(GetAddrInfoError result) {
@@ -252,10 +255,11 @@ static std::pair<u32, GetAddrInfoError> GetHostByNameRequestImpl(HLERequestConte
     const std::string host = NsdResolve(Common::StringFromBuffer(host_buffer));
     // For now, ignore options, which are in input buffer 1 for GetHostByNameRequestWithOptions.
 
-    if (OnlineRedirect::Get()->enabled) {
+    if (const auto online = OnlineRedirect::Get(); online->enabled) {
         std::vector<Network::AddrInfo> redirected;
-        if (!OnlineRedirectResolve(host, std::nullopt, redirected)) {
-            return {0, GetAddrInfoError::AGAIN};
+        if (const auto error = OnlineRedirectResolve(*online, host, std::nullopt, redirected);
+            error != GetAddrInfoError::SUCCESS) {
+            return {0, error};
         }
         const std::vector<u8> data = SerializeAddrInfoAsHostEnt(redirected, host);
         ctx.WriteBuffer(data, 0);
@@ -392,10 +396,11 @@ static std::pair<u32, GetAddrInfoError> GetAddrInfoRequestImpl(HLERequestContext
 
     // Serialized hints are also passed in a buffer, but are ignored for now.
 
-    if (OnlineRedirect::Get()->enabled) {
+    if (const auto online = OnlineRedirect::Get(); online->enabled) {
         std::vector<Network::AddrInfo> redirected;
-        if (!OnlineRedirectResolve(host, service, redirected)) {
-            return {0, GetAddrInfoError::AGAIN};
+        if (const auto error = OnlineRedirectResolve(*online, host, service, redirected);
+            error != GetAddrInfoError::SUCCESS) {
+            return {0, error};
         }
         const std::vector<u8> data = SerializeAddrInfo(redirected, host);
         ctx.WriteBuffer(data, 0);

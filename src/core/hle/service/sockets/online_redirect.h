@@ -29,8 +29,9 @@
 // settings (Network: online_server, online_server_ca) or, overriding them, the environment:
 //   EDEN_NX2_ONLINE_SERVER=<ipv4>[:<port>]  resolve the redirected host names to <ipv4>, and send
 //       connections to <ipv4>:443 to <port> (an unprivileged port on the host). While it is set,
-//       no other host name resolves, and connections may only go to loopback, private (RFC 1918)
-//       and link-local addresses, so nothing reaches Nintendo or any other public server.
+//       no other host name resolves, and TCP connections may only go to loopback, private
+//       (RFC 1918) and link-local addresses. UDP may also go to public addresses (other players),
+//       so a game that knows a public address can still send datagrams there.
 //   EDEN_NX2_ONLINE_HOSTS=<suffix>,...  host names (and their subdomains) to redirect. The default
 //       is Nintendo's NPLN hosts, Pia's NAT check servers (nncs1/nncs2) and Pia's monitoring
 //       server (connection-quality reports, UDP 34343; g<id>.<env>.p.srv.nintendo.net).
@@ -251,18 +252,22 @@ inline std::shared_ptr<const Config> Get() {
     return config;
 }
 
-inline bool IsRedirectedHost(std::string_view host) {
+inline bool IsRedirectedHost(const Config& config, std::string_view host) {
     // A resolver may be handed a trailing dot (an absolute name).
     if (!host.empty() && host.back() == '.') {
         host.remove_suffix(1);
     }
-    for (const std::string& suffix : Get()->suffixes) {
+    for (const std::string& suffix : config.suffixes) {
         if (host == suffix || (host.size() > suffix.size() && host.ends_with(suffix) &&
                                host[host.size() - suffix.size() - 1] == '.')) {
             return true;
         }
     }
     return false;
+}
+
+inline bool IsRedirectedHost(std::string_view host) {
+    return IsRedirectedHost(*Get(), host);
 }
 
 // Destinations a game may connect or send to while the redirect is on.
@@ -272,7 +277,8 @@ inline bool IsRedirectedHost(std::string_view host) {
 // to it. Only name lookups are limited, to the redirected names resolving to the server.
 inline bool IsAllowedDestination(const std::array<u8, 4>& ip);
 inline bool IsAllowedPeerDestination(const std::array<u8, 4>& ip) {
-    const bool unicast = ip[0] != 0 && ip[0] != 127 && ip[0] < 224;
+    // Until the server's name has an address, no datagram leaves for the internet either.
+    const bool unicast = ip[0] != 0 && ip[0] != 127 && ip[0] < 224 && !Get()->lookup_failed;
     return unicast || IsAllowedDestination(ip);
 }
 
