@@ -1329,6 +1329,10 @@ int main(int argc, char** argv) {
         }
         if (format != "instructions" && format != "native-header")
             throw std::runtime_error("Invalid input format");
+        if (!override_out.empty() && std::filesystem::weakly_canonical(output) ==
+                                         std::filesystem::weakly_canonical(override_out)) {
+            throw std::runtime_error("--override-out must not name the output file");
+        }
         for (const auto& target : {output, override_out}) {
             if (target.empty())
                 continue;
