@@ -257,6 +257,9 @@ public:
     /// dispatch of the game's network is skipped, or its output pass replaced by a copy of the
     /// tonemapped image.
     bool BypassOotNetwork(u64 program_id, u64 native_key);
+    /// Ocarina of Time's photo mode: notes the image the anti-aliasing output pass writes (the
+    /// HUD's target) and returns true to drop the haze pass while photo mode hides it.
+    bool ProcessOcarinaPhotoPass(u64 program_id, u64 shader_hash);
     void TraceDlssContract(u64 native_key, bool warn_unvalidated = true);
 
     /// GPU thread split with macros on its front half (gpu_split.h, EDEN_NX2_SPLIT=2), called by

@@ -681,6 +681,7 @@ struct System::Impl {
     bool device_memory_released{};
     std::optional<AudioCore::AudioCore> audio_core;
     std::optional<Memory::CheatEngine> cheat_engine;
+    u64 application_main_base{};
     std::optional<Tools::Freezer> memory_freezer;
     std::optional<Tools::RenderdocAPI> renderdoc_api;
     std::optional<Tegra::GPU> gpu_core;
@@ -987,6 +988,14 @@ void System::SetFilesystem(FileSys::VirtualFilesystem vfs) {
 
 FileSys::VirtualFilesystem System::GetFilesystem() const {
     return impl->virtual_filesystem;
+}
+
+void System::SetApplicationMainBase(u64 base) {
+    impl->application_main_base = base;
+}
+
+u64 System::GetApplicationMainBase() const {
+    return impl->application_main_base;
 }
 
 void System::RegisterCheatList(const std::vector<Memory::CheatEntry>& list,
