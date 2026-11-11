@@ -2924,12 +2924,13 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
     // Graphics pipeline libraries. Left on the monolithic route: task and mesh
     // pipelines, transform feedback, a static rasterizer discard, pipelines without a fragment
     // shader (a fragment shader library needs at least one stage, VUID-06644), and stages whose
-    // texture or image counts do not fit the split rescaling bits.
+    // texture or image counts do not fit the split rescaling bits. A libraries_only build
+    // (warm-up) makes only the parts that have a shader, so a lone vertex program still warms.
     const bool use_libraries = [&] {
         if (!device.IsExtGraphicsPipelineLibrarySupported() || key.state.xfb_enabled != 0) {
             return false;
         }
-        if (key.unique_hashes[Maxwell::MaxShaderProgram - 1] == 0) {
+        if (key.unique_hashes[Maxwell::MaxShaderProgram - 1] == 0 && !libraries_only) {
             return false;
         }
         if (key.state.extended_dynamic_state_2 == 0 &&
