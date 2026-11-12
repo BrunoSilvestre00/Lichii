@@ -70,39 +70,6 @@ void PaintAddFolder(QPainter* painter, const QRect& rect, const QPalette& palett
     painter->drawLine(QPointF(center.x(), center.y() - plus), QPointF(center.x(), center.y() + plus));
 }
 
-/// Default art for a game without an icon: a gradient picked from the title and its initials. No
-/// console art, so it fits every style.
-void PaintNeutralArt(QPainter* painter, const QRect& rect, const QString& title,
-                     const QPalette& palette) {
-    const int hue = static_cast<int>(qHash(title) % 360);
-    const bool dark = LibraryStyleContext::IsDark(palette);
-    QLinearGradient gradient(rect.topLeft(), rect.bottomRight());
-    gradient.setColorAt(0.0, QColor::fromHsl(hue, 120, dark ? 92 : 150));
-    gradient.setColorAt(1.0, QColor::fromHsl((hue + 40) % 360, 130, dark ? 52 : 108));
-    painter->fillRect(rect, gradient);
-
-    QString initials;
-    for (const QString& word : title.split(QLatin1Char(' '), Qt::SkipEmptyParts)) {
-        if (word.at(0).isLetterOrNumber()) {
-            initials.append(word.at(0).toUpper());
-        }
-        if (initials.size() == 2) {
-            break;
-        }
-    }
-    if (initials.isEmpty()) {
-        initials = QStringLiteral("?");
-    }
-    QFont font = painter->font();
-    font.setBold(true);
-    font.setPixelSize(std::max(10, std::min(rect.width(), rect.height()) * 2 / 5));
-    painter->save();
-    painter->setFont(font);
-    painter->setPen(QColor(255, 255, 255, 225));
-    painter->drawText(rect, Qt::AlignCenter, initials);
-    painter->restore();
-}
-
 } // namespace
 
 GameInfo LibraryStyleContext::Info(const QModelIndex& index) {
@@ -189,8 +156,12 @@ QPixmap LibraryStyleContext::Cover(const QModelIndex& index, const QSize& size,
         }
     }
     if (art.isNull()) {
-        PaintNeutralArt(&painter, result.rect(), name.data(GameListItemPath::TitleRole).toString(),
-                        palette);
+        QString title = name.data(GameListItemPath::TitleRole).toString();
+        if (title.isEmpty()) {
+            title = QFileInfo(name.data(GameListItemPath::FullPathRole).toString())
+                        .completeBaseName();
+        }
+        PaintPlaceholderArt(&painter, result.rect(), title, palette);
         return result;
     }
     QSize scaled = art.size();
@@ -199,6 +170,37 @@ QPixmap LibraryStyleContext::Cover(const QModelIndex& index, const QSize& size,
                        scaled.width(), scaled.height());
     painter.drawPixmap(target, art);
     return result;
+}
+
+void LibraryStyleContext::PaintPlaceholderArt(QPainter* painter, const QRect& rect,
+                                              const QString& title, const QPalette& palette) {
+    const int hue = static_cast<int>(qHash(title) % 360);
+    const bool dark = IsDark(palette);
+    QLinearGradient gradient(rect.topLeft(), rect.bottomRight());
+    gradient.setColorAt(0.0, QColor::fromHsl(hue, 120, dark ? 92 : 150));
+    gradient.setColorAt(1.0, QColor::fromHsl((hue + 40) % 360, 130, dark ? 52 : 108));
+    painter->fillRect(rect, gradient);
+
+    QString initials;
+    for (const QString& word : title.split(QLatin1Char(' '), Qt::SkipEmptyParts)) {
+        if (word.at(0).isLetterOrNumber()) {
+            initials.append(word.at(0).toUpper());
+        }
+        if (initials.size() == 2) {
+            break;
+        }
+    }
+    if (initials.isEmpty()) {
+        initials = QStringLiteral("?");
+    }
+    QFont font = painter->font();
+    font.setBold(true);
+    font.setPixelSize(std::max(10, std::min(rect.width(), rect.height()) * 2 / 5));
+    painter->save();
+    painter->setFont(font);
+    painter->setPen(QColor(255, 255, 255, 225));
+    painter->drawText(rect, Qt::AlignCenter, initials);
+    painter->restore();
 }
 
 bool LibraryStyleContext::IsDark(const QPalette& palette) {

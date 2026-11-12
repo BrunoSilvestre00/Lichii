@@ -10,100 +10,23 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QRectF>
-#include <QSvgRenderer>
 #include <QStringList>
 #include <QWidget>
 #include "game_card.h"
 #include "qt_common/config/uisettings.h"
 #include "qt_common/game_list/game_list_p.h"
 #include "qt_common/game_list/model.h"
+#include "yuzu/game/styles/style_helpers.h"
 
 namespace {
 
-const QImage& Switch2LogoImage() {
-    static const QImage logo = [] {
-        QImage image(512, 512, QImage::Format_ARGB32_Premultiplied);
-        image.fill(Qt::transparent);
-        QSvgRenderer renderer(QStringLiteral(":/img/switch2_logo.svg"));
-        if (renderer.isValid()) {
-            QPainter image_painter(&image);
-            renderer.render(&image_painter, QRectF(image.rect()));
-        } else {
-            image = {};
-        }
-        return image;
-    }();
-    return logo;
-}
-
-void DrawSwitch2Placeholder(QPainter* painter, const QRect& bounds) {
-    const QImage& switch2_logo = Switch2LogoImage();
-    if (!switch2_logo.isNull()) {
-        painter->fillRect(bounds, QColor(230, 0, 18));
-        const int side = std::min(bounds.width(), bounds.height());
-        const QRectF logo_rect(bounds.center().x() - side / 2.0,
-                               bounds.center().y() - side / 2.0, side, side);
-        painter->drawImage(logo_rect, switch2_logo);
-        return;
+/// Title of a game row for its placeholder art: the metadata title, else the file name.
+QString PlaceholderTitle(const QModelIndex& index) {
+    const QString title = index.data(GameListItemPath::TitleRole).toString();
+    if (!title.isEmpty()) {
+        return title;
     }
-
-    const QRectF rect(bounds);
-    const QColor red(226, 0, 20);
-    painter->fillRect(rect, red);
-
-    const qreal width = rect.width();
-    const qreal height = rect.height();
-    const qreal left = rect.left();
-    const qreal top = rect.top();
-    const qreal body_width = width * 0.15;
-    const qreal body_height = height * 0.39;
-    const qreal body_top = top + height * 0.14;
-    const qreal inner = std::max(2.0, width * 0.012);
-
-    painter->setPen(Qt::NoPen);
-    painter->setBrush(Qt::white);
-    const QRectF left_controller(left + width * 0.09, body_top, body_width, body_height);
-    const QRectF right_controller(left + width * 0.28, body_top, body_width, body_height);
-    painter->drawRoundedRect(left_controller, width * 0.035, width * 0.035);
-    painter->drawRoundedRect(right_controller, width * 0.035, width * 0.035);
-
-    painter->setBrush(red);
-    painter->drawRoundedRect(left_controller.adjusted(inner, inner, -inner, -inner),
-                             width * 0.025, width * 0.025);
-    painter->drawRoundedRect(right_controller.adjusted(inner, inner, -inner, -inner),
-                             width * 0.025, width * 0.025);
-
-    painter->setBrush(Qt::white);
-    const qreal button_size = width * 0.035;
-    painter->drawEllipse(QRectF(left_controller.center().x() - button_size / 2,
-                                body_top + body_height * 0.30, button_size, button_size));
-    painter->drawEllipse(QRectF(right_controller.center().x() - button_size / 2,
-                                body_top + body_height * 0.58, button_size, button_size));
-
-    QFont number_font(QStringLiteral("Arial"));
-    number_font.setPixelSize(std::max(18, static_cast<int>(height * 0.48)));
-    number_font.setWeight(QFont::Black);
-    painter->setFont(number_font);
-    painter->drawText(QRectF(left + width * 0.47, top + height * 0.04, width * 0.45,
-                             height * 0.53),
-                      Qt::AlignCenter, QStringLiteral("2"));
-
-    QFont brand_font(QStringLiteral("Arial"));
-    brand_font.setPixelSize(std::max(8, static_cast<int>(height * 0.085)));
-    brand_font.setWeight(QFont::DemiBold);
-    brand_font.setLetterSpacing(QFont::AbsoluteSpacing, std::max(1.0, width * 0.008));
-    painter->setFont(brand_font);
-    painter->drawText(QRectF(left + width * 0.08, top + height * 0.62, width * 0.84,
-                             height * 0.14),
-                      Qt::AlignCenter, QStringLiteral("NINTENDO"));
-
-    QFont switch_font(QStringLiteral("Arial"));
-    switch_font.setPixelSize(std::max(12, static_cast<int>(height * 0.16)));
-    switch_font.setWeight(QFont::Bold);
-    painter->setFont(switch_font);
-    painter->drawText(QRectF(left + width * 0.08, top + height * 0.74, width * 0.84,
-                             height * 0.21),
-                      Qt::AlignCenter, QStringLiteral("SWITCH"));
+    return QFileInfo(index.data(GameListItemPath::FullPathRole).toString()).completeBaseName();
 }
 
 void DrawAddFolderArtwork(QPainter* painter, const QRect& bounds, const QColor& accent, bool dark) {
@@ -204,12 +127,13 @@ bool IsGameDirectory(GameListItemType type) {
 
 }
 
-QPixmap GameListFallbackIcon(int size) {
+QPixmap GameListFallbackIcon(int size, const QString& title, const QPalette& palette) {
     QPixmap pixmap(size, size);
     pixmap.fill(Qt::transparent);
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing, true);
-    DrawSwitch2Placeholder(&painter, pixmap.rect());
+    LibraryStyles::LibraryStyleContext::PaintPlaceholderArt(&painter, pixmap.rect(), title,
+                                                            palette);
     return pixmap;
 }
 
@@ -296,21 +220,21 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
         const QColor accent = selected ? palette.highlightedText().color()
                                        : palette.highlight().color();
         DrawGameFolderArtwork(painter, artworkRect, accent, dark);
-    } else if (has_icon) {
-        // Fall back to the small icon when no card artwork is available, so the card is never
-        // left blank for a game that does have an icon.
-        const QPixmap artwork =
-            icon_pixmap.isNull() ? index.data(Qt::DecorationRole).value<QPixmap>() : icon_pixmap;
-        if (!artwork.isNull()) {
-            QSize scaled = artwork.size();
-            scaled.scale(artworkRect.size(), Qt::KeepAspectRatioByExpanding);
-            const QRect imageRect(artworkRect.center().x() - scaled.width() / 2,
-                                  artworkRect.center().y() - scaled.height() / 2, scaled.width(),
-                                  scaled.height());
-            painter->drawPixmap(imageRect, artwork);
-        }
-    } else if (!has_icon) {
-        DrawSwitch2Placeholder(painter, artworkRect);
+    } else if (const QPixmap artwork =
+                   // Fall back to the small icon when no card artwork is available.
+                   !has_icon ? QPixmap{}
+                   : icon_pixmap.isNull() ? index.data(Qt::DecorationRole).value<QPixmap>()
+                                          : icon_pixmap;
+               !artwork.isNull()) {
+        QSize scaled = artwork.size();
+        scaled.scale(artworkRect.size(), Qt::KeepAspectRatioByExpanding);
+        const QRect imageRect(artworkRect.center().x() - scaled.width() / 2,
+                              artworkRect.center().y() - scaled.height() / 2, scaled.width(),
+                              scaled.height());
+        painter->drawPixmap(imageRect, artwork);
+    } else {
+        LibraryStyles::LibraryStyleContext::PaintPlaceholderArt(painter, artworkRect,
+                                                                PlaceholderTitle(index), palette);
     }
     painter->restore();
 

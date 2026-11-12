@@ -3,10 +3,13 @@
 
 #pragma once
 
+#include <QPalette>
 #include <QPixmap>
+#include <QString>
 #include <QStyledItemDelegate>
 
-QPixmap GameListFallbackIcon(int size);
+/// Art for a game without an icon: a gradient picked from the title, with its initials.
+QPixmap GameListFallbackIcon(int size, const QString& title, const QPalette& palette);
 
 /**
  * A stylized "card"-like delegate for the game grid view.

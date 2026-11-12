@@ -67,6 +67,10 @@ public:
     /// Cover art at `size` (cropped to fill, aspect kept). Games without art get a neutral
     /// gradient with the title initials; the "Add games folder" row gets a folder with a plus.
     static QPixmap Cover(const QModelIndex& index, const QSize& size, const QPalette& palette);
+    /// The art of a game without an icon: a gradient picked from the title, with its initials.
+    /// No console art, so it fits every style and the Modern grid.
+    static void PaintPlaceholderArt(QPainter* painter, const QRect& rect, const QString& title,
+                                    const QPalette& palette);
 
     static bool IsDark(const QPalette& palette);
     /// Selection colour of the theme.
