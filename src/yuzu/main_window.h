@@ -301,6 +301,8 @@ private:
     void LoadAmiibo(const QString& filename);
 
     bool SelectAndSetCurrentUser(const Core::Frontend::ProfileSelectParameters& parameters);
+    bool ConfirmLowRamBoot(const QString& filename,
+                           const Service::AM::FrontendAppletParameters& params);
 
     /**
      * Stores the filename in the recently loaded files list.
@@ -471,6 +473,7 @@ private slots:
 #ifdef ENABLE_UPDATE_CHECKER
     void OnEmulatorUpdateAvailable();
 #endif
+    void KeepNextendoSessionAlive();
 
 private:
     void OnGameListNxTool(const std::string& game_path, void (NxTools::*tool)(const std::string&));
@@ -551,6 +554,8 @@ private:
     bool deferred_library_style_prompt = false;
     QTimer shutdown_timer;
     QTimer emu_terminate_timer;
+    QTimer nextendo_session_timer;
+    QFutureWatcher<bool> nextendo_session_watcher;
     PerformanceOverlay* perf_overlay = nullptr;
 #ifdef HAS_RESHADE
     ConfigurePostProcessing* post_processing_dialog = nullptr;
