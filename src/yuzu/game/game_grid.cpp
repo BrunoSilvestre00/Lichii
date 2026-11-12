@@ -96,11 +96,12 @@ void GameGrid::UpdateIconSize() {
 
     const int view_width = viewport()->width();
 
-    const double spacing = 0.01;
     const int min_item_width = display_icon_size + widthMargin;
 
-    int columns = std::max(1, (view_width - 16) / min_item_width);
-    int stretched_width = ((view_width) - (spacing * (columns - 1))) / columns;
+    // Leave the same 16 pixels free that the column count assumes: cells filling the viewport
+    // to the pixel make the list view wrap one column early.
+    const int columns = std::max(1, (view_width - 16) / min_item_width);
+    const int stretched_width = (view_width - 16) / columns;
 
     QSize grid_size(stretched_width, display_icon_size + heightMargin);
     if (gridSize() != grid_size) {
