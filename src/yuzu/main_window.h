@@ -447,6 +447,13 @@ private slots:
     void CheckIconSize();
     void ToggleShowGameName();
 
+    /// Shows the library style `id` (yuzu/game/styles), or the Modern grid for an empty id.
+    void SetLibraryLayout(const std::string& id);
+    void CycleLibraryStyle(int step);
+    void ToggleShowLibraryInfo();
+    void UpdateLibraryStyleActions();
+    void RetranslateLibraryStyleActions();
+
     void LaunchFirmwareApplet(u64 program_id, std::optional<Service::NFP::CabinetMode> mode);
     void OnCreateHomeMenuDesktopShortcut();
     void OnCreateHomeMenuApplicationMenuShortcut();
@@ -617,6 +624,11 @@ private:
     QString startup_icon_theme;
 
     QActionGroup* game_size_actions;
+
+    QList<QAction*> library_style_actions;
+    QAction* action_next_library_style = nullptr;
+    QAction* action_previous_library_style = nullptr;
+    QAction* action_show_library_info = nullptr;
 
     // Debugger panes
     ControllerDialog* controller_dialog = nullptr;

@@ -76,6 +76,12 @@ void ControllerNavigation::ControllerUpdateButton() {
         TriggerButton(Settings::NativeButton::DLeft, Qt::Key_Left);
         TriggerButton(Settings::NativeButton::DRight, Qt::Key_Right);
         TriggerButton(Settings::NativeButton::DUp, Qt::Key_Up);
+        if (library_buttons) {
+            TriggerButton(Settings::NativeButton::X, Qt::Key_X);
+            TriggerButton(Settings::NativeButton::Y, Qt::Key_Y);
+            TriggerButton(Settings::NativeButton::L, Qt::Key_BracketLeft);
+            TriggerButton(Settings::NativeButton::R, Qt::Key_BracketRight);
+        }
         break;
     case Core::HID::NpadStyleIndex::JoyconLeft:
         TriggerButton(Settings::NativeButton::DDown, Qt::Key_Enter);

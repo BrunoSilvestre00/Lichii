@@ -27,6 +27,11 @@ public:
     /// Disables events from the emulated controller
     void UnloadController();
 
+    /// Also report X, Y, L and R (as the X, Y, [ and ] keys), for the game library styles.
+    void SetLibraryButtonsEnabled(bool enabled) {
+        library_buttons = enabled;
+    }
+
 signals:
     void TriggerKeyboardEvent(Qt::Key key);
 
@@ -44,6 +49,7 @@ private:
     int player1_callback_key{};
     int handheld_callback_key{};
     bool is_controller_set{};
+    bool library_buttons{};
     mutable std::mutex mutex;
     Core::HID::EmulatedController* player1_controller;
     Core::HID::EmulatedController* handheld_controller;

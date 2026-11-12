@@ -44,6 +44,7 @@
 #include "set_play_time_dialog.h"
 #include "util/util.h"
 #include "yuzu/game/game_list.h"
+#include "yuzu/game/styles/library_style_registry.h"
 #include "yuzu/nup_dialogs.h"
 #include "yuzu/recommended_settings_dialog.h"
 #include "yuzu/shader_warm_dialog.h"
@@ -1620,6 +1621,11 @@ void MainWindow::ConnectWidgetEvents() {
     });
     connect(game_list, &GameList::BootGame, this, &MainWindow::BootGameFromList);
     connect(game_list, &GameList::GameChosen, this, &MainWindow::OnGameListLoadFile);
+    connect(game_list, &GameList::ToggleNamesRequested, this, &MainWindow::ToggleShowGameName);
+    connect(game_list, &GameList::ToggleInfoRequested, this, &MainWindow::ToggleShowLibraryInfo);
+    connect(game_list, &GameList::CycleStyleRequested, this, &MainWindow::CycleLibraryStyle);
+    connect(game_list, &GameList::StyleOptionChanged, this,
+            [this](const QString& label) { statusBar()->showMessage(label, 2000); });
     connect(game_list, &GameList::OpenDirectory, this, &MainWindow::OnGameListOpenDirectory);
     connect(game_list, &GameList::OpenFolderRequested, this, &MainWindow::OnGameListOpenFolder);
     connect(game_list, &GameList::OpenTransferableShaderCacheRequested, this,
@@ -1736,6 +1742,33 @@ void MainWindow::ConnectMenuEvents() {
     connect_menu(ui->action_Grid_View, &MainWindow::SetGridView);
     connect_menu(ui->action_Tree_View, &MainWindow::SetTreeView);
     connect_menu(ui->action_Carousel_View, &MainWindow::SetCarouselView);
+
+    // Library styles: one entry per registered style under View > Style, LB / RB or Ctrl+[ and
+    // Ctrl+] to cycle through them, and the shared Info panel toggle next to Show Game Name.
+    ui->menu_Game_List_Mode->addSeparator();
+    for (const auto& style : LibraryStyles::All()) {
+        QAction* action = ui->menu_Game_List_Mode->addAction(LibraryStyles::DisplayName(style));
+        action->setCheckable(true);
+        action->setData(QString::fromUtf8(style.id));
+        const std::string id = style.id;
+        connect(action, &QAction::triggered, this, [this, id] { SetLibraryLayout(id); });
+        library_style_actions.append(action);
+    }
+    ui->menu_Game_List_Mode->addSeparator();
+    action_previous_library_style = ui->menu_Game_List_Mode->addAction(QString{});
+    action_previous_library_style->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_BracketLeft));
+    connect(action_previous_library_style, &QAction::triggered, this,
+            [this] { CycleLibraryStyle(-1); });
+    action_next_library_style = ui->menu_Game_List_Mode->addAction(QString{});
+    action_next_library_style->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_BracketRight));
+    connect(action_next_library_style, &QAction::triggered, this,
+            [this] { CycleLibraryStyle(1); });
+    action_show_library_info = ui->menu_View->addAction(QString{});
+    action_show_library_info->setCheckable(true);
+    action_show_library_info->setChecked(UISettings::values.show_library_info.GetValue());
+    connect(action_show_library_info, &QAction::triggered, this,
+            &MainWindow::ToggleShowLibraryInfo);
+    RetranslateLibraryStyleActions();
 
     game_size_actions = new QActionGroup(this);
     game_size_actions->setExclusive(true);
@@ -3960,18 +3993,71 @@ void MainWindow::SetGameListMode(Settings::GameListMode mode, bool update_librar
 
     CheckIconSize();
     game_list->ResetViewMode();
+    UpdateLibraryStyleActions();
 }
 
 void MainWindow::SetGridView() {
+    UISettings::values.library_layout = std::string{};
     SetGameListMode(Settings::GameListMode::GridView);
 }
 
 void MainWindow::SetTreeView() {
+    UISettings::values.library_layout = std::string{};
     SetGameListMode(Settings::GameListMode::TreeView);
 }
 
 void MainWindow::SetCarouselView() {
+    UISettings::values.library_layout = std::string{};
     SetGameListMode(Settings::GameListMode::CarouselView);
+}
+
+void MainWindow::SetLibraryLayout(const std::string& id) {
+    // The styles belong to the Modern library: they replace its grid.
+    UISettings::values.library_layout = LibraryStyles::Find(id) != nullptr ? id : std::string{};
+    SetGameListMode(Settings::GameListMode::GridView);
+}
+
+void MainWindow::CycleLibraryStyle(int step) {
+    if (emulation_running) {
+        return;
+    }
+    const auto* active = LibraryStyles::Active();
+    const std::string next = LibraryStyles::Cycle(active != nullptr ? active->id : "", step);
+    SetLibraryLayout(next);
+    const auto* shown = LibraryStyles::Find(next);
+    statusBar()->showMessage(shown != nullptr ? LibraryStyles::DisplayName(*shown)
+                                              : ui->action_Grid_View->text().remove(QLatin1Char('&')),
+                             2000);
+}
+
+void MainWindow::ToggleShowLibraryInfo() {
+    auto& setting = UISettings::values.show_library_info;
+    setting.SetValue(!setting.GetValue());
+    action_show_library_info->setChecked(setting.GetValue());
+    game_list->UpdateStyleToggles();
+}
+
+void MainWindow::UpdateLibraryStyleActions() {
+    const auto* active = LibraryStyles::Active();
+    if (active != nullptr) {
+        ui->action_Grid_View->setChecked(false);
+    }
+    for (QAction* action : std::as_const(library_style_actions)) {
+        action->setChecked(active != nullptr &&
+                           action->data().toString() == QString::fromUtf8(active->id));
+    }
+}
+
+void MainWindow::RetranslateLibraryStyleActions() {
+    const auto& styles = LibraryStyles::All();
+    for (int i = 0; i < library_style_actions.size() && i < static_cast<int>(styles.size()); ++i) {
+        library_style_actions[i]->setText(LibraryStyles::DisplayName(styles[i]));
+    }
+    if (action_previous_library_style != nullptr) {
+        action_previous_library_style->setText(tr("Previous Style"));
+        action_next_library_style->setText(tr("Next Style"));
+        action_show_library_info->setText(tr("Show Info Panel"));
+    }
 }
 
 void MainWindow::CheckIconSize() {
@@ -4005,12 +4091,16 @@ void MainWindow::ToggleShowGameName() {
     CheckIconSize();
 
     game_list->UpdateIconSizes();
-    game_list->RefreshGameDirectory();
+    // The styles repaint from UpdateIconSizes; only the item views need the list rebuilt.
+    if (!game_list->IsStyleActive()) {
+        game_list->RefreshGameDirectory();
+    }
 }
 
 void MainWindow::OnConfigure() {
     const auto old_theme = UISettings::values.theme;
     const auto old_library_style = UISettings::values.game_library_style.GetValue();
+    const auto old_library_layout = UISettings::values.library_layout.GetValue();
     const bool old_discord_presence = UISettings::values.enable_discord_presence.GetValue();
     const auto old_language_index = Settings::values.language_index.GetValue();
     const bool old_gamemode = UISettings::values.enable_gamemode.GetValue();
@@ -4072,7 +4162,8 @@ void MainWindow::OnConfigure() {
         SetDefaultUIGeometry();
         RestoreUIState();
     }
-    if (UISettings::values.game_library_style.GetValue() != old_library_style || reset_requested) {
+    if (UISettings::values.game_library_style.GetValue() != old_library_style ||
+        UISettings::values.library_layout.GetValue() != old_library_layout || reset_requested) {
         // Defaults return to the first-run state, so the library style chooser asks again.
         UISettings::values.has_selected_game_library_style = !reset_requested;
         SetGameListMode(static_cast<UISettings::GameLibraryStyle>(
@@ -6199,6 +6290,7 @@ void MainWindow::OnLanguageChanged(const QString& locale) {
     }
 
     ui->retranslateUi(this);
+    RetranslateLibraryStyleActions();
     multiplayer_state->retranslateUi();
     UpdateWindowTitle();
     // The status bar's buttons are named in code, so retranslateUi leaves them as they were.

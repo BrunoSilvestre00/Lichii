@@ -231,6 +231,11 @@ struct Values {
                                                   "has_selected_game_library_style",
                                                   Category::UiGameList};
     Setting<bool> show_game_name{linkage, true, "show_game_name", Category::UiGameList};
+    /// Id of the library style (yuzu/game/styles) shown in place of the Modern grid; empty keeps
+    /// the Modern grid. Only used while game_list_mode is the grid view.
+    Setting<std::string> library_layout{linkage, {}, "library_layout", Category::UiGameList};
+    /// Info panel of the library styles (play time, update version).
+    Setting<bool> show_library_info{linkage, true, "show_library_info", Category::UiGameList};
 
     std::atomic_bool is_game_list_reload_pending{false};
     Setting<bool> cache_game_list{linkage, true, "cache_game_list", Category::UiGameList};

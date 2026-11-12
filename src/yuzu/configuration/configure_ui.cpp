@@ -27,6 +27,7 @@
 #include "core/core.h"
 #include "core/frontend/framebuffer_layout.h"
 #include "ui_configure_ui.h"
+#include "yuzu/game/styles/library_style_registry.h"
 
 #include "qt_common/config/uisettings.h"
 #include "qt_common/qt_compat.h"
@@ -113,6 +114,11 @@ ConfigureUi::ConfigureUi(Core::System& system_, QWidget* parent)
                                              static_cast<u8>(UISettings::GameLibraryStyle::Modern));
     ui->game_library_style_combobox->addItem(tr("Legacy Style"),
                                              static_cast<u8>(UISettings::GameLibraryStyle::Classic));
+    // The library styles replace the Modern grid; their item data is the style id (a string).
+    for (const auto& style : LibraryStyles::All()) {
+        ui->game_library_style_combobox->addItem(LibraryStyles::DisplayName(style),
+                                                 QString::fromUtf8(style.id));
+    }
 
     InitializeIconSizeComboBox();
     InitializeRowComboBoxes();
@@ -123,9 +129,10 @@ ConfigureUi::ConfigureUi(Core::System& system_, QWidget* parent)
 
     connect(ui->game_library_style_combobox, QOverload<int>::of(&QComboBox::activated), this,
             [this](int index) {
+                const QVariant data = ui->game_library_style_combobox->itemData(index);
                 emit GameLibraryStyleChanged(
-                    ui->game_library_style_combobox->itemData(index).toUInt() ==
-                    static_cast<u8>(UISettings::GameLibraryStyle::Modern));
+                    data.typeId() == QMetaType::QString ||
+                    data.toUInt() == static_cast<u8>(UISettings::GameLibraryStyle::Modern));
             });
 
     // Force game list reload if any of the relevant settings are changed.
@@ -172,8 +179,15 @@ ConfigureUi::~ConfigureUi() = default;
 void ConfigureUi::ApplyConfiguration() {
     UISettings::values.theme =
         ui->theme_combobox->itemData(ui->theme_combobox->currentIndex()).toString().toStdString();
-    UISettings::values.game_library_style =
-        static_cast<u8>(ui->game_library_style_combobox->currentData().toUInt());
+    const QVariant library_style = ui->game_library_style_combobox->currentData();
+    if (library_style.typeId() == QMetaType::QString) {
+        UISettings::values.game_library_style =
+            static_cast<u8>(UISettings::GameLibraryStyle::Modern);
+        UISettings::values.library_layout = library_style.toString().toStdString();
+    } else {
+        UISettings::values.game_library_style = static_cast<u8>(library_style.toUInt());
+        UISettings::values.library_layout = std::string{};
+    }
     UISettings::values.show_add_ons = ui->show_add_ons->isChecked();
     UISettings::values.show_size = ui->show_size->isChecked();
     UISettings::values.show_types = ui->show_types->isChecked();
@@ -200,8 +214,15 @@ void ConfigureUi::RequestGameListUpdate() {
 void ConfigureUi::SetConfiguration() {
     ui->theme_combobox->setCurrentIndex(
         ui->theme_combobox->findData(QString::fromStdString(UISettings::values.theme)));
-    ui->game_library_style_combobox->setCurrentIndex(ui->game_library_style_combobox->findData(
-        UISettings::values.game_library_style.GetValue()));
+    const int layout_index = ui->game_library_style_combobox->findData(
+        QString::fromStdString(UISettings::values.library_layout.GetValue()));
+    const bool modern = UISettings::values.game_library_style.GetValue() ==
+                        static_cast<u8>(UISettings::GameLibraryStyle::Modern);
+    ui->game_library_style_combobox->setCurrentIndex(
+        modern && layout_index >= 0
+            ? layout_index
+            : ui->game_library_style_combobox->findData(
+                  UISettings::values.game_library_style.GetValue()));
     const QString language = QString::fromStdString(UISettings::values.language.GetValue());
     if (ui->language_combobox->findData(language) == -1) {
         // A language the list doesn't have, listed so that the setting stays until another one is
