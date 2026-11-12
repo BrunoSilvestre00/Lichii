@@ -1113,9 +1113,9 @@ QPixmap BoxShelfStyle::SpinePixmap(const QModelIndex& index, const Metrics& m, b
     p.save();
     p.translate(w / 2.0, top);
     p.rotate(90.0);
-    const QString elided =
-        QFontMetrics(f).elidedText(title, Qt::ElideRight, static_cast<int>(avail));
-    p.drawText(QRectF(0, -w / 2.0, avail, w), Qt::AlignVCenter | Qt::AlignLeft, elided);
+    // One line down the spine (S4); a name that only just overflows may use the 6 px margin.
+    LibraryStyleContext::PaintName(&p, QRectF(0, -w / 2.0, avail, w).toAlignedRect(), title,
+                                   p.pen().color(), f, Qt::AlignVCenter | Qt::AlignLeft, 1, 6);
     p.restore();
 
     p.setClipping(false);
@@ -1144,10 +1144,19 @@ void BoxShelfStyle::DrawBubble(QPainter& p, const Metrics& m, const QRectF& base
     const QColor accent = LibraryStyleContext::Accent(palette());
     const double y = base.bottom() + 4.0;
     const double max_w = std::max(120.0, std::min(m.cell_w * 1.4, width() - 16.0));
-    const QRect text_bounds = fm.boundingRect(QRect(0, 0, static_cast<int>(max_w - 24.0), 1000),
-                                              Qt::AlignCenter | Qt::TextWordWrap, title);
-    const double text_h = std::min<double>(text_bounds.height(), fm.lineSpacing() * 2);
-    const double bw = std::max(80.0, text_bounds.width() + 24.0);
+    // Sized to the S4 lines of the name; a gliding name (Scroll Long Names) takes the full width.
+    const int text_max = static_cast<int>(max_w - 24.0);
+    const int title_lines = LibraryStyleContext::TitleLines(2);
+    const QStringList lines = LibraryStyleContext::NameLines(title, f, text_max, title_lines, 6);
+    int text_w = 0;
+    for (const QString& line : lines) {
+        text_w = std::max(text_w, fm.horizontalAdvance(line));
+    }
+    if (title_lines == 1 && fm.horizontalAdvance(title) > text_max + 6) {
+        text_w = text_max;
+    }
+    const double text_h = fm.lineSpacing() * std::max<qsizetype>(1, lines.size());
+    const double bw = std::max(80.0, std::min(text_w, text_max) + 24.0);
     double x = base.center().x() - bw / 2.0;
     x = std::clamp(x, 4.0, std::max(4.0, width() - bw - 4.0));
     const QRectF box(x, y, bw, text_h + 14.0);
@@ -1159,10 +1168,10 @@ void BoxShelfStyle::DrawBubble(QPainter& p, const Metrics& m, const QRectF& base
     p.setBrush(dark ? QColor(34, 32, 34, 236) : QColor(255, 253, 248, 240));
     p.setPen(QPen(accent, 2.0));
     p.drawRoundedRect(box, 11, 11);
-    p.setFont(f);
-    p.setPen(dark ? QColor(240, 238, 234) : QColor(40, 34, 28));
     p.setClipRect(box.adjusted(6, 4, -6, -4));
-    p.drawText(box.adjusted(12, 7, -12, -7), Qt::AlignCenter | Qt::TextWordWrap, title);
+    LibraryStyleContext::PaintTitle(&p, box.adjusted(12, 7, -12, -7).toAlignedRect(), title,
+                                    dark ? QColor(240, 238, 234) : QColor(40, 34, 28), f,
+                                    Qt::AlignCenter, title_lines, this, 6);
     p.restore();
 }
 
@@ -1177,14 +1186,11 @@ void BoxShelfStyle::DrawPlainTitle(QPainter& p, const Metrics& m, const QRectF& 
     const QFontMetrics fm(f);
     const double w = std::min(m.cell_w * 0.98, m.case_w * 1.12);
     const QRectF box(base.center().x() - w / 2.0, base.bottom() + 3.0, w, m.bubble_h - 4.0);
-    const QString text = fm.elidedText(title, Qt::ElideRight, static_cast<int>(w));
-    p.save();
-    p.setFont(f);
-    p.setPen(QColor(20, 10, 2, 170));
-    p.drawText(box.translated(0, 1), Qt::AlignHCenter | Qt::AlignTop, text);
-    p.setPen(QColor(255, 244, 222));
-    p.drawText(box, Qt::AlignHCenter | Qt::AlignTop, text);
-    p.restore();
+    // One line (S4), with a dark copy one pixel lower to lift it off the wood.
+    LibraryStyleContext::PaintName(&p, box.translated(0, 1).toAlignedRect(), title,
+                                   QColor(20, 10, 2, 170), f, Qt::AlignHCenter | Qt::AlignTop, 1);
+    LibraryStyleContext::PaintName(&p, box.toAlignedRect(), title, QColor(255, 244, 222), f,
+                                   Qt::AlignHCenter | Qt::AlignTop, 1);
 }
 
 void BoxShelfStyle::DrawItem(QPainter& p, const Metrics& m, int pos, bool selected, bool dark) {
@@ -1405,15 +1411,23 @@ void BoxShelfStyle::DrawNameBubble(QPainter& p, const Metrics& m, const QRectF& 
     // Up to 190 px, or the case width + 20 px when every name shows, so neighbours never overlap.
     const double max_w =
         std::min(m_show_names ? m.case_w + 20.0 : 190.0 * bs, m.cell_w - 8.0);
-    const QRect text_box =
-        fm.boundingRect(QRect(0, 0, static_cast<int>(std::max(20.0, max_w - 2 * pad_x)), 1000),
-                        Qt::AlignHCenter | Qt::TextWordWrap, title);
-    const double text_h = std::min<double>(text_box.height(), fm.lineSpacing() * 2);
-    const double bw = text_box.width() + 2 * pad_x;
+    // Sized to the S4 lines of the name; a gliding name (Scroll Long Names) takes the full width.
+    const int text_max = static_cast<int>(std::max(20.0, max_w - 2 * pad_x));
+    const int title_lines = LibraryStyleContext::TitleLines(2);
+    const QStringList lines =
+        LibraryStyleContext::NameLines(title, f, text_max, title_lines, static_cast<int>(pad_x));
+    int text_w = 0;
+    for (const QString& line : lines) {
+        text_w = std::max(text_w, fm.horizontalAdvance(line));
+    }
+    if (selected && title_lines == 1 && fm.horizontalAdvance(title) > text_max + pad_x) {
+        text_w = text_max;
+    }
+    const double text_h = fm.lineSpacing() * std::max<qsizetype>(1, lines.size());
+    const double bw = std::min(text_w, text_max) + 2 * pad_x;
     const double bh = text_h + 2 * pad_y;
     const double arrow = 7.0 * bs;
     // Bubble 22 px below the case (scaled), its arrow reaching up towards it.
-    Q_UNUSED(selected);
     const double top = base.bottom() + 22.0 * bs - arrow;
     double left = base.center().x() - bw / 2;
     left = std::clamp(left, 6.0, std::max(6.0, width() - 6.0 - bw));
@@ -1433,9 +1447,12 @@ void BoxShelfStyle::DrawNameBubble(QPainter& p, const Metrics& m, const QRectF& 
     p.drawPolygon(QPolygonF{{cx - arrow, rect.top() + 0.75},
                             {cx, rect.top() - arrow},
                             {cx + arrow, rect.top() + 0.75}});
-    // Two lines at most, cut with "...", like the cartridge bubbles.
-    LibraryStyleContext::PaintName(&p, rect.adjusted(pad_x, pad_y, -pad_x, -pad_y).toAlignedRect(),
-                                   title, QColor(0x16, 0x14, 0x1c), f, Qt::AlignCenter, 2);
+    // Two lines at most, cut with "...", like the cartridge bubbles; the selected case's long
+    // name glides with Scroll Long Names.
+    LibraryStyleContext::PaintTitle(&p, rect.adjusted(pad_x, pad_y, -pad_x, -pad_y).toAlignedRect(),
+                                    title, QColor(0x16, 0x14, 0x1c), f, Qt::AlignCenter,
+                                    title_lines, selected ? this : nullptr,
+                                    static_cast<int>(pad_x));
     p.restore();
 }
 
