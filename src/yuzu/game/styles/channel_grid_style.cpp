@@ -8,6 +8,7 @@
 
 #include <QAbstractItemModel>
 #include <QColor>
+#include <QContextMenuEvent>
 #include <QDate>
 #include <QFont>
 #include <QFontMetrics>
@@ -22,6 +23,7 @@
 #include <QRadialGradient>
 #include <QResizeEvent>
 #include <QStringList>
+#include <QTimer>
 #include <QTime>
 #include <QWheelEvent>
 
@@ -46,6 +48,14 @@ int ItemType(const QModelIndex& index) {
 
 bool IsAddFolder(const QModelIndex& index) {
     return ItemType(index) == static_cast<int>(GameListItemType::AddDir);
+}
+
+bool IsFolder(const QModelIndex& index) {
+    const int type = ItemType(index);
+    return type == static_cast<int>(GameListItemType::CustomDir) ||
+           type == static_cast<int>(GameListItemType::SdmcDir) ||
+           type == static_cast<int>(GameListItemType::UserNandDir) ||
+           type == static_cast<int>(GameListItemType::SysNandDir);
 }
 
 bool IsGame(const QModelIndex& index) {
@@ -73,9 +83,14 @@ QString VersionOf(const QModelIndex& index) {
 }
 
 QString PlayedOf(const QModelIndex& index) {
-    const qulonglong seconds = index.sibling(index.row(), GameListModel::COLUMN_PLAY_TIME)
-                                   .data(GameListItemPlayTime::PlayTimeRole)
-                                   .toULongLong();
+    const QModelIndex cell = index.sibling(index.row(), GameListModel::COLUMN_PLAY_TIME);
+    if (!cell.isValid()) {
+        // The model passed in has no play time column: the tooltip carries the readable text.
+        const QString line = index.data(Qt::ToolTipRole).toString().section(QLatin1Char('
+'), 0, 0);
+        return line.isEmpty() ? QObject::tr("Never played") : line;
+    }
+    const qulonglong seconds = cell.data(GameListItemPlayTime::PlayTimeRole).toULongLong();
     if (seconds == 0) {
         return QObject::tr("Never played");
     }
@@ -86,7 +101,6 @@ QString PlayedOf(const QModelIndex& index) {
 
 ChannelGridStyle::ChannelGridStyle(QWidget* parent) : LibraryStyleView(parent) {
     setFocusPolicy(Qt::StrongFocus);
-    setContextMenuPolicy(Qt::NoContextMenu);
     clock_timer.setSingleShot(true);
     connect(&clock_timer, &QTimer::timeout, this, [this] {
         update();
@@ -106,44 +120,91 @@ void ChannelGridStyle::ScheduleClock() {
 
 void ChannelGridStyle::SetModel(QAbstractItemModel* new_model) {
     if (model) {
-        disconnect(model, nullptr, this, nullptr);
+        model->disconnect(this);
     }
     model = new_model;
     current = QPersistentModelIndex{};
+    entries.clear();
     scroll = 0;
     cover_cache.clear();
     if (model) {
-        connect(model, &QAbstractItemModel::modelReset, this, &ChannelGridStyle::OnModelChanged);
-        connect(model, &QAbstractItemModel::layoutChanged, this, &ChannelGridStyle::OnModelChanged);
-        connect(model, &QAbstractItemModel::rowsInserted, this, &ChannelGridStyle::OnModelChanged);
-        connect(model, &QAbstractItemModel::rowsRemoved, this, &ChannelGridStyle::OnModelChanged);
+        const auto rebuild = [this] { ScheduleRebuild(); };
+        connect(model, &QAbstractItemModel::modelReset, this, rebuild);
+        connect(model, &QAbstractItemModel::layoutChanged, this, rebuild);
+        connect(model, &QAbstractItemModel::rowsInserted, this, rebuild);
+        connect(model, &QAbstractItemModel::rowsRemoved, this, rebuild);
+        connect(model, &QAbstractItemModel::rowsMoved, this, rebuild);
         connect(model, &QAbstractItemModel::dataChanged, this, [this] {
             cover_cache.clear();
             update();
         });
     }
-    OnModelChanged();
+    Rebuild();
 }
 
-void ChannelGridStyle::OnModelChanged() {
-    const int count = RowCount();
-    if (!current.isValid() && count > 0) {
-        current = QPersistentModelIndex{model->index(0, 0)};
-        emit CurrentChanged(QModelIndex{current});
-    } else if (count == 0 && current.isValid()) {
+void ChannelGridStyle::ScheduleRebuild() {
+    if (rebuild_pending) {
+        return;
+    }
+    rebuild_pending = true;
+    QTimer::singleShot(0, this, [this] {
+        rebuild_pending = false;
+        Rebuild();
+    });
+}
+
+void ChannelGridStyle::Rebuild() {
+    // Games are shown flat: top level games plus the games inside each folder row.
+    // Favorites and the "add folder" row are not tiles.
+    const QModelIndex before{current};
+    entries.clear();
+    if (model) {
+        const int top_rows = model->rowCount();
+        for (int r = 0; r < top_rows; ++r) {
+            const QModelIndex idx = model->index(r, 0);
+            if (IsGame(idx)) {
+                entries.emplace_back(idx);
+            } else if (IsFolder(idx)) {
+                const int children = model->rowCount(idx);
+                for (int c = 0; c < children; ++c) {
+                    const QModelIndex child = model->index(c, 0, idx);
+                    if (IsGame(child)) {
+                        entries.emplace_back(child);
+                    }
+                }
+            }
+        }
+    }
+    const int count = static_cast<int>(entries.size());
+    if (count == 0) {
         current = QPersistentModelIndex{};
+    } else if (CurrentRow() < 0) {
+        // Never set, or the row went away: stay near the last known position.
+        current = entries[static_cast<size_t>(std::clamp(current_hint, 0, count - 1))];
     }
     cover_cache.clear();
     ClampScroll();
+    if (QModelIndex{current} != before) {
+        emit CurrentChanged(QModelIndex{current});
+    }
     update();
 }
 
 int ChannelGridStyle::RowCount() const {
-    return model ? model->rowCount(QModelIndex{}) : 0;
+    return static_cast<int>(entries.size());
 }
 
 QModelIndex ChannelGridStyle::IndexForRow(int row) const {
-    return (model && row >= 0 && row < RowCount()) ? model->index(row, 0) : QModelIndex{};
+    return (row >= 0 && row < RowCount()) ? QModelIndex{entries[static_cast<size_t>(row)]}
+                                           : QModelIndex{};
+}
+
+int ChannelGridStyle::CurrentRow() const {
+    if (!current.isValid()) {
+        return -1;
+    }
+    const auto it = std::find(entries.begin(), entries.end(), current);
+    return it == entries.end() ? -1 : static_cast<int>(it - entries.begin());
 }
 
 QModelIndex ChannelGridStyle::CurrentIndex() const {
@@ -151,10 +212,14 @@ QModelIndex ChannelGridStyle::CurrentIndex() const {
 }
 
 void ChannelGridStyle::SetCurrentIndex(const QModelIndex& index) {
-    if (!model || !index.isValid() || index.model() != model || index.parent().isValid()) {
+    if (!model || !index.isValid() || index.model() != model) {
         return;
     }
-    SetCurrentRow(index.row(), false);
+    const QPersistentModelIndex wanted{index.sibling(index.row(), 0)};
+    const auto it = std::find(entries.begin(), entries.end(), wanted);
+    if (it != entries.end()) {
+        SetCurrentRow(static_cast<int>(it - entries.begin()), false);
+    }
 }
 
 void ChannelGridStyle::SetShowNames(bool show) {
@@ -241,8 +306,12 @@ void ChannelGridStyle::SetCurrentRow(int row, bool notify) {
     }
     row = std::clamp(row, 0, count - 1);
     const QModelIndex index = IndexForRow(row);
-    const bool changed = !current.isValid() || current.row() != row;
+    if (!index.isValid()) {
+        return; // stale entry while a rebuild is pending
+    }
+    const bool changed = CurrentRow() != row;
     current = QPersistentModelIndex{index};
+    current_hint = row;
     EnsureVisible(row);
     update();
     if (changed && notify) {
@@ -253,8 +322,8 @@ void ChannelGridStyle::SetCurrentRow(int row, bool notify) {
 void ChannelGridStyle::resizeEvent(QResizeEvent* event) {
     LibraryStyleView::resizeEvent(event);
     cover_cache.clear();
-    if (current.isValid()) {
-        EnsureVisible(current.row());
+    if (CurrentRow() >= 0) {
+        EnsureVisible(CurrentRow());
     }
     ClampScroll();
 }
@@ -266,7 +335,7 @@ void ChannelGridStyle::keyPressEvent(QKeyEvent* event) {
         return;
     }
     const Layout l = ComputeLayout();
-    const int row = current.isValid() ? current.row() : 0;
+    const int row = std::max(0, CurrentRow());
     switch (event->key()) {
     case Qt::Key_Left:
     case Qt::Key_A:
@@ -298,7 +367,7 @@ void ChannelGridStyle::keyPressEvent(QKeyEvent* event) {
         break;
     case Qt::Key_Return:
     case Qt::Key_Enter:
-        if (current.isValid()) {
+        if (CurrentRow() >= 0) {
             emit LaunchRequested(QModelIndex{current});
         }
         break;
@@ -309,10 +378,22 @@ void ChannelGridStyle::keyPressEvent(QKeyEvent* event) {
     event->accept();
 }
 
+void ChannelGridStyle::contextMenuEvent(QContextMenuEvent* event) {
+    // Keyboard menu key: open the menu for the selected tile.
+    const int row = CurrentRow();
+    if (event->reason() != QContextMenuEvent::Keyboard || row < 0) {
+        event->ignore();
+        return;
+    }
+    const QPoint center = TileRect(ComputeLayout(), row).center();
+    emit ContextMenuRequested(IndexForRow(row), mapToGlobal(center));
+    event->accept();
+}
+
 void ChannelGridStyle::mousePressEvent(QMouseEvent* event) {
     setFocus(Qt::MouseFocusReason);
     const int row = RowAt(event->position().toPoint());
-    if (row >= 0 && (event->button() == Qt::LeftButton || event->button() == Qt::RightButton)) {
+    if (row >= 0 && IndexForRow(row).isValid() && (event->button() == Qt::LeftButton || event->button() == Qt::RightButton)) {
         SetCurrentRow(row, true);
         if (event->button() == Qt::RightButton) {
             emit ContextMenuRequested(IndexForRow(row), event->globalPosition().toPoint());
@@ -325,7 +406,7 @@ void ChannelGridStyle::mousePressEvent(QMouseEvent* event) {
 
 void ChannelGridStyle::mouseDoubleClickEvent(QMouseEvent* event) {
     const int row = RowAt(event->position().toPoint());
-    if (row >= 0 && event->button() == Qt::LeftButton) {
+    if (row >= 0 && event->button() == Qt::LeftButton && IndexForRow(row).isValid()) {
         SetCurrentRow(row, true);
         emit LaunchRequested(IndexForRow(row));
         event->accept();
@@ -598,7 +679,7 @@ void ChannelGridStyle::PaintDock(QPainter& p, const Layout& l) {
     }
 
     // Right: info card for the selected game.
-    if (show_info && current.isValid()) {
+    if (show_info && CurrentRow() >= 0) {
         const QModelIndex index{current};
         const int card_w = std::clamp(w * 26 / 100, 160, 460);
         const int card_h = std::clamp(l.dock_h * 58 / 100, 56, 110);
@@ -673,7 +754,7 @@ void ChannelGridStyle::paintEvent(QPaintEvent*) {
         const int first_row = std::max(0, (scroll - l.top - Gap) / l.row_h);
         const int last_row = std::min((scroll + l.view_h + l.curve - l.top) / l.row_h,
                                       (count - 1) / l.columns);
-        const int current_row = current.isValid() ? current.row() : -1;
+        const int current_row = CurrentRow();
         for (int r = first_row; r <= last_row; ++r) {
             for (int c = 0; c < l.columns; ++c) {
                 const int row = r * l.columns + c;

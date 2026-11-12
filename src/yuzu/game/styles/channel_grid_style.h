@@ -9,10 +9,12 @@
 #include <QPointer>
 #include <QString>
 #include <QTimer>
+#include <vector>
 
 #include "yuzu/game/styles/library_style_view.h"
 
 class QAbstractItemModel;
+class QContextMenuEvent;
 
 namespace LibraryStyles {
 
@@ -35,6 +37,7 @@ protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
@@ -56,6 +59,7 @@ private:
 
     Layout ComputeLayout() const;
     int RowCount() const;
+    int CurrentRow() const;
     QRect TileRect(const Layout& layout, int row) const;
     int RowAt(const QPoint& pos) const;
     int MaxScroll(const Layout& layout) const;
@@ -64,6 +68,8 @@ private:
     void SetCurrentRow(int row, bool notify);
     QModelIndex IndexForRow(int row) const;
     void OnModelChanged();
+    void ScheduleRebuild();
+    void Rebuild();
     void ScheduleClock();
 
     QPixmap CoverFor(const QModelIndex& index, const QSize& size, qreal dpr);
@@ -71,7 +77,10 @@ private:
     void PaintDock(QPainter& painter, const Layout& layout);
 
     QPointer<QAbstractItemModel> model;
+    std::vector<QPersistentModelIndex> entries; // flattened games, same set as the other styles
     QPersistentModelIndex current;
+    bool rebuild_pending = false;
+    int current_hint = 0;
     QTimer clock_timer;
     QCache<QString, QPixmap> cover_cache{48 * 1024}; // cost in KiB
     int scroll = 0;
