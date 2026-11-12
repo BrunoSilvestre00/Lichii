@@ -9,6 +9,7 @@
 #include <QAbstractItemModel>
 #include <QColor>
 #include <QDateTime>
+#include <QTimer>
 #include <QEvent>
 #include <QFont>
 #include <QFontMetrics>
@@ -77,6 +78,17 @@ DualPaneStyle::DualPaneStyle(QWidget* parent)
     : LibraryStyleView(parent), art_cache_(48 * 1024 * 1024) {
     setFocusPolicy(Qt::StrongFocus);
     setMinimumSize(320, 280);
+
+    // The selection brackets blink like the concept: repaint only the selected icon.
+    auto* blink_timer = new QTimer(this);
+    blink_timer->setInterval(40);
+    connect(blink_timer, &QTimer::timeout, this, [this] {
+        if (isVisible() && current_ >= 0 && cols_ > 0) {
+            update(CellRect(current_).adjusted(-cell_w_ / 2, -cell_h_ / 2, cell_w_ / 2,
+                                               cell_h_ / 2));
+        }
+    });
+    blink_timer->start();
 
     fade_.setDuration(FadeMs);
     fade_.setStartValue(0.0);
@@ -275,11 +287,14 @@ void DualPaneStyle::ComputeLayout() {
     const int base = LibraryStyleContext::ArtSize() * 3 / 5;
     icon_px_ = std::clamp(static_cast<int>(base * level_scale[std::clamp(icon_level_, 0, 2)]),
                           16, 256);
-    const int gap_w = icon_px_ / 4 + 6;
-    cols_ = std::max(1, (grid_area_.width() + gap_w) / (icon_px_ + gap_w));
+    // Concept tile: the art is 80 % of a padded shell; the selection brackets sit 7 % of the
+    // shell outside it, so neighbours keep a gap of a fifth of the shell.
+    const int shell = static_cast<int>(std::lround(icon_px_ / 0.8));
+    const int gap_w = std::max(6, shell / 5);
+    cols_ = std::max(1, (grid_area_.width() + gap_w) / (shell + gap_w));
     cell_w_ = std::max(1, grid_area_.width() / cols_);
-    const QFontMetrics fm(font());
-    cell_h_ = icon_px_ + 14 + (show_names_ ? fm.lineSpacing() + fm.height() + 4 : 0);
+    // Icons only on the bottom screen (the top screen names the selection).
+    cell_h_ = shell + gap_w;
 }
 
 QRect DualPaneStyle::CellRect(int row) const {
@@ -518,50 +533,58 @@ void DualPaneStyle::DrawGrid(QPainter& painter) {
                 continue;
             }
             const QRect cell = CellRect(row);
-            const QRect tile(cell.left() + (cell.width() - icon_px_) / 2, cell.top() + 8, icon_px_,
-                             icon_px_);
             const bool selected = row == current_;
+            const qreal shell_side = icon_px_ / 0.8;
+            const QRectF shell(cell.left() + (cell.width() - shell_side) / 2.0,
+                               cell.top() + (cell.height() - shell_side) / 2.0, shell_side,
+                               shell_side);
+            const QRect tile(static_cast<int>(std::lround(shell.left() + shell_side * 0.1)),
+                             static_cast<int>(std::lround(shell.top() + shell_side * 0.1)),
+                             icon_px_, icon_px_);
 
+            // Shell: rounded 16 %, padded 10 %, soft shadow and hairline edge.
             QColor card = dark ? QColor(255, 255, 255, 18) : QColor(255, 255, 255, 230);
             QColor card_border = pal.text().color();
             card_border.setAlpha(dark ? 40 : 28);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(0, 0, 0, dark ? 60 : 40));
+            painter.drawRoundedRect(shell.translated(0, shell_side * 0.015), shell_side * 0.16,
+                                    shell_side * 0.16);
             painter.setPen(QPen(card_border, 1));
             painter.setBrush(card);
-            painter.drawRoundedRect(QRectF(tile).adjusted(-3.5, -3.5, 3.5, 3.5), icon_px_ * 0.2,
-                                    icon_px_ * 0.2);
+            painter.drawRoundedRect(shell, shell_side * 0.16, shell_side * 0.16);
             painter.drawPixmap(tile.topLeft(), Art(index, icon_px_));
 
-            if (show_names_) {
-                // Two lines, broken between words only (S4); the selected one glides with
-                // Scroll Long Names.
-                const int lines = LibraryStyleContext::TitleLines(2);
-                LibraryStyleContext::PaintTitle(
-                    &painter,
-                    QRect(cell.left() + 2, tile.bottom() + 6, cell.width() - 4,
-                          fm.lineSpacing() * lines),
-                    TitleOf(index), pal.text().color(), font(), Qt::AlignHCenter | Qt::AlignTop,
-                    lines, selected ? this : nullptr, 2);
-            }
-
             if (selected) {
-                const QRectF box = QRectF(tile).adjusted(-7, -7, 7, 7);
-                const qreal len = std::max(10.0, icon_px_ * 0.24);
-                painter.setPen(QPen(accent, 3.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+                // Four thick rounded L corners 7 % outside the shell, 32 % long (concept).
+                const qreal t = std::max(3.0, shell_side * 0.075);
+                const qreal o = shell_side * 0.07;
+                const qreal len = shell_side * 0.32;
+                const qreal r = shell_side * 0.14;
+                const QRectF box = shell.adjusted(-o, -o, o, o);
+                // Blink: fade to 55 % and back every 1.2 s, eased (concept dsBlink).
+                const qreal phase =
+                    static_cast<qreal>(QDateTime::currentMSecsSinceEpoch() % 1200) / 1200.0;
+                QColor blink = accent;
+                blink.setAlphaF(1.0 - 0.45 * (0.5 - 0.5 * std::cos(phase * 6.283185307)));
+                painter.setPen(QPen(blink, t, Qt::SolidLine, Qt::FlatCap, Qt::RoundJoin));
                 painter.setBrush(Qt::NoBrush);
-                const QPointF tl = box.topLeft();
-                const QPointF tr_pt = box.topRight();
-                const QPointF bl = box.bottomLeft();
-                const QPointF br = box.bottomRight();
-                const QPointF c0[3] = {{tl.x(), tl.y() + len}, tl, {tl.x() + len, tl.y()}};
-                const QPointF c1[3] = {{tr_pt.x() - len, tr_pt.y()},
-                                       tr_pt,
-                                       {tr_pt.x(), tr_pt.y() + len}};
-                const QPointF c2[3] = {{bl.x(), bl.y() - len}, bl, {bl.x() + len, bl.y()}};
-                const QPointF c3[3] = {{br.x() - len, br.y()}, br, {br.x(), br.y() - len}};
-                painter.drawPolyline(c0, 3);
-                painter.drawPolyline(c1, 3);
-                painter.drawPolyline(c2, 3);
-                painter.drawPolyline(c3, 3);
+                const qreal h = t / 2;      // stroke centre inside the box edge
+                const qreal ri = std::max(0.0, r - h); // centre-line corner radius
+                const auto corner = [&](QPointF c, qreal sx, qreal sy) {
+                    // c: box corner; sx/sy: +1 or -1 towards the inside.
+                    QPainterPath path;
+                    path.moveTo(c.x() + sx * h, c.y() + sy * len);
+                    path.lineTo(c.x() + sx * h, c.y() + sy * (h + ri));
+                    path.quadTo(c.x() + sx * h, c.y() + sy * h, c.x() + sx * (h + ri),
+                                c.y() + sy * h);
+                    path.lineTo(c.x() + sx * len, c.y() + sy * h);
+                    painter.drawPath(path);
+                };
+                corner(box.topLeft(), 1, 1);
+                corner(box.topRight(), -1, 1);
+                corner(box.bottomLeft(), 1, -1);
+                corner(box.bottomRight(), -1, -1);
             }
         }
     }
