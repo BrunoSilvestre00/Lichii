@@ -223,7 +223,7 @@ CanvasStyle::Layout CanvasStyle::ComputeLayout() const {
     const int target = LibraryStyleContext::ArtSize();
     const int avail = std::max(1, width() - 2 * SidePadding);
     l.columns = std::max(1, (avail + l.gap) / (target + l.gap));
-    const int tile = std::clamp(target, 64, std::max(64, avail));
+    const int tile = std::min(target, avail);
     l.tile = tile;
     const int grid_width = l.columns * tile + (l.columns - 1) * l.gap;
     l.margin = std::max(SidePadding, (width() - grid_width) / 2);
@@ -583,38 +583,57 @@ void CanvasStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
             }
             p.setPen(Qt::NoPen);
 
-            p.drawPixmap(rect.topLeft(), TileArt(index, layout.tile, radius, dark));
+            // The art fills the (lifted) tile, so art, clip and ring always line up.
+            {
+                const QPixmap art = TileArt(index, layout.tile, radius, dark);
+                p.drawPixmap(rectf, art, QRectF(QPointF(0, 0), QSizeF(art.size())));
+            }
             p.save();
             if (selected && (show_names || show_info)) {
                 QPainterPath clip;
                 clip.addRoundedRect(rectf, radius, radius);
                 p.setClipPath(clip);
-                const GameInfo info = LibraryStyleContext::Info(index);
-                const int pad = std::max(8, layout.tile / 18);
+                // Text and padding follow the tile size (the same for every tile of the view):
+                // 7 px on the smallest tiles, up to 20 px.
+                const int pad = std::clamp(layout.tile / 18, 3, 12);
                 QFont title_font = font();
                 title_font.setFamilies({QStringLiteral("Nunito"), title_font.family()});
                 title_font.setWeight(QFont::Black);
-                title_font.setPixelSize(std::clamp(layout.tile / 12, 11, 20));
+                title_font.setPixelSize(std::clamp(4 + layout.tile / 16, 7, 20));
                 QFont sub_font = title_font;
                 sub_font.setWeight(QFont::ExtraBold);
-                sub_font.setPixelSize(std::clamp(layout.tile / 15, 9, 16));
+                sub_font.setPixelSize(std::max(6, title_font.pixelSize() - 2));
                 const QFontMetrics tfm(title_font);
                 const QFontMetrics sfm(sub_font);
                 const int text_w = rect.width() - 2 * pad;
-                // S4 title lines and S3 info lines, the same code as every style.
-                const int title_lines = LibraryStyleContext::TitleLines(2);
-                const QStringList names =
-                    show_names ? LibraryStyleContext::NameLines(info.title, title_font, text_w,
-                                                                title_lines)
-                               : QStringList{};
-                const QStringList info_lines =
+                // Same title and Game Info rules as the cards (style_helpers).
+                const QString title = LibraryStyleContext::Info(index).title;
+                QStringList info_lines =
                     show_info ? LibraryStyleContext::InfoLines(
-                                    info, LibraryStyleContext::LayoutInfo(sub_font, text_w),
-                                    sub_font)
+                                    LibraryStyleContext::Info(index),
+                                    LibraryStyleContext::LayoutInfo(sub_font, text_w), sub_font)
                               : QStringList{};
-                const int lines = static_cast<int>(names.size());
-                const int sub_h = static_cast<int>(info_lines.size()) * sfm.lineSpacing();
-                const int text_h = lines * tfm.lineSpacing() + sub_h + 4;
+                int title_lines = 0;
+                if (show_names) {
+                    title_lines = tfm.horizontalAdvance(title) <= text_w
+                                      ? 1
+                                      : LibraryStyleContext::TitleLines(2);
+                }
+                // Never taller than the tile: the title drops to one line first, then the info
+                // keeps the lines that fit.
+                const int room = rect.height() - 2 * pad - 4;
+                const auto needed = [&] {
+                    return title_lines * tfm.lineSpacing() +
+                           static_cast<int>(info_lines.size()) * sfm.lineSpacing();
+                };
+                if (needed() > room && title_lines > 1) {
+                    title_lines = 1;
+                }
+                while (needed() > room && !info_lines.isEmpty()) {
+                    info_lines.removeLast();
+                }
+                const int info_h = static_cast<int>(info_lines.size()) * sfm.lineSpacing();
+                const int text_h = title_lines * tfm.lineSpacing() + info_h + 4;
                 const int grad_h = text_h + pad * 3;
                 const QRectF grad_rect(rectf.left(), rectf.bottom() - grad_h, rectf.width(),
                                        grad_h);
@@ -624,24 +643,32 @@ void CanvasStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
                 g.setColorAt(1.0, QColor(0, 0, 0, 225));
                 p.fillRect(grad_rect, g);
 
-                const int sub_y = rect.bottom() - pad - sub_h;
-                LibraryStyleContext::PaintInfoLines(
-                    &p, QRect(rect.left() + pad, sub_y, text_w, sub_h), info_lines, Qt::white,
-                    sub_font, Qt::AlignHCenter | Qt::AlignTop);
-                const int y = sub_y - 2 - lines * tfm.lineSpacing();
-                if (lines > 0) {
+                int y = rect.bottom() - pad - text_h + 4;
+                if (title_lines > 0) {
                     LibraryStyleContext::PaintTitle(
-                        &p, QRect(rect.left() + pad, y, text_w, lines * tfm.lineSpacing()),
-                        info.title, Qt::white, title_font, Qt::AlignHCenter | Qt::AlignTop,
-                        title_lines, this);
+                        &p, QRect(rect.left() + pad, y, text_w, title_lines * tfm.lineSpacing()),
+                        title, Qt::white, title_font, Qt::AlignHCenter | Qt::AlignTop,
+                        title_lines, this, pad - 2);
+                    y += title_lines * tfm.lineSpacing();
+                }
+                p.setFont(sub_font);
+                p.setPen(Qt::white);
+                for (const QString& line : info_lines) {
+                    p.drawText(QRect(rect.left() + pad, y, text_w, sfm.lineSpacing()),
+                               Qt::AlignHCenter | Qt::AlignVCenter,
+                               sfm.elidedText(line, Qt::ElideRight, text_w));
+                    y += sfm.lineSpacing();
                 }
             }
             p.restore();
 
             if (selected) {
+                // S5: ring just outside the tile, concentric corners.
+                const qreal pen = 3.5;
                 p.setBrush(Qt::NoBrush);
-                p.setPen(QPen(accent, 3.5));
-                p.drawRoundedRect(rectf.adjusted(-6, -6, 6, 6), radius + 6, radius + 6);
+                p.setPen(QPen(accent, pen));
+                p.drawRoundedRect(rectf.adjusted(-pen / 2, -pen / 2, pen / 2, pen / 2),
+                                  radius + pen / 2, radius + pen / 2);
             }
         }
     }

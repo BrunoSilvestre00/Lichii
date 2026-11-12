@@ -4148,8 +4148,9 @@ void MainWindow::CheckIconSize() {
             actions.at(i)->setChecked(true);
     }
 
-    // Update this if you add anything before None.
-    actions.at(0)->setEnabled(!icons_required);
+    // Update this if you add anything before None. The library styles always draw art, so
+    // None is offered only for the list, the Modern grid and the Carousel.
+    actions.at(0)->setEnabled(!icons_required && LibraryStyles::Active() == nullptr);
 }
 
 void MainWindow::ToggleShowGameName() {
