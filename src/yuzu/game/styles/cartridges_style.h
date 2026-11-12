@@ -7,6 +7,7 @@
 
 #include <QAbstractItemModel>
 #include <QCache>
+#include <QHash>
 #include <QColor>
 #include <QMetaObject>
 #include <QPersistentModelIndex>
@@ -96,6 +97,8 @@ private:
     bool scattered_ = false;
 
     mutable QCache<QString, QPixmap> card_cache_;
+    /// Header strip colour per cover art and title.
+    mutable QHash<QString, QColor> strip_colors_;
     mutable QPixmap wood_;
     mutable QString wood_key_;
 };

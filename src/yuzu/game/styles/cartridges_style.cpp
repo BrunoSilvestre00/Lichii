@@ -30,6 +30,7 @@
 
 #include "qt_common/game_list/game_list_p.h"
 #include "yuzu/game/styles/cartridges_style.h"
+#include "yuzu/game/styles/style_helpers.h"
 
 namespace LibraryStyles {
 
@@ -134,32 +135,62 @@ QColor DominantColor(const QPixmap& cover, quint32 fallback_seed) {
 }
 
 QFont FitFont(QFont font, const QString& text, qreal max_w, qreal max_h) {
+    // Every card of a size asks the same question: remember the answer instead of measuring
+    // the text at each pixel size again for every card.
+    static QHash<QString, int> fitted;
+    const QString key = font.key() + QLatin1Char('|') + text + QLatin1Char('|') +
+                        QString::number(qRound(max_w * 10)) + QLatin1Char('|') +
+                        QString::number(qRound(max_h * 10));
+    const auto found = fitted.constFind(key);
+    if (found != fitted.constEnd()) {
+        font.setPixelSize(*found);
+        return font;
+    }
     int pixel_size = std::max(6, static_cast<int>(max_h));
     font.setPixelSize(pixel_size);
     while (pixel_size > 6 && QFontMetricsF(font).horizontalAdvance(text) > max_w) {
         --pixel_size;
         font.setPixelSize(pixel_size);
     }
+    if (fitted.size() > 256) {
+        fitted.clear();
+    }
+    fitted.insert(key, pixel_size);
     return font;
 }
 
-/// The model only exposes play time and version through the tooltip ("Play Time: x" and
-/// "Version: y" lines), so read them back from there.
-void ParseInfo(const QString& tooltip, QString& play_time, QString& version) {
-    const QStringList lines = tooltip.split(QLatin1Char('\n'));
-    const auto value = [](const QString& line) {
-        const qsizetype colon = line.indexOf(QLatin1Char(':'));
-        return colon < 0 ? QString{} : line.mid(colon + 1).trimmed();
-    };
-    if (lines.size() > 0) {
-        play_time = value(lines[0]);
+/// The empty cartridge shell (body gradient and outline), the same for every card of a size.
+QPixmap BodyTemplate(const QColor& body_color, qreal w, qreal h, qreal dpr) {
+    static QHash<QString, QPixmap> templates;
+    const QString key = QStringLiteral("%1|%2|%3|%4")
+                            .arg(qRound(w * 10))
+                            .arg(qRound(h * 10))
+                            .arg(qRound(dpr * 100))
+                            .arg(body_color.rgba());
+    const auto found = templates.constFind(key);
+    if (found != templates.constEnd()) {
+        return *found;
     }
-    if (lines.size() > 1) {
-        version = value(lines[1]);
-        if (!version.isEmpty() && version.at(0).isDigit()) {
-            version.prepend(QLatin1Char('v'));
-        }
+    const qreal m = CardMargin(w);
+    QPixmap pixmap(QSize(static_cast<int>(std::ceil((w + 2 * m) * dpr)),
+                         static_cast<int>(std::ceil((h + 2 * m) * dpr))));
+    pixmap.setDevicePixelRatio(dpr);
+    pixmap.fill(Qt::transparent);
+    QPainter p(&pixmap);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.translate(m, m);
+    QLinearGradient body_gradient(0, 0, 0, h);
+    body_gradient.setColorAt(0.0, body_color.lighter(118));
+    body_gradient.setColorAt(1.0, body_color.darker(118));
+    p.setPen(QPen(body_color.lighter(150), 1.0));
+    p.setBrush(body_gradient);
+    p.drawPath(BodyPath(w, h));
+    p.end();
+    if (templates.size() > 8) {
+        templates.clear();
     }
+    templates.insert(key, pixmap);
+    return pixmap;
 }
 
 struct CardData {
@@ -205,18 +236,11 @@ QPixmap RenderCard(const CardData& d, qreal w, qreal h, qreal dpr) {
     pixmap.fill(Qt::transparent);
 
     QPainter p(&pixmap);
+    p.drawPixmap(0, 0, BodyTemplate(d.body, w, h, dpr));
     p.setRenderHint(QPainter::Antialiasing, true);
     p.setRenderHint(QPainter::SmoothPixmapTransform, true);
     p.setRenderHint(QPainter::TextAntialiasing, true);
     p.translate(m, m);
-
-    const QPainterPath body = BodyPath(w, h);
-    QLinearGradient body_gradient(0, 0, 0, h);
-    body_gradient.setColorAt(0.0, d.body.lighter(118));
-    body_gradient.setColorAt(1.0, d.body.darker(118));
-    p.setPen(QPen(d.body.lighter(150), 1.0));
-    p.setBrush(body_gradient);
-    p.drawPath(body);
 
     const qreal pad = w * 0.07;
     const QFont base_font = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
@@ -279,7 +303,8 @@ QPixmap RenderCard(const CardData& d, qreal w, qreal h, qreal dpr) {
         p.drawRoundedRect(id_rect, 3.0, 3.0);
         QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
         mono.setBold(true);
-        mono = FitFont(mono, d.id_text, id_rect.width() - 8.0, id_rect.height() * 0.6);
+        mono = FitFont(mono, QString(d.id_text.size(), QLatin1Char('0')), id_rect.width() - 8.0,
+                       id_rect.height() * 0.6);
         p.setFont(mono);
         p.setPen(QColor(228, 230, 235));
         p.drawText(id_rect, Qt::AlignCenter, d.id_text);
@@ -411,7 +436,7 @@ void CartridgesStyle::Rebuild() {
             }
         }
     }
-    if (new_row < 0 && !entries_.empty() && current_row_ >= 0) {
+    if (new_row < 0 && !entries_.empty()) {
         new_row = std::clamp(current_row_, 0, static_cast<int>(entries_.size()) - 1);
     }
     const QModelIndex before = previous;
@@ -592,10 +617,11 @@ void CartridgesStyle::Launch(const QModelIndex& index) {
 }
 
 const QPixmap& CartridgesStyle::WoodTile(qreal dpr) const {
-    const int tile_w = std::max(256, ((width() + 255) / 256) * 256);
+    // A fixed size tile, repeated across the view: generating a window wide texture pixel by
+    // pixel on every width change stalled resizing.
+    constexpr int tile_w = 512;
     const bool dark = IsDark(palette());
-    const QString key = QStringLiteral("%1|%2|%3")
-                            .arg(tile_w)
+    const QString key = QStringLiteral("%1|%2")
                             .arg(static_cast<int>(dpr * 100))
                             .arg(static_cast<int>(dark));
     if (!wood_.isNull() && wood_key_ == key) {
@@ -670,7 +696,7 @@ QPixmap CartridgesStyle::CardPixmap(const QModelIndex& index, const Metrics& m, 
         if (cover.isNull() && index.data(GameListItemPath::HasIconRole).toBool()) {
             cover = index.data(Qt::DecorationRole).value<QPixmap>();
         }
-        tooltip = index.data(Qt::ToolTipRole).toString();
+        tooltip = LibraryStyleContext::InfoLine(index);
         program_id = index.data(GameListItemPath::ProgramIdRole).toULongLong();
         path = index.data(GameListItemPath::FullPathRole).toString();
     }
@@ -704,9 +730,23 @@ QPixmap CartridgesStyle::CardPixmap(const QModelIndex& index, const Metrics& m, 
         card_data.id_text = QStringLiteral("%1")
                            .arg(static_cast<qulonglong>(program_id), 16, 16, QLatin1Char('0'))
                            .toUpper();
-        card_data.strip = DominantColor(cover, static_cast<quint32>(qHash(title)));
+        const QString color_key = QString::number(cover.cacheKey()) + QLatin1Char('|') + title;
+        const auto found = strip_colors_.constFind(color_key);
+        if (found != strip_colors_.constEnd()) {
+            card_data.strip = *found;
+        } else {
+            if (strip_colors_.size() > 2048) {
+                strip_colors_.clear();
+            }
+            card_data.strip = DominantColor(cover, static_cast<quint32>(qHash(title)));
+            strip_colors_.insert(color_key, card_data.strip);
+        }
         if (info) {
-            ParseInfo(tooltip, card_data.play_time, card_data.version);
+            const GameInfo game = LibraryStyleContext::Info(index);
+            card_data.play_time = game.play_time_text;
+            if (!game.update_version.isEmpty()) {
+                card_data.version = QStringLiteral("v") + game.update_version;
+            }
         }
     } else {
         card_data.strip = pal.color(QPalette::Highlight);
@@ -781,9 +821,7 @@ void CartridgesStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
 
     const QPixmap& tile = WoodTile(dpr);
     const qreal tile_h = std::max<qreal>(1.0, tile.height() / dpr);
-    for (qreal y = -std::fmod(static_cast<qreal>(scroll), tile_h); y < height(); y += tile_h) {
-        painter.drawPixmap(QPointF(0, y), tile);
-    }
+    painter.drawTiledPixmap(rect(), tile, QPointF(0, std::fmod(static_cast<qreal>(scroll), tile_h)));
 
     const int n = RowCount();
     if (n == 0) {
@@ -968,7 +1006,11 @@ void CartridgesStyle::contextMenuEvent(QContextMenuEvent* event) {
     } else {
         row = RowAt(event->pos());
     }
+    event->accept();
     if (row < 0) {
+        if (event->reason() != QContextMenuEvent::Keyboard) {
+            emit ContextMenuRequested(QModelIndex{}, global);
+        }
         return;
     }
     SetCurrentRow(row, true);
@@ -993,7 +1035,8 @@ LibraryStyleView* Make(QWidget* parent) {
 }
 
 [[maybe_unused]] const bool registered =
-    LibraryStyles::Register({"cartridges", QT_TR_NOOP("Cartridges"), &Make});
+    LibraryStyles::Register(
+        {"cartridges", QT_TRANSLATE_NOOP("LibraryStyles", "Cartridges"), &Make});
 
 } // namespace
 
