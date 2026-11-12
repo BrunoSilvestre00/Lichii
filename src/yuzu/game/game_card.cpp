@@ -17,6 +17,7 @@
 #include "qt_common/config/uisettings.h"
 #include "qt_common/game_list/game_list_p.h"
 #include "qt_common/game_list/model.h"
+#include "yuzu/game/styles/style_helpers.h"
 
 namespace {
 
@@ -277,7 +278,7 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
     const bool show_game_name = UISettings::values.show_game_name.GetValue() ||
                                 (folder_cards && (game_folder || add_folder));
     const int inset = cardMargin + 2;
-    const int titleHeight = show_game_name ? 74 : 0;
+    const int titleHeight = show_game_name ? TitleHeight : 0;
     const QRect artworkRect(cardRect.left() + 1, cardRect.top() + 1,
                             std::max(1, cardRect.width() - 2),
                             std::max(1, cardRect.height() - titleHeight -
@@ -349,13 +350,19 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
         painter->setFont(titleFont);
         QRect titleRect = textRect;
         titleRect.setBottom(textRect.top() + titleHeight - 24);
-        painter->drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextWordWrap, title);
+        // Two lines at most, cut with "..."; never runs into the info line below.
+        LibraryStyles::LibraryStyleContext::PaintName(painter, titleRect, title, titleColor,
+                                                      titleFont, Qt::AlignLeft | Qt::AlignVCenter,
+                                                      2);
 
         QStringList meta_parts;
         if (add_folder) {
             meta_parts.append(tr("Add a location to your library"));
         } else if (game_folder) {
             meta_parts.append(tr("%n game(s)", "", index.model()->rowCount(index)));
+        } else if (UISettings::values.show_library_info.GetValue()) {
+            // Info on: play time and update version, "1.9 h played · v1.3.0".
+            meta_parts.append(LibraryStyles::LibraryStyleContext::Info(index).info_line);
         } else {
             const QString size_text = index.sibling(index.row(), GameListModel::COLUMN_SIZE)
                                           .data(Qt::DisplayRole)
@@ -376,7 +383,9 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
             painter->setFont(metaFont);
             QRect metaRect = textRect;
             metaRect.setTop(textRect.bottom() - 18);
-            painter->drawText(metaRect, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine, meta);
+            painter->drawText(metaRect, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine,
+                              QFontMetrics(metaFont).elidedText(meta, Qt::ElideRight,
+                                                                metaRect.width()));
         }
     }
 

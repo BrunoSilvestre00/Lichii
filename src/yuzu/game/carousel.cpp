@@ -64,32 +64,28 @@ void GameCarousel::UpdateIconSize() {
     const bool show_game_name = UISettings::values.show_game_name.GetValue();
     const u32 display_icon_size = Yuzu::CardIconDisplaySize(show_game_name);
 
-    int heightMargin = 0;
-    int widthMargin = 80;
+    // Same card as the grid: the square art plus a 1 px border, and the title block when names
+    // are on. Names never change the art size.
+    const int art = static_cast<int>(display_icon_size);
+    const int card_w = art + 2;
+    const int card_h = show_game_name ? art + GameCard::TitleBlockHeight : art + 2;
+    const int gap = 16;
 
-    // TODO(crueter): get rid of this nonsense
-    if (show_game_name) {
-        widthMargin = 110;
-        heightMargin = 155;
-    } else {
-        widthMargin = 24;
-        heightMargin = 24;
-    }
+    const int item_width = card_w + GameCard::cardMargin + gap;
+    const int content_height = card_h + GameCard::cardMargin + 1;
+    const int grid_height = std::max(content_height + GameCard::cardMargin * 2, viewport()->height());
 
-    const int min_item_width = display_icon_size + widthMargin;
-    const int min_item_height = display_icon_size + heightMargin;
-    const int grid_height = std::max(min_item_height, viewport()->height());
-
-    QSize content_size(min_item_width, min_item_height);
-    QSize grid_size(min_item_width, grid_height);
+    const QSize content_size(item_width, content_height);
+    const QSize grid_size(item_width, grid_height);
     if (gridSize() != grid_size) {
         setUpdatesEnabled(false);
 
         setGridSize(grid_size);
-        m_gameCard->setSize(grid_size, content_size, 0, 0);
+        m_gameCard->setSize(grid_size, content_size, gap, 0);
 
         setUpdatesEnabled(true);
     }
+    viewport()->update();
 }
 
 QModelIndex GameCarousel::indexAt(const QPoint& point) const {

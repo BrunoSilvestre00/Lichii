@@ -90,33 +90,30 @@ void GameGrid::UpdateIconSize() {
         UISettings::values.show_game_name.GetValue() || !rootIndex().isValid();
     const u32 display_icon_size = Yuzu::CardIconDisplaySize(show_game_name);
 
-    int heightMargin = 0;
-    int widthMargin = 72;
-
-    if (show_game_name) {
-        heightMargin = 92;
-    } else {
-        widthMargin = 24;
-        heightMargin = 24;
-    }
+    // The card is the square art plus a 1 px border, and the title block when names are on.
+    // Extra row width goes into the gaps between cards, never into the cards themselves.
+    const int art = static_cast<int>(display_icon_size);
+    const int card_w = art + 2;
+    const int card_h = show_game_name ? art + GameCard::TitleBlockHeight : art + 2;
+    const int min_gap = 16;
+    const int min_item_width = card_w + GameCard::cardMargin + min_gap;
 
     const int view_width = viewport()->width();
+    const int columns = std::max(1, (view_width - 16) / min_item_width);
+    const int stretched_width = std::max(min_item_width, view_width / columns);
 
-    const double spacing = 0.01;
-    const int min_item_width = display_icon_size + widthMargin;
-
-    int columns = std::max(1, (view_width - 16) / min_item_width);
-    int stretched_width = ((view_width) - (spacing * (columns - 1))) / columns;
-
-    QSize grid_size(stretched_width, display_icon_size + heightMargin);
+    // GameCard::getCardRect gives the card the cell height minus cardMargin + 1.
+    const QSize grid_size(stretched_width, card_h + GameCard::cardMargin + 1);
     if (gridSize() != grid_size) {
         setUpdatesEnabled(false);
 
         setGridSize(grid_size);
-        m_gameCard->setSize(grid_size, grid_size, stretched_width - min_item_width, columns);
+        m_gameCard->setSize(grid_size, grid_size, stretched_width - card_w - GameCard::cardMargin,
+                            columns);
 
         setUpdatesEnabled(true);
     }
+    viewport()->update();
 }
 
 QModelIndex GameGrid::indexAt(const QPoint& point) const {

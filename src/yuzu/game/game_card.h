@@ -28,8 +28,12 @@ public:
     QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override;
     void setSize(const QSize& newSize, const QSize& contentSize, const int padding, const int columns);
 
-private:
     static constexpr int cardMargin = 8;
+    /// Height the title and subtitle add below the art (title area plus the bottom inset).
+    static constexpr int TitleHeight = 74;
+    static constexpr int TitleBlockHeight = TitleHeight + cardMargin + 2;
+
+private:
 
     QSize m_size;
     QSize m_contentSize;
