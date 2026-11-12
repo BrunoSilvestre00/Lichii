@@ -327,7 +327,7 @@ void LoadingScreen::ApplyArtwork(const Snapshot& snapshot) {
     game_title = snapshot.title;
 
     if (!logo_loaded) {
-        const QPixmap fallback = GameListFallbackIcon(GameIconSize);
+        const QPixmap fallback = GameListFallbackIcon(GameIconSize, game_title, palette());
         if (!fallback.isNull()) {
             ui->logo->setPixmap(RoundedGameIcon(fallback));
             logo_accent = LiftLogoAccent(SampleLogoColor(fallback.toImage(), 0, 100));

@@ -58,20 +58,21 @@ private:
 
     Metrics ComputeMetrics() const;
     int RowCount() const;
-    QModelIndex IndexAt(int row) const;
-    /// The model is a tree (folders hold the games): collect the games flat, Add Folder last.
-    void RebuildItems();
     int RowAt(const QPoint& pos) const;
     QRectF CoverRect(int row, const Metrics& m) const;
     QString TitleAt(int row) const;
     void MoveTo(int row);
     void AnimateToCurrent(bool animate);
-    void ModelChanged(bool notify);
+    void ScheduleRebuild();
+    void Rebuild();
+    QModelIndex IndexAt(int row) const;
     QPixmap CoverPixmap(int row, int side);
     void DrawPlaceholder(QPainter& painter, const QRectF& rect, const QString& title);
 
     QPointer<QAbstractItemModel> m_model;
-    std::vector<QPersistentModelIndex> m_items;
+    /// Shown games: top level games and the games inside folder rows.
+    std::vector<QPersistentModelIndex> m_entries;
+    bool m_rebuild_pending = false;
     int m_current = -1;
     double m_offset = 0.0; // in cover steps
     bool m_show_names = true;

@@ -90,30 +90,28 @@ void GameGrid::UpdateIconSize() {
         UISettings::values.show_game_name.GetValue() || !rootIndex().isValid();
     const u32 display_icon_size = Yuzu::CardIconDisplaySize(show_game_name);
 
-    // The card is the square art plus a 1 px border, and the title block when names are on.
-    // Extra row width goes into the gaps between cards, never into the cards themselves.
-    const int art = static_cast<int>(display_icon_size);
-    const int card_w = art + 2;
-    const int card_h = show_game_name ? art + GameCard::TitleBlockHeight : art + 2;
-    const int min_gap = 16;
-    const int min_item_width = card_w + GameCard::cardMargin + min_gap;
+    // Square artwork, see Yuzu::CardHeightMargin.
+    const int widthMargin = Yuzu::CardWidthMargin;
+    const int heightMargin = Yuzu::CardHeightMargin(show_game_name);
 
     const int view_width = viewport()->width();
-    const int columns = std::max(1, (view_width - 16) / min_item_width);
-    const int stretched_width = std::max(min_item_width, view_width / columns);
 
-    // GameCard::getCardRect gives the card the cell height minus cardMargin + 1.
-    const QSize grid_size(stretched_width, card_h + GameCard::cardMargin + 1);
+    const int min_item_width = display_icon_size + widthMargin;
+
+    // Leave the same 16 pixels free that the column count assumes: cells filling the viewport
+    // to the pixel make the list view wrap one column early.
+    const int columns = std::max(1, (view_width - 16) / min_item_width);
+    const int stretched_width = (view_width - 16) / columns;
+
+    QSize grid_size(stretched_width, display_icon_size + heightMargin);
     if (gridSize() != grid_size) {
         setUpdatesEnabled(false);
 
         setGridSize(grid_size);
-        m_gameCard->setSize(grid_size, grid_size, stretched_width - card_w - GameCard::cardMargin,
-                            columns);
+        m_gameCard->setSize(grid_size, grid_size, stretched_width - min_item_width, columns);
 
         setUpdatesEnabled(true);
     }
-    viewport()->update();
 }
 
 QModelIndex GameGrid::indexAt(const QPoint& point) const {

@@ -87,12 +87,27 @@ QPainterPath BodyPath(qreal w, qreal h) {
 }
 
 QFont FitFont(QFont font, const QString& text, qreal max_w, qreal max_h) {
+    // Every card of a size asks the same question: remember the answer instead of measuring
+    // the text at each pixel size again for every card.
+    static QHash<QString, int> fitted;
+    const QString key = font.key() + QLatin1Char('|') + text + QLatin1Char('|') +
+                        QString::number(qRound(max_w * 10)) + QLatin1Char('|') +
+                        QString::number(qRound(max_h * 10));
+    const auto found = fitted.constFind(key);
+    if (found != fitted.constEnd()) {
+        font.setPixelSize(*found);
+        return font;
+    }
     int pixel_size = std::max(6, static_cast<int>(max_h));
     font.setPixelSize(pixel_size);
     while (pixel_size > 6 && QFontMetricsF(font).horizontalAdvance(text) > max_w) {
         --pixel_size;
         font.setPixelSize(pixel_size);
     }
+    if (fitted.size() > 256) {
+        fitted.clear();
+    }
+    fitted.insert(key, pixel_size);
     return font;
 }
 
@@ -895,7 +910,11 @@ void CartridgesStyle::contextMenuEvent(QContextMenuEvent* event) {
     } else {
         row = RowAt(event->pos());
     }
+    event->accept();
     if (row < 0) {
+        if (event->reason() != QContextMenuEvent::Keyboard) {
+            emit ContextMenuRequested(QModelIndex{}, global);
+        }
         return;
     }
     SetCurrentRow(row, true);
@@ -920,7 +939,8 @@ LibraryStyleView* Make(QWidget* parent) {
 }
 
 [[maybe_unused]] const bool registered =
-    LibraryStyles::Register({"cartridges", QT_TR_NOOP("Cartridges"), &Make});
+    LibraryStyles::Register(
+        {"cartridges", QT_TRANSLATE_NOOP("LibraryStyles", "Cartridges"), &Make});
 
 } // namespace
 

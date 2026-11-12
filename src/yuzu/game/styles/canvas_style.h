@@ -4,6 +4,7 @@
 #pragma once
 
 #include <QAbstractItemModel>
+#include <QCache>
 #include <QColor>
 #include <QPersistentModelIndex>
 #include <QPixmap>
@@ -50,6 +51,8 @@ private:
     };
 
     void PaintBackground(QPainter& painter, bool dark);
+    /// Rounded cover art (or the default art) of one tile, cached per game and size.
+    QPixmap TileArt(const QModelIndex& index, int side, qreal radius, bool dark);
     void ScheduleRebuild();
     void Rebuild();
     void UpdateLayout();
@@ -78,6 +81,9 @@ private:
     qreal background_ratio = 0;
     QRgb background_window = 0;
     bool background_dark = false;
+
+    /// Tile art by path, art, size and pixel ratio; the cost is in KiB.
+    QCache<QString, QPixmap> art_cache{48 * 1024};
 };
 
 } // namespace LibraryStyles

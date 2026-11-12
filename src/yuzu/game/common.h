@@ -12,12 +12,18 @@
 
 namespace Yuzu {
 
-/// Display size used by the icon-based library views: without a title label the user icon size is
-/// used as-is, otherwise keep a minimum size that stays legible next to the title.
 /// Side of the square cover art on the cards: View > Game Icon Size, at least 96 px, the same
 /// rule as the library styles. Names never change it; they only add the text below the art.
 inline u32 CardIconDisplaySize([[maybe_unused]] bool show_game_name = true) {
     return std::max<u32>(UISettings::values.game_cover_size.GetValue(), u32{96});
+}
+
+/// Card cell size around the icon size in the grid and the carousel. GameCard::paint draws the
+/// artwork 10 pixels narrower than the card cell and 11 pixels shorter, plus 82 for the title band
+/// when names are shown, so these margins keep the artwork square.
+constexpr int CardWidthMargin = 24;
+constexpr int CardHeightMargin(bool show_game_name) {
+    return CardWidthMargin + 1 + (show_game_name ? 82 : 0);
 }
 
 inline bool ContainsAllWords(const QString& haystack, const QString& userinput) {
@@ -31,9 +37,11 @@ inline bool FilterMatches(const QString& filter, const QStandardItem* item) {
     if (filter.isEmpty())
         return true;
 
+    // Compiled once: this runs for every game on every search keystroke, in several views.
+    static const QRegularExpression non_letters(QStringLiteral("[^a-z\\s]"));
     auto const sluggify = [](const QString& s) {
         QString o(s.normalized(QString::NormalizationForm_D).toLower());
-        return o.replace(QRegularExpression(QStringLiteral("[^a-z\\s]")), QStringLiteral(""));
+        return o.replace(non_letters, QString{});
     };
 
     const auto norm_filter = sluggify(filter);

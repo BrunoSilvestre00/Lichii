@@ -114,7 +114,8 @@ void DualPaneStyle::SetModel(QAbstractItemModel* model) {
         connect(model_, &QAbstractItemModel::rowsInserted, this, [this] { ScheduleRebuild(); });
         connect(model_, &QAbstractItemModel::rowsRemoved, this, [this] { ScheduleRebuild(); });
         connect(model_, &QAbstractItemModel::rowsMoved, this, [this] { ScheduleRebuild(); });
-        connect(model_, &QAbstractItemModel::dataChanged, this, [this] { ScheduleRebuild(); });
+        // Data changes (play time, icons) keep the row list: repaint only.
+        connect(model_, &QAbstractItemModel::dataChanged, this, [this] { update(); });
         connect(model_, &QObject::destroyed, this, [this] {
             model_ = nullptr;
             items_.clear();
@@ -582,28 +583,46 @@ void DualPaneStyle::paintEvent(QPaintEvent*) {
     const QPalette pal = palette();
     const bool dark = IsDark(pal);
 
-    painter.fillRect(rect(), pal.window());
-
     const QColor pane = dark ? pal.base().color().lighter(112) : pal.base().color();
     QColor border = pal.text().color();
     border.setAlpha(dark ? 50 : 34);
     QColor dots = pal.text().color();
     dots.setAlpha(dark ? 18 : 14);
 
-    for (const QRect& r : {top_rect_, grid_pane_}) {
-        if (r.width() <= 0 || r.height() <= 0) {
-            continue;
+    // The dotted panes are the same every frame: draw them once per size and palette.
+    const qreal dpr = devicePixelRatioF();
+    const QString pane_key = QStringLiteral("%1x%2|%3|%4|%5|%6|%7")
+                                 .arg(width())
+                                 .arg(height())
+                                 .arg(top_rect_.height())
+                                 .arg(dpr)
+                                 .arg(pane.rgba())
+                                 .arg(dots.rgba())
+                                 .arg(pal.window().color().rgba());
+    if (panes_key_ != pane_key) {
+        panes_key_ = pane_key;
+        panes_ = QPixmap(QSize(std::max(1, static_cast<int>(std::ceil(width() * dpr))),
+                               std::max(1, static_cast<int>(std::ceil(height() * dpr)))));
+        panes_.setDevicePixelRatio(dpr);
+        panes_.fill(pal.window().color());
+        QPainter p(&panes_);
+        p.setRenderHint(QPainter::Antialiasing);
+        for (const QRect& r : {top_rect_, grid_pane_}) {
+            if (r.width() <= 0 || r.height() <= 0) {
+                continue;
+            }
+            QPainterPath path;
+            path.addRoundedRect(QRectF(r), PaneRadius, PaneRadius);
+            p.setPen(QPen(border, 1));
+            p.setBrush(pane);
+            p.drawPath(path);
+            p.save();
+            p.setClipPath(path);
+            DrawDots(p, r, dots);
+            p.restore();
         }
-        QPainterPath path;
-        path.addRoundedRect(QRectF(r), PaneRadius, PaneRadius);
-        painter.setPen(QPen(border, 1));
-        painter.setBrush(pane);
-        painter.drawPath(path);
-        painter.save();
-        painter.setClipPath(path);
-        DrawDots(painter, r, dots);
-        painter.restore();
     }
+    painter.drawPixmap(0, 0, panes_);
 
     {
         QFont f = font();
@@ -754,7 +773,7 @@ LibraryStyleView* Make(QWidget* p) {
     return new DualPaneStyle(p);
 }
 [[maybe_unused]] const bool registered =
-    LibraryStyles::Register({"dual_pane", QT_TR_NOOP("Dual Pane"), &Make});
+    LibraryStyles::Register({"dual_pane", QT_TRANSLATE_NOOP("LibraryStyles", "Dual Pane"), &Make});
 } // namespace
 
 } // namespace LibraryStyles

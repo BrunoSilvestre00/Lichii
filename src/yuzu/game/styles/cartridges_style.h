@@ -7,6 +7,7 @@
 
 #include <QAbstractItemModel>
 #include <QCache>
+#include <QHash>
 #include <QColor>
 #include <QMetaObject>
 #include <QPersistentModelIndex>

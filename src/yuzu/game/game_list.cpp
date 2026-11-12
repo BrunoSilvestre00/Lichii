@@ -261,9 +261,9 @@ void GameList::OnPopulate() {
     } else {
         grid_root_dir_index_to_restore = -1;
     }
-    // The model is about to drop every top-level row. With a folder as root and that folder
-    // still the current index, QAbstractItemView::rowsAboutToBeRemoved walks parents looking
-    // for the root and never finds it (endless loop). OnPopulatingCompleted restores the folder.
+    // removeRows() below runs while the grid's root is the opened folder and its current index is
+    // that folder's row; Qt's single selection then walks parents looking for the root and never
+    // stops. Reset both first; OnPopulatingCompleted() opens the folder again.
     grid_view->setCurrentIndex(QModelIndex{});
     grid_view->setRootIndex(QModelIndex{});
     m_populating = true;
@@ -404,10 +404,6 @@ void GameList::ResetViewMode() {
     ActivateStyle(LibraryStyles::Active());
 }
 
-bool GameList::IsStyleActive() const {
-    return style_view != nullptr;
-}
-
 void GameList::UpdateStyleToggles() {
     if (style_view == nullptr) {
         return;
@@ -422,6 +418,10 @@ void GameList::ActivateStyle(const LibraryStyles::StyleInfo* info) {
     }
     if (info == nullptr || (style_view != nullptr && style_id != info->id)) {
         if (style_view != nullptr) {
+            // The old view lives until the event loop deletes it: cut it off now so a rebuild it
+            // still has queued neither reports a selection nor works on the model.
+            style_view->disconnect(this);
+            style_model->disconnect(style_view);
             style_view->hide();
             style_view->deleteLater();
             style_view = nullptr;
@@ -821,12 +821,16 @@ void GameList::UpdateIconSizes() {
     if (style_view != nullptr) {
         style_view->UpdateIconSize();
     }
+    // The cards read the icon size and the names setting when they paint, so a repaint is enough
+    // even when the cell size stays the same.
     switch (game_list_mode) {
     case Settings::GameListMode::GridView:
         grid_view->UpdateIconSize();
+        grid_view->viewport()->update();
         break;
     case Settings::GameListMode::CarouselView:
         carousel_view->UpdateIconSize();
+        carousel_view->viewport()->update();
         break;
     case Settings::GameListMode::TreeView:
         break;

@@ -80,12 +80,16 @@ private:
     QPixmap SourceArt(int row, bool* has_art) const;
     QPixmap CoverPixmap(int row, int side);
     const Tint& TintFor(int row);
+    /// The full tinted background for a selected cover, cached for the current size.
+    QPixmap BackgroundFor(int row);
+    /// A neighbour cover at rest, already tilted towards the selection, cached.
+    QPixmap TiltedPixmap(int row, bool right, qreal side);
     QString TitleFor(int row) const;
     QString InfoFor(int row) const;
 
-    QPixmap BackgroundFor(int row);
     void PaintBackground(QPainter& painter);
     QPixmap Reflection(const QPixmap& cover);
+    const QPixmap& ShadowFor(qreal side, bool selected);
     void PaintCover(QPainter& painter, const Metrics& metrics, int row, qreal offset);
     void PaintTexts(QPainter& painter, const Metrics& metrics);
     void PaintDots(QPainter& painter, const Metrics& metrics);
@@ -113,7 +117,12 @@ private:
     /// and fade composed once, so a frame only blits one or two pixmaps.
     QHash<int, QPixmap> background_cache_;
     QHash<qint64, QPixmap> reflection_cache_;
+    QPixmap shadow_;
+    QPixmap shadow_selected_;
+    int shadow_side_[2] = {0, 0};
     int cover_cache_side_ = 0;
+    QHash<qint64, QPixmap> tilted_cache_;
+    int tilted_side_ = 0;
 
     std::vector<Hit> hits_;
     int press_row_ = -1;

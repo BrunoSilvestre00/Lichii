@@ -3,10 +3,13 @@
 
 #pragma once
 
+#include <QPalette>
 #include <QPixmap>
+#include <QString>
 #include <QStyledItemDelegate>
 
-QPixmap GameListFallbackIcon(int size);
+/// Art for a game without an icon: a gradient picked from the title, with its initials.
+QPixmap GameListFallbackIcon(int size, const QString& title, const QPalette& palette);
 
 /**
  * A stylized "card"-like delegate for the game grid view.
@@ -31,7 +34,6 @@ public:
     static constexpr int cardMargin = 8;
     /// Height the title and subtitle add below the art (title area plus the bottom inset).
     static constexpr int TitleHeight = 74;
-    static constexpr int TitleBlockHeight = TitleHeight + cardMargin + 2;
 
 private:
 

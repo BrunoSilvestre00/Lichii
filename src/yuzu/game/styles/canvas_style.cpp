@@ -37,7 +37,7 @@ LibraryStyleView* Make(QWidget* p) {
 }
 
 [[maybe_unused]] const bool registered =
-    LibraryStyles::Register({"canvas", QT_TR_NOOP("Canvas"), &Make});
+    LibraryStyles::Register({"canvas", QT_TRANSLATE_NOOP("LibraryStyles", "Canvas"), &Make});
 
 constexpr int SidePadding = 28;
 constexpr int FooterBarHeight = 48;
@@ -175,6 +175,9 @@ void CanvasStyle::SetCurrentIndex(const QModelIndex& index) {
 
 void CanvasStyle::SetShowNames(bool show) {
     show_names = show;
+    // Also called when the cover size changes: the tile size follows it.
+    UpdateLayout();
+    EnsureVisible(current);
     update();
 }
 
@@ -355,8 +358,19 @@ void CanvasStyle::changeEvent(QEvent* event) {
 }
 
 void CanvasStyle::contextMenuEvent(QContextMenuEvent* event) {
-    // Right click is handled on press; keep the event from reaching a parent menu.
     event->accept();
+    if (event->reason() == QContextMenuEvent::Keyboard) {
+        if (current >= 0) {
+            const QRect tile = TileRect(current).translated(0, -scroll);
+            emit ContextMenuRequested(IndexAt(current), mapToGlobal(tile.center()));
+        }
+        return;
+    }
+    // A right click on a tile already opened the menu on press; empty space gets the menu
+    // without a game (add a games folder).
+    if (RowAt(event->pos()) < 0) {
+        emit ContextMenuRequested(QModelIndex{}, event->globalPos());
+    }
 }
 
 void CanvasStyle::wheelEvent(QWheelEvent* event) {
@@ -455,6 +469,57 @@ void CanvasStyle::mouseDoubleClickEvent(QMouseEvent* event) {
     LibraryStyleView::mouseDoubleClickEvent(event);
 }
 
+QPixmap CanvasStyle::TileArt(const QModelIndex& index, int side, qreal radius, bool dark) {
+    const qreal ratio = devicePixelRatioF();
+    const QPixmap card = index.data(GameListItemPath::HasIconRole).toBool()
+                             ? index.data(GameListItemPath::CardIconRole).value<QPixmap>()
+                             : QPixmap{};
+    const QString key = QStringLiteral("%1|%2|%3|%4|%5|%6")
+                            .arg(index.data(GameListItemPath::FullPathRole).toString())
+                            .arg(card.cacheKey())
+                            .arg(side)
+                            .arg(ratio)
+                            .arg(radius)
+                            .arg(dark ? 1 : 0);
+    if (const QPixmap* cached = art_cache.object(key)) {
+        return *cached;
+    }
+    const int device = std::max(1, static_cast<int>(std::ceil(side * ratio)));
+    QPixmap pixmap(device, device);
+    pixmap.setDevicePixelRatio(ratio);
+    pixmap.fill(Qt::transparent);
+    QPainter p(&pixmap);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    const QRectF rectf(0, 0, side, side);
+    QPainterPath clip;
+    clip.addRoundedRect(rectf, radius, radius);
+    p.setClipPath(clip);
+    const QString title = index.data(GameListItemPath::TitleRole).toString();
+    QPixmap art = card;
+    if (art.isNull() && index.data(GameListItemPath::HasIconRole).toBool()) {
+        art = index.data(Qt::DecorationRole).value<QPixmap>();
+    }
+    if (!art.isNull()) {
+        QSize scaled = art.size();
+        scaled.scale(QSize(device, device), Qt::KeepAspectRatioByExpanding);
+        const QPixmap sized = art.scaled(scaled, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        p.drawPixmap(QRectF(rectf.center().x() - scaled.width() / ratio / 2,
+                            rectf.center().y() - scaled.height() / ratio / 2,
+                            scaled.width() / ratio, scaled.height() / ratio),
+                     sized, QRectF(sized.rect()));
+    } else {
+        const qulonglong program_id = index.data(GameListItemPath::ProgramIdRole).toULongLong();
+        const uint seed = program_id != 0 ? static_cast<uint>(qHash(program_id))
+                                          : static_cast<uint>(qHash(title));
+        DrawPlaceholder(&p, rectf, title, seed, dark);
+    }
+    p.end();
+    art_cache.insert(key, new QPixmap(pixmap),
+                     std::max(1, device * device * 4 / 1024));
+    return pixmap;
+}
+
 void CanvasStyle::PaintBackground(QPainter& painter, bool dark) {
     const QPalette pal = palette();
     const qreal ratio = devicePixelRatioF();
@@ -551,36 +616,12 @@ void CanvasStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
             }
             p.setPen(Qt::NoPen);
 
-            QPainterPath clip;
-            clip.addRoundedRect(rectf, radius, radius);
+            p.drawPixmap(rect.topLeft(), TileArt(index, layout.tile, radius, dark));
             p.save();
-            p.setClipPath(clip);
-
-            const QString title = index.data(GameListItemPath::TitleRole).toString();
-            const bool has_icon = index.data(GameListItemPath::HasIconRole).toBool();
-            QPixmap art;
-            if (has_icon) {
-                art = index.data(GameListItemPath::CardIconRole).value<QPixmap>();
-                if (art.isNull()) {
-                    art = index.data(Qt::DecorationRole).value<QPixmap>();
-                }
-            }
-            if (!art.isNull()) {
-                QSizeF scaled = QSizeF(art.size());
-                scaled.scale(rectf.size(), Qt::KeepAspectRatioByExpanding);
-                const QRectF target(rectf.center().x() - scaled.width() / 2,
-                                    rectf.center().y() - scaled.height() / 2, scaled.width(),
-                                    scaled.height());
-                p.drawPixmap(target, art, QRectF(art.rect()));
-            } else {
-                const qulonglong program_id =
-                    index.data(GameListItemPath::ProgramIdRole).toULongLong();
-                const uint seed = program_id != 0 ? static_cast<uint>(qHash(program_id))
-                                                  : static_cast<uint>(qHash(title));
-                DrawPlaceholder(&p, rectf, title, seed, dark);
-            }
-
             if (selected && (show_names || show_info)) {
+                QPainterPath clip;
+                clip.addRoundedRect(rectf, radius, radius);
+                p.setClipPath(clip);
                 const CanvasInfo info = ReadInfo(index);
                 const int pad = std::max(8, layout.tile / 18);
                 QFont title_font = font();

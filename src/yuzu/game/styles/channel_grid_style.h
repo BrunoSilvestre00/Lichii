@@ -4,6 +4,7 @@
 #pragma once
 
 #include <QCache>
+#include <QColor>
 #include <QPersistentModelIndex>
 #include <QPixmap>
 #include <QPointer>
@@ -18,8 +19,8 @@ class QContextMenuEvent;
 
 namespace LibraryStyles {
 
-/// "Channels" library style: wide cover tiles on a soft background with a curved bottom dock
-/// that shows the clock, the selected game and the app name. Concept by inxomnyaa.
+/// "Channels" library style: wide cover tiles on a soft background with a bottom bar that shows
+/// the game count, the clock and the selected game. Concept by inxomnyaa.
 class ChannelGridStyle final : public LibraryStyleView {
     Q_OBJECT
 
@@ -67,12 +68,12 @@ private:
     void EnsureVisible(int row);
     void SetCurrentRow(int row, bool notify);
     QModelIndex IndexForRow(int row) const;
-    void OnModelChanged();
     void ScheduleRebuild();
     void Rebuild();
     void ScheduleClock();
 
-    QPixmap CoverFor(const QModelIndex& index, const QSize& size, qreal dpr);
+    /// Cover art cropped to `size` with rounded corners (or the default art), cached.
+    QPixmap CoverFor(const QModelIndex& index, const QSize& size, qreal radius, qreal dpr);
     void PaintTile(QPainter& painter, const Layout& layout, int row, bool selected);
     void PaintDock(QPainter& painter, const Layout& layout);
 
@@ -84,6 +85,10 @@ private:
     QTimer clock_timer;
     QCache<QString, QPixmap> cover_cache{48 * 1024}; // cost in KiB
     int scroll = 0;
+    QPixmap background;
+    QSize background_size;
+    qreal background_dpr = 0;
+    QRgb background_base = 0;
     bool show_names = true;
     bool show_info = true;
 };

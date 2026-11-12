@@ -24,7 +24,7 @@ OUT = os.path.join(THEMES, "ris")
 FONTS = sys.argv[1] if len(sys.argv) > 1 else None
 FONT_FILES = ("ChakraPetch-SemiBold.ttf", "ChakraPetch-Bold.ttf")
 
-# Lichii Dark token -> RIS token (Web/React/RIS/src/styles.css)
+# Lichii Dark token -> RIS token (the RIS site palette)
 COLORS = {
     "#17181b": "#0f1114",  # window       -> steel-850
     "#131416": "#0a0b0d",  # chrome       -> steel-900
@@ -157,6 +157,8 @@ def main():
         "        <file>style.qss</file>",
     ]
     lines += ["        <file>fonts/%s</file>" % f for f in fonts]
+    # The font license travels with the fonts inside the binary.
+    lines += ["        <file>fonts/OFL.txt</file>"]
     lines += ["        <file>icons/%s</file>" % i for i in sorted(icons)]
     lines += ["    </qresource>", "</RCC>", ""]
     with open(os.path.join(OUT, "style.qrc"), "w", encoding="utf-8", newline="\n") as f:

@@ -15,7 +15,6 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPalette>
-#include <QPolygonF>
 #include <QRadialGradient>
 #include <QResizeEvent>
 #include <QStringList>
@@ -77,8 +76,6 @@ QString ItemKey(const QModelIndex& index) {
            QString::number(index.data(GameListItemPath::ProgramIdRole).toULongLong());
 }
 
-/// Reads "label: value" style tooltip line `line` and returns the value, or empty when the line has
-/// no label (for example "Never Played").
 QPixmap CoverOf(const QModelIndex& index) {
     if (!index.data(GameListItemPath::HasIconRole).toBool()) {
         return {};
@@ -230,7 +227,7 @@ void DrawTag(QPainter* p, const QPointF& right_top, const QString& text, const Q
 
 } // namespace
 
-BoxShelfStyle::BoxShelfStyle(QWidget* parent) : LibraryStyleView(parent), m_pixmaps(128 * 1024) {
+BoxShelfStyle::BoxShelfStyle(QWidget* parent) : LibraryStyleView(parent), m_pixmaps(64 * 1024) {
     setFocusPolicy(Qt::StrongFocus);
     setAutoFillBackground(false);
     setAttribute(Qt::WA_OpaquePaintEvent, true);
@@ -790,12 +787,26 @@ void BoxShelfStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
 void BoxShelfStyle::DrawWall(QPainter& p, bool dark) {
     const QColor base = dark ? QColor(56, 40, 31) : QColor(214, 184, 146);
     const QColor win = palette().window().color();
-    const QColor mixed((base.red() * 4 + win.red()) / 5, (base.green() * 4 + win.green()) / 5,
-                       (base.blue() * 4 + win.blue()) / 5);
-    QLinearGradient g(0, 0, 0, height());
-    g.setColorAt(0.0, mixed.lighter(108));
-    g.setColorAt(1.0, mixed.darker(116));
-    p.fillRect(rect(), g);
+    const double dpr = devicePixelRatioF();
+    const QString key = QStringLiteral("%1x%2|%3|%4")
+                            .arg(width())
+                            .arg(height())
+                            .arg(dpr)
+                            .arg(win.rgba() ^ (dark ? 1u : 0u));
+    if (m_wall_key != key) {
+        // A full window gradient on every frame is costly at high pixel ratios: render it once.
+        m_wall_key = key;
+        const QColor mixed((base.red() * 4 + win.red()) / 5, (base.green() * 4 + win.green()) / 5,
+                           (base.blue() * 4 + win.blue()) / 5);
+        m_wall = QPixmap(QSize(std::max(1, qCeil(width() * dpr)), std::max(1, qCeil(height() * dpr))));
+        m_wall.setDevicePixelRatio(dpr);
+        QPainter wall(&m_wall);
+        QLinearGradient g(0, 0, 0, height());
+        g.setColorAt(0.0, mixed.lighter(108));
+        g.setColorAt(1.0, mixed.darker(116));
+        wall.fillRect(QRect(0, 0, width(), height()), g);
+    }
+    p.drawPixmap(0, 0, m_wall);
 }
 
 QPixmap BoxShelfStyle::WoodPixmap(int w, int h, int top_face, bool dark) {
@@ -864,6 +875,52 @@ QPixmap BoxShelfStyle::WoodPixmap(int w, int h, int top_face, bool dark) {
     p.end();
 
     m_wood.insert(key, pm);
+    return pm;
+}
+
+QPixmap BoxShelfStyle::ShadowPixmap(const Metrics& m, bool selected, double lift) {
+    const double dpr = devicePixelRatioF();
+    const double w = m.case_w;
+    const double h = m.case_h;
+    const QString key = QStringLiteral("%1|%2|%3|%4|%5")
+                            .arg(qRound(w * 10))
+                            .arg(qRound(h * 10))
+                            .arg(selected ? 1 : 0)
+                            .arg(qRound(lift * 10))
+                            .arg(dpr);
+    const auto found = m_shadows.constFind(key);
+    if (found != m_shadows.constEnd()) {
+        return found.value();
+    }
+    if (m_shadows.size() > 8) {
+        m_shadows.clear();
+    }
+    // The pixmap starts `pad` above and left of the case.
+    const double pad = w * 0.72;
+    QPixmap pm(QSize(std::max(1, qCeil((w + 2 * pad) * dpr)), std::max(1, qCeil((h + 2 * pad) * dpr))));
+    pm.setDevicePixelRatio(dpr);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.translate(pad, pad);
+
+    p.save();
+    p.translate(w / 2.0, h - 1.0);
+    p.scale(1.0, selected ? 0.22 : 0.16);
+    const double shadow_r = w * (selected ? 0.72 : 0.62);
+    QRadialGradient contact(QPointF(0, 0), shadow_r);
+    contact.setColorAt(0.0, QColor(0, 0, 0, selected ? 175 : 125));
+    contact.setColorAt(1.0, QColor(0, 0, 0, 0));
+    p.setPen(Qt::NoPen);
+    p.setBrush(contact);
+    p.drawEllipse(QPointF(0, 0), shadow_r, shadow_r);
+    p.restore();
+
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0, 0, 0, selected ? 70 : 42));
+    p.drawRoundedRect(QRectF(selected ? 6.0 : 3.0, 3.0, w, h), w * 0.045, w * 0.045);
+    p.end();
+    m_shadows.insert(key, pm);
     return pm;
 }
 
@@ -1140,42 +1197,18 @@ void BoxShelfStyle::DrawItem(QPainter& p, const Metrics& m, int pos, bool select
     const double h = m.case_h;
     const QColor accent = LibraryStyleContext::Accent(palette());
 
-    // Contact shadow on the plank.
-    p.save();
-    p.translate(base.center().x(), base.bottom() - 1.0);
-    p.scale(1.0, selected ? 0.22 : 0.16);
-    const double shadow_r = w * (selected ? 0.72 : 0.62);
-    QRadialGradient shadow(QPointF(0, 0), shadow_r);
-    shadow.setColorAt(0.0, QColor(0, 0, 0, selected ? 175 : 125));
-    shadow.setColorAt(1.0, QColor(0, 0, 0, 0));
-    p.setPen(Qt::NoPen);
-    p.setBrush(shadow);
-    p.drawEllipse(QPointF(0, 0), shadow_r, shadow_r);
-    p.restore();
-
-    // Slight perspective: the far (right) edge is a little shorter.
-    QTransform t = QTransform::fromTranslate(r.x(), r.y());
-    if (!m_spines) {
-        const double k = h * 0.014;
-        QPolygonF dst;
-        dst << r.topLeft() << QPointF(r.right(), r.top() + k) << QPointF(r.right(), r.bottom() - k)
-            << r.bottomLeft();
-        QPolygonF src;
-        src << QPointF(0, 0) << QPointF(w, 0) << QPointF(w, h) << QPointF(0, h);
-        QTransform quad;
-        if (QTransform::quadToQuad(src, dst, quad)) {
-            t = quad;
-        }
+    // Contact shadow on the plank and the drop shadow, one cached pixmap per size.
+    {
+        const QPixmap shadow = ShadowPixmap(m, selected, lift);
+        const double pad = w * 0.72;
+        p.drawPixmap(QPointF(std::round(base.x() - pad), std::round(base.y() - pad)), shadow);
     }
+
+    // Pixel aligned: a plain blit, no transformed (slow) pixmap drawing per case and frame.
+    const QTransform t = QTransform::fromTranslate(std::round(r.x()), std::round(r.y()));
     QPainterPath outline;
     outline.addRoundedRect(QRectF(0, 0, w, h), w * 0.045, w * 0.045);
     const QPainterPath mapped = t.map(outline);
-
-    p.save();
-    p.setPen(Qt::NoPen);
-    p.setBrush(QColor(0, 0, 0, selected ? 70 : 42));
-    p.drawPath(mapped.translated(selected ? 6.0 : 3.0, selected ? lift + 3.0 : 3.0));
-    p.restore();
 
     const QPixmap pix = m_spines ? SpinePixmap(index, m, dark) : CasePixmap(index, m, dark);
     p.save();
@@ -1384,10 +1417,9 @@ void BoxShelfStyle::DrawNameBubble(QPainter& p, const Metrics& m, const QRectF& 
     p.drawPolygon(QPolygonF{{cx - arrow, rect.top() + 0.75},
                             {cx, rect.top() - arrow},
                             {cx + arrow, rect.top() + 0.75}});
-    p.setFont(f);
-    p.setPen(QColor(0x16, 0x14, 0x1c));
-    p.setClipRect(rect.adjusted(8, 4, -8, -4));
-    p.drawText(rect.adjusted(12, 8, -12, -8), Qt::AlignCenter | Qt::TextWordWrap, title);
+    // Two lines at most, cut with "...", like the cartridge bubbles.
+    LibraryStyleContext::PaintName(&p, rect.adjusted(12, 8, -12, -8).toAlignedRect(), title,
+                                   QColor(0x16, 0x14, 0x1c), f, Qt::AlignCenter, 2);
     p.restore();
 }
 
@@ -1398,7 +1430,7 @@ LibraryStyleView* Make(QWidget* parent) {
 }
 
 [[maybe_unused]] const bool registered =
-    LibraryStyles::Register({"box_shelf", QT_TR_NOOP("Box Shelf"), &Make});
+    LibraryStyles::Register({"box_shelf", QT_TRANSLATE_NOOP("LibraryStyles", "Box Shelf"), &Make});
 
 } // namespace
 

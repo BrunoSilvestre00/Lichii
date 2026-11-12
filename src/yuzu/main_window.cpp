@@ -1786,7 +1786,13 @@ void MainWindow::ConnectMenuEvents() {
                 CheckIconSize();
 
                 game_list->UpdateIconSizes();
-                game_list->RefreshGameDirectory();
+                // Only the list view stores icons at the chosen size; the grid, the carousel and
+                // the library styles scale the card art when they paint. A rescan here would also
+                // rebuild the content providers on this thread and lock the library until it ends.
+                if (UISettings::values.game_list_mode.GetValue() ==
+                    Settings::GameListMode::TreeView) {
+                    game_list->RefreshGameDirectory();
+                }
             }
         });
     }
@@ -4049,6 +4055,13 @@ void MainWindow::UpdateLibraryStyleActions() {
         action->setChecked(active != nullptr &&
                            action->data().toString() == QString::fromUtf8(active->id));
     }
+    // The styles and the Modern grid / Carousel cards show the info (play time, version); the
+    // list view has its own columns.
+    if (action_show_library_info != nullptr) {
+        action_show_library_info->setEnabled(
+            active != nullptr ||
+            UISettings::values.game_list_mode.GetValue() != Settings::GameListMode::TreeView);
+    }
 }
 
 void MainWindow::RetranslateLibraryStyleActions() {
@@ -4093,7 +4106,7 @@ void MainWindow::ToggleShowGameName() {
 
     CheckIconSize();
 
-    // Names only change how covers are drawn and sized; no need to rescan the game folders.
+    // The cards and the styles read the setting when they paint: no rescan needed.
     game_list->UpdateIconSizes();
 }
 

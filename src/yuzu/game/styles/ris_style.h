@@ -85,6 +85,7 @@ private:
     QPointer<QAbstractItemModel> model;
     QList<QPersistentModelIndex> entries;
     int current = -1;
+    bool rebuild_pending = false;
     bool show_names = true;
     bool show_info = false;
     bool large_shelf = false;
@@ -94,6 +95,9 @@ private:
     QString display_family;
     /// Where the Play plate was painted last, for mouse clicks.
     QRect play_rect;
+    /// Hero background (grid and glow), rendered once per size and colours.
+    QPixmap hero_background;
+    QString hero_key;
 };
 
 } // namespace LibraryStyles
