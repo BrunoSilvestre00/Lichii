@@ -5,8 +5,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <QIcon>
+#include <QPixmap>
 #include <fmt/ranges.h>
 #include "common/scm_rev.h"
+#include "qt_common/config/uisettings.h"
 #include "ui_aboutdialog.h"
 #include "yuzu/about_dialog.h"
 
@@ -25,7 +27,12 @@ AboutDialog::AboutDialog(QWidget* parent)
     // Try and request the icon from Qt theme (Linux?)
     const QIcon yuzu_logo = QIcon::fromTheme(QStringLiteral("io.github.zortos293.lichii"),
                                            QIcon(QStringLiteral(":/img/lichii.ico")));
-    if (!yuzu_logo.isNull()) {
+    if (UISettings::IsRisTheme()) {
+        // RIS theme: the RIS mark takes the logo spot; the Lichii name and build stay below.
+        const QPixmap mark(QStringLiteral(":/ris/brand/ris_mark.png"));
+        ui->labelLogo->setPixmap(mark.scaled(112, 112, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        ui->labelLogo->setToolTip(QStringLiteral("RIS, PantACRO4life"));
+    } else if (!yuzu_logo.isNull()) {
         ui->labelLogo->setPixmap(yuzu_logo.pixmap(112));
     }
     ui->labelYuzu->setPixmap(QIcon(QStringLiteral(":/img/lichii_wordmark.png")).pixmap(113, 48));

@@ -42,7 +42,15 @@ namespace UISettings {
 bool IsDarkTheme();
 
 /// Lichii Dark and Lichii Modern, which builds on it, share the Lichii palette and icons.
+/// RIS is a recolored Lichii Dark, so it counts as a Lichii theme too.
 bool IsLichiiTheme();
+
+/// RIS (PantACRO4life): Lichii Dark in the RIS colors, with its own icons and brand images.
+bool IsRisTheme();
+
+/// Resource folder of the Lichii style icons for the current theme: "ris" or "lichii".
+/// Paths are ":/<folder>/icons/<name>.png".
+const char* LichiiIconFolder();
 
 struct ContextualShortcut {
     std::string keyseq;
@@ -66,6 +74,7 @@ enum class Theme {
     MidnightBlueColorful,
     LichiiDark,
     LichiiModern,
+    Ris,
 };
 
 enum class GameLibraryStyle : u8 {
@@ -75,7 +84,7 @@ enum class GameLibraryStyle : u8 {
 
 static constexpr Theme default_theme{Theme::LichiiDark};
 
-using Themes = std::array<std::pair<const char*, const char*>, 8>;
+using Themes = std::array<std::pair<const char*, const char*>, 9>;
 extern const Themes themes;
 
 struct GameDir {

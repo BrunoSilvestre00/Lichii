@@ -278,6 +278,7 @@ target_sources(yuzu PRIVATE
     game/styles/dense_grid_style.cpp game/styles/dense_grid_style.h
     game/styles/dual_pane_style.cpp game/styles/dual_pane_style.h
     game/styles/home_row_style.cpp game/styles/home_row_style.h
+    game/styles/ris_style.cpp game/styles/ris_style.h
     # --- styles: end ---
 )
 

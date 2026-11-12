@@ -16,6 +16,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPoint>
+#include <QPolygon>
 #include <QPixmap>
 #include <QPropertyAnimation>
 #include <QVariantAnimation>
@@ -25,6 +26,7 @@
 #include "common/container/unordered_map.h"
 #include "core/frontend/framebuffer_layout.h"
 #include "core/loader/loader.h"
+#include "qt_common/config/uisettings.h"
 #include "ui_loading_screen.h"
 #include "video_core/rasterizer_interface.h"
 #include "video_core/shader_warm/shader_warm_builder.h"
@@ -478,11 +480,55 @@ void LoadingScreen::hideEvent(QHideEvent* event) {
     QWidget::hideEvent(event);
 }
 
+namespace {
+
+/// RIS theme only: hazard stripes along the top and bottom edges and the RIS mark as a faint
+/// watermark in the lower right corner, like the RIS boot screens. Drawn under the card.
+void PaintRisBranding(QPainter& p, const QRect& rect) {
+    static const QPixmap mark(QStringLiteral(":/ris/brand/ris_mark.png"));
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+
+    if (!mark.isNull()) {
+        const int height = rect.height() * 11 / 20;
+        const QSize size = mark.size().scaled(height, height, Qt::KeepAspectRatio);
+        const QRect target(rect.right() - size.width() - rect.width() / 24,
+                           rect.bottom() - size.height() - rect.height() / 14, size.width(),
+                           size.height());
+        p.setOpacity(0.13);
+        p.drawPixmap(target, mark);
+        p.setOpacity(1.0);
+    }
+
+    constexpr int stripe = 6;
+    const QColor red(0xe0, 0x1b, 0x31);
+    for (const int y : {rect.top(), rect.bottom() - stripe + 1}) {
+        const QRect band(rect.left(), y, rect.width(), stripe);
+        p.fillRect(band, QColor(0x0a, 0x0b, 0x0d));
+        p.setClipRect(band);
+        p.setPen(Qt::NoPen);
+        p.setBrush(red);
+        for (int x = rect.left() - stripe * 2; x < rect.right() + stripe * 2; x += stripe * 3) {
+            const QPolygon slant({QPoint(x, y + stripe), QPoint(x + stripe, y),
+                                  QPoint(x + stripe * 2, y), QPoint(x + stripe, y + stripe)});
+            p.drawPolygon(slant);
+        }
+        p.setClipping(false);
+    }
+    p.restore();
+}
+
+} // namespace
+
 void LoadingScreen::paintEvent(QPaintEvent* event) {
     QStyleOption opt;
     opt.initFrom(this);
     QPainter p(this);
     style()->drawPrimitive(QStyle::PE_Widget, &opt, &p, this);
+    if (UISettings::IsRisTheme()) {
+        PaintRisBranding(p, rect());
+    }
     QWidget::paintEvent(event);
 }
 

@@ -93,6 +93,7 @@
 #include <QFileInfo>
 #include <QFutureWatcher>
 #include <QFont>
+#include <QFontDatabase>
 #include <QGuiApplication>
 #include <QInputDialog>
 #include <QLabel>
@@ -2530,9 +2531,10 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     const auto gpu_vendor = QtCommon::system->GPU().Renderer().GetDeviceVendor();
     UpdateWindowTitle(title_name, title_version, gpu_vendor);
 
-    // Only the Lichii Modern theme uses the modern loading and closing screens; every other theme
-    // keeps the original ones. Read at boot, so a theme change applies to the next game.
-    modern_loading_screen = UISettings::values.theme == std::string("lichii_modern");
+    // Only the Lichii Modern and RIS themes use the modern loading and closing screens; every other
+    // theme keeps the original ones. Read at boot, so a theme change applies to the next game.
+    modern_loading_screen = UISettings::values.theme == std::string("lichii_modern") ||
+                            UISettings::IsRisTheme();
     if (!modern_loading_screen) {
         classic_loading_screen->Prepare(QtCommon::system->GetAppLoader());
         classic_loading_screen->show();
@@ -6070,7 +6072,9 @@ void MainWindow::filterBarSetChecked(bool state) {
 static void AdjustLinkColor() {
     QPalette new_pal(qApp->palette());
 
-    if (UISettings::IsLichiiTheme())
+    if (UISettings::IsRisTheme())
+        new_pal.setColor(QPalette::Link, QColor(0xff, 0x33, 0x47));
+    else if (UISettings::IsLichiiTheme())
         new_pal.setColor(QPalette::Link, QColor(0xf4, 0x5a, 0x85));
     else if (UISettings::IsDarkTheme())
         new_pal.setColor(QPalette::Link, QColor(0, 190, 255, 255));
@@ -6114,6 +6118,49 @@ static QPalette LichiiPalette() {
     palette.setColor(QPalette::Disabled, QPalette::Text, disabled);
     palette.setColor(QPalette::Disabled, QPalette::ButtonText, disabled);
     return palette;
+}
+
+// RIS (PantACRO4life): the Lichii palette in the RIS colors, near black steel and signal red.
+static QPalette RisPalette() {
+    QPalette palette = LichiiPalette();
+    const QColor window(0x0f, 0x11, 0x14);
+    const QColor surface(0x14, 0x17, 0x1b);
+    const QColor text(0xf2, 0xf4, 0xf7);
+    const QColor disabled(0x5a, 0x62, 0x6d);
+    const QColor accent(0xe0, 0x1b, 0x31);
+    palette.setColor(QPalette::Window, window);
+    palette.setColor(QPalette::WindowText, text);
+    palette.setColor(QPalette::Base, window);
+    palette.setColor(QPalette::AlternateBase, QColor(0x12, 0x14, 0x18));
+    palette.setColor(QPalette::ToolTipBase, QColor(0x1c, 0x20, 0x26));
+    palette.setColor(QPalette::ToolTipText, text);
+    palette.setColor(QPalette::PlaceholderText, QColor(0x6f, 0x77, 0x82));
+    palette.setColor(QPalette::Text, text);
+    palette.setColor(QPalette::Button, surface);
+    palette.setColor(QPalette::ButtonText, text);
+    palette.setColor(QPalette::Light, QColor(0x3a, 0x41, 0x4b));
+    palette.setColor(QPalette::Midlight, QColor(0x2a, 0x2f, 0x37));
+    palette.setColor(QPalette::Mid, QColor(0x1c, 0x20, 0x26));
+    palette.setColor(QPalette::Dark, QColor(0x0a, 0x0b, 0x0d));
+    palette.setColor(QPalette::Highlight, accent);
+    palette.setColor(QPalette::HighlightedText, Qt::white);
+    palette.setColor(QPalette::Link, QColor(0xff, 0x33, 0x47));
+    palette.setColor(QPalette::LinkVisited, QColor(0xb8, 0x16, 0x2a));
+    palette.setColor(QPalette::Disabled, QPalette::WindowText, disabled);
+    palette.setColor(QPalette::Disabled, QPalette::Text, disabled);
+    palette.setColor(QPalette::Disabled, QPalette::ButtonText, disabled);
+    return palette;
+}
+
+// The RIS theme ships Chakra Petch for its headings; loaded once, the first time RIS is used.
+static void LoadRisFonts() {
+    static bool loaded = false;
+    if (loaded) {
+        return;
+    }
+    loaded = true;
+    QFontDatabase::addApplicationFont(QStringLiteral(":/ris/fonts/ChakraPetch-SemiBold.ttf"));
+    QFontDatabase::addApplicationFont(QStringLiteral(":/ris/fonts/ChakraPetch-Bold.ttf"));
 }
 
 void MainWindow::UpdateMenuIcons() {
@@ -6187,7 +6234,11 @@ void MainWindow::UpdateUITheme() {
         current_theme = default_theme;
 
     static bool lichii_palette = false;
-    if (UISettings::IsLichiiTheme()) {
+    if (UISettings::IsRisTheme()) {
+        LoadRisFonts();
+        qApp->setPalette(RisPalette());
+        lichii_palette = true;
+    } else if (UISettings::IsLichiiTheme()) {
         qApp->setPalette(LichiiPalette());
         lichii_palette = true;
     } else if (lichii_palette) {
@@ -6244,6 +6295,16 @@ void MainWindow::UpdateUITheme() {
     }
 
     UpdateMenuIcons();
+
+    // RIS shows its mark as the window icon; every other theme keeps the application icon.
+    static bool ris_icon = false;
+    if (UISettings::IsRisTheme()) {
+        setWindowIcon(QIcon(QStringLiteral(":/ris/brand/ris_mark.png")));
+        ris_icon = true;
+    } else if (ris_icon) {
+        setWindowIcon(QIcon());
+        ris_icon = false;
+    }
 
 #ifdef _WIN32
     RemoveTitlebarFilter();
