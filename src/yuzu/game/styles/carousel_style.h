@@ -86,7 +86,6 @@ private:
     /// reflection, cached.
     QPixmap TiltedPixmap(int row, bool right, qreal side);
     QString TitleFor(int row) const;
-    QString InfoFor(int row) const;
 
     void PaintBackground(QPainter& painter);
     QPixmap Reflection(const QPixmap& cover);

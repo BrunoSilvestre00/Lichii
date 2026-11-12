@@ -428,10 +428,6 @@ QString CarouselStyle::TitleFor(int row) const {
     return title;
 }
 
-QString CarouselStyle::InfoFor(int row) const {
-    return LibraryStyleContext::Info(IndexAt(row)).info_line;
-}
-
 const CarouselStyle::Tint& CarouselStyle::TintFor(int row) {
     const auto found = tint_cache_.constFind(row);
     if (found != tint_cache_.constEnd()) {
@@ -795,24 +791,24 @@ void CarouselStyle::PaintTexts(QPainter& painter, const Metrics& m) {
         QFont font = this->font();
         font.setPixelSize(static_cast<int>(m.title_px));
         font.setBold(true);
-        painter.setFont(font);
-        painter.setPen(text);
-        const QString title = QFontMetrics(font).elidedText(TitleFor(row), Qt::ElideRight,
-                                                            static_cast<int>(text_width));
-        painter.drawText(QRectF(left, m.title_y, text_width, m.title_px * 1.5),
-                         Qt::AlignHCenter | Qt::AlignVCenter, title);
+        // One line (S4); with Scroll Long Names a long name glides.
+        LibraryStyleContext::PaintTitle(
+            &painter,
+            QRectF(left, m.title_y, text_width, m.title_px * 1.5).toAlignedRect(),
+            TitleFor(row), text, font, Qt::AlignHCenter | Qt::AlignVCenter, 1, this);
     }
     if (show_info_) {
         QFont font = this->font();
         font.setPixelSize(static_cast<int>(m.info_px));
-        painter.setFont(font);
         QColor muted = text;
         muted.setAlpha(170);
-        painter.setPen(muted);
-        const QString info = QFontMetrics(font).elidedText(InfoFor(row), Qt::ElideRight,
-                                                           static_cast<int>(text_width));
-        painter.drawText(QRectF(left, m.info_y, text_width, m.info_px * 1.6),
-                         Qt::AlignHCenter | Qt::AlignVCenter, info);
+        // One line of fixed parts (S3): whole parts drop out when the window is narrow.
+        const QStringList info = LibraryStyleContext::InfoLines(
+            LibraryStyleContext::Info(IndexAt(row)),
+            LibraryStyleContext::LayoutInfo(font, static_cast<int>(text_width), 1), font);
+        LibraryStyleContext::PaintInfoLines(
+            &painter, QRectF(left, m.info_y, text_width, m.info_px * 1.6).toAlignedRect(), info,
+            muted, font, Qt::AlignHCenter | Qt::AlignVCenter);
     }
 }
 
