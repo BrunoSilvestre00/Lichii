@@ -511,7 +511,8 @@ if (HAS_HYPERVISOR AND NOT CMAKE_GENERATOR MATCHES "Xcode")
     add_custom_command(TARGET yuzu POST_BUILD
         # --deep: the bundle also holds files that aren't code (nx2_switches.txt in MacOS).
         COMMAND codesign --force --deep --sign - --entitlements
-                "${CMAKE_SOURCE_DIR}/dist/eglantine.entitlements" "$<TARGET_BUNDLE_DIR:yuzu>")
+                "${CMAKE_SOURCE_DIR}/dist/eglantine.entitlements" "$<TARGET_BUNDLE_DIR:yuzu>"
+        VERBATIM)
 elseif (HAS_HYPERVISOR)
     set_target_properties(yuzu PROPERTIES
         XCODE_ATTRIBUTE_CODE_SIGN_ENTITLEMENTS "${CMAKE_SOURCE_DIR}/dist/eglantine.entitlements")

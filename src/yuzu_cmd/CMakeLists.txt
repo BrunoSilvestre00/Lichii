@@ -76,7 +76,8 @@ create_target_directory_groups(yuzu-cmd)
 if (HAS_HYPERVISOR)
     add_custom_command(TARGET yuzu-cmd POST_BUILD
         COMMAND codesign --force --sign - --entitlements
-                "${CMAKE_SOURCE_DIR}/dist/eglantine.entitlements" "$<TARGET_FILE:yuzu-cmd>")
+                "${CMAKE_SOURCE_DIR}/dist/eglantine.entitlements" "$<TARGET_FILE:yuzu-cmd>"
+        VERBATIM)
 endif()
 
 # needed for vma
