@@ -4036,7 +4036,8 @@ void MainWindow::ToggleShowLibraryInfo() {
     auto& setting = UISettings::values.show_library_info;
     setting.SetValue(!setting.GetValue());
     action_show_library_info->setChecked(setting.GetValue());
-    game_list->UpdateStyleToggles();
+    // Also repaints the Modern grid and Carousel cards, which show the info line too.
+    game_list->UpdateIconSizes();
 }
 
 void MainWindow::UpdateLibraryStyleActions() {
@@ -4092,11 +4093,8 @@ void MainWindow::ToggleShowGameName() {
 
     CheckIconSize();
 
+    // Names only change how covers are drawn and sized; no need to rescan the game folders.
     game_list->UpdateIconSizes();
-    // The styles repaint from UpdateIconSizes; only the item views need the list rebuilt.
-    if (!game_list->IsStyleActive()) {
-        game_list->RefreshGameDirectory();
-    }
 }
 
 void MainWindow::OnConfigure() {

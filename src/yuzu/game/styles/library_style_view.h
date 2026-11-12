@@ -9,6 +9,8 @@
 #include <QPoint>
 #include <QString>
 #include <QWidget>
+#include <QCoreApplication>
+#include <QResizeEvent>
 
 class QAbstractItemModel;
 
@@ -32,6 +34,13 @@ public:
     virtual void SetCurrentIndex(const QModelIndex& index) = 0;
     virtual void SetShowNames(bool show) = 0;
     virtual void SetShowInfo(bool show) = 0;
+    // The global icon size changed (View > Game Icon Size). The default replays a resize, which
+    // every style already answers with a relayout and fresh caches.
+    virtual void UpdateIconSize() {
+        QResizeEvent event(size(), size());
+        QCoreApplication::sendEvent(this, &event);
+        update();
+    }
     // The style's own option (R / X), e.g. scattered on/off. Returns a short label for the current
     // option or empty.
     virtual QString CycleOption() {

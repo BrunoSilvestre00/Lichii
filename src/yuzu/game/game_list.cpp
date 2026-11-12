@@ -261,6 +261,11 @@ void GameList::OnPopulate() {
     } else {
         grid_root_dir_index_to_restore = -1;
     }
+    // The model is about to drop every top-level row. With a folder as root and that folder
+    // still the current index, QAbstractItemView::rowsAboutToBeRemoved walks parents looking
+    // for the root and never finds it (endless loop). OnPopulatingCompleted restores the folder.
+    grid_view->setCurrentIndex(QModelIndex{});
+    grid_view->setRootIndex(QModelIndex{});
     m_populating = true;
     m_currentView->setEnabled(false);
     if (style_view != nullptr) {
@@ -481,6 +486,19 @@ void GameList::ActivateStyle(const LibraryStyles::StyleInfo* info) {
     style_view->setEnabled(!m_populating);
     UpdateStyleToggles();
     RestoreStyleSelection();
+    // The grid that had focus is disabled now; without this, keys go nowhere until a click.
+    FocusStyleView();
+}
+
+void GameList::FocusStyleView() {
+    if (style_view == nullptr || !style_view->isEnabled() || !style_view->isVisible()) {
+        return;
+    }
+    const QWidget* focus = QApplication::focusWidget();
+    if (focus != nullptr && search_field->isAncestorOf(focus)) {
+        return; // Typing a search; don't steal the cursor.
+    }
+    style_view->setFocus(Qt::OtherFocusReason);
 }
 
 bool GameList::IsStyleObject(const QObject* object) const {
@@ -784,6 +802,7 @@ void GameList::OnPopulatingCompleted(const QStringList& watch_list) {
     if (style_view != nullptr) {
         style_view->setEnabled(true);
         RestoreStyleSelection();
+        FocusStyleView();
     }
 
     emit PopulatingCompleted();
@@ -799,6 +818,9 @@ void GameList::RefreshExternalContent() {
 
 void GameList::UpdateIconSizes() {
     UpdateStyleToggles();
+    if (style_view != nullptr) {
+        style_view->UpdateIconSize();
+    }
     switch (game_list_mode) {
     case Settings::GameListMode::GridView:
         grid_view->UpdateIconSize();

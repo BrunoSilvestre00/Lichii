@@ -169,6 +169,7 @@ private:
     void PopupContextMenu(const QPoint& menu_location);
     void PopupContextMenuAt(const QModelIndex& item, const QPoint& global_pos);
 
+    void FocusStyleView();
     void ActivateStyle(const LibraryStyles::StyleInfo* info);
     bool IsStyleObject(const QObject* object) const;
     bool HandleStyleKey(QObject* target, const QKeyEvent* event);
