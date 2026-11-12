@@ -110,7 +110,7 @@ LibraryStyleView* Make(QWidget* parent) {
 } // namespace
 
 [[maybe_unused]] static const bool registered =
-    LibraryStyles::Register({"ris", QT_TR_NOOP("RIS"), &Make});
+    LibraryStyles::Register({"ris", QT_TRANSLATE_NOOP("LibraryStyles", "RIS"), &Make});
 
 RisStyle::RisStyle(QWidget* parent) : LibraryStyleView{parent} {
     setFocusPolicy(Qt::StrongFocus);
@@ -135,7 +135,17 @@ void RisStyle::SetModel(QAbstractItemModel* new_model) {
     model = new_model;
     if (model) {
         // Population adds rows one by one: rebuild once per event loop pass.
-        const auto schedule = [this] { QTimer::singleShot(0, this, &RisStyle::Rebuild); };
+        const auto schedule = [this] {
+            if (rebuild_pending) {
+                return;
+            }
+            rebuild_pending = true;
+            QTimer::singleShot(0, this, [this] {
+                if (rebuild_pending) {
+                    Rebuild();
+                }
+            });
+        };
         connect(model, &QAbstractItemModel::modelReset, this, schedule);
         connect(model, &QAbstractItemModel::layoutChanged, this, schedule);
         connect(model, &QAbstractItemModel::rowsInserted, this, schedule);
@@ -154,16 +164,17 @@ QModelIndex RisStyle::CurrentIndex() const {
 }
 
 void RisStyle::SetCurrentIndex(const QModelIndex& index) {
-    // A rebuild may still be queued after the model changed: try once more after running it.
-    for (int attempt = 0; attempt < 2; ++attempt) {
-        for (int i = 0; i < entries.size(); ++i) {
-            if (entries[i] == index) {
-                Select(i);
-                ScrollShelfTo(i, false);
-                return;
-            }
-        }
+    // A rebuild may still be queued after the model changed: run it first.
+    if (rebuild_pending) {
         Rebuild();
+    }
+    const QPersistentModelIndex wanted{index.siblingAtColumn(0)};
+    for (int i = 0; i < entries.size(); ++i) {
+        if (entries[i] == wanted) {
+            Select(i);
+            ScrollShelfTo(i, false);
+            return;
+        }
     }
 }
 
@@ -184,9 +195,11 @@ QString RisStyle::CycleOption() {
 }
 
 void RisStyle::Rebuild() {
+    rebuild_pending = false;
     const QPersistentModelIndex previous = CurrentIndex();
     entries.clear();
-    QPersistentModelIndex add_folder;
+    // Games are shown flat: top level games plus the games inside each folder row. Favorites and
+    // the "Add games folder" row are not tiles, like the other styles.
     if (model) {
         const auto add_games = [this](const QModelIndex& parent) {
             for (int row = 0; row < model->rowCount(parent); ++row) {
@@ -204,13 +217,8 @@ void RisStyle::Rebuild() {
                 add_games(index);
             } else if (type == GameListItemType::Game) {
                 entries.append(index);
-            } else if (type == GameListItemType::AddDir) {
-                add_folder = index;
             }
         }
-    }
-    if (add_folder.isValid()) {
-        entries.append(add_folder);
     }
 
     current = -1;
@@ -363,11 +371,11 @@ void RisStyle::Select(int position) {
 }
 
 QPixmap RisStyle::CachedCover(const QModelIndex& index, const QSize& size) const {
-    const GameInfo info = LibraryStyleContext::Info(index);
+    // Keyed by the path and the art itself: Info() reads a dozen roles, too much per tile and frame.
     const qint64 art =
         index.data(GameListItemPath::CardIconRole).value<QPixmap>().cacheKey();
     const QString key = QStringLiteral("ris_cover:%1:%2:%3x%4:%5:%6")
-                            .arg(info.is_add_folder ? QStringLiteral("+") : info.path)
+                            .arg(index.data(GameListItemPath::FullPathRole).toString())
                             .arg(art)
                             .arg(size.width())
                             .arg(size.height())
@@ -425,10 +433,7 @@ void RisStyle::PaintHeader(QPainter& painter, const Colors& colors) {
     painter.drawText(QPoint(x + 1, baseline + QFontMetrics(tagline).lineSpacing() + 2),
                      QStringLiteral("// PantACRO4life"));
 
-    int games = 0;
-    for (const auto& entry : entries) {
-        games += LibraryStyleContext::Info(entry).is_game ? 1 : 0;
-    }
+    const int games = static_cast<int>(entries.size());
     const QFont count_font = MonoFont(12);
     painter.setFont(count_font);
     painter.setPen(colors.muted);
@@ -445,25 +450,43 @@ void RisStyle::PaintHero(QPainter& painter, const Colors& colors) {
     painter.save();
     painter.setClipRect(hero);
 
-    // Blueprint grid and a red glow behind the cover.
-    QColor grid = colors.text;
-    grid.setAlpha(LibraryStyleContext::IsDark(palette()) || UISettings::IsRisTheme() ? 9 : 14);
-    painter.setPen(QPen(grid, 1));
-    for (int gx = 0; gx < hero.width(); gx += 32) {
-        painter.drawLine(gx, hero.top(), gx, hero.bottom());
-    }
-    for (int gy = hero.top(); gy < hero.bottom(); gy += 32) {
-        painter.drawLine(0, gy, hero.width(), gy);
-    }
-
+    // Blueprint grid and a red glow behind the cover: the same for every selection, so they are
+    // rendered once per size and colours.
     const QRect cover = HeroCoverRect();
-    QColor glow = colors.accent;
-    glow.setAlpha(70);
-    QRadialGradient radial(cover.center(), std::max(1, cover.width()));
-    radial.setColorAt(0.0, glow);
-    glow.setAlpha(0);
-    radial.setColorAt(1.0, glow);
-    painter.fillRect(hero, radial);
+    const qreal dpr = devicePixelRatioF();
+    const QString key = QStringLiteral("%1x%2|%3|%4|%5|%6")
+                            .arg(hero.width())
+                            .arg(hero.height())
+                            .arg(dpr)
+                            .arg(colors.background.rgba())
+                            .arg(colors.text.rgba())
+                            .arg(colors.accent.rgba());
+    if (hero_key != key) {
+        hero_key = key;
+        hero_background = QPixmap(QSize(std::max(1, static_cast<int>(std::ceil(hero.width() * dpr))),
+                                        std::max(1, static_cast<int>(std::ceil(hero.height() * dpr)))));
+        hero_background.setDevicePixelRatio(dpr);
+        hero_background.fill(colors.background);
+        QPainter p(&hero_background);
+        p.translate(0, -hero.top());
+        QColor grid = colors.text;
+        grid.setAlpha(LibraryStyleContext::IsDark(palette()) || UISettings::IsRisTheme() ? 9 : 14);
+        p.setPen(QPen(grid, 1));
+        for (int gx = 0; gx < hero.width(); gx += 32) {
+            p.drawLine(gx, hero.top(), gx, hero.bottom());
+        }
+        for (int gy = hero.top(); gy < hero.bottom(); gy += 32) {
+            p.drawLine(0, gy, hero.width(), gy);
+        }
+        QColor glow = colors.accent;
+        glow.setAlpha(70);
+        QRadialGradient radial(cover.center(), std::max(1, cover.width()));
+        radial.setColorAt(0.0, glow);
+        glow.setAlpha(0);
+        radial.setColorAt(1.0, glow);
+        p.fillRect(hero, radial);
+    }
+    painter.drawPixmap(hero.topLeft(), hero_background);
 
     const QModelIndex selected = CurrentIndex();
     if (!selected.isValid()) {
@@ -505,11 +528,9 @@ void RisStyle::PaintHero(QPainter& painter, const Colors& colors) {
     const QFont kicker = MonoFont(12);
     painter.setFont(kicker);
     painter.setPen(colors.accent_hot);
-    const QString kicker_text = info.is_add_folder ? tr("LIBRARY")
-                                                   : tr("SELECTED  %1 / %2")
-                                                         .arg(current + 1, 2, 10, QLatin1Char('0'))
-                                                         .arg(entries.size(), 2, 10,
-                                                              QLatin1Char('0'));
+    const QString kicker_text = tr("SELECTED  %1 / %2")
+                                    .arg(current + 1, 2, 10, QLatin1Char('0'))
+                                    .arg(entries.size(), 2, 10, QLatin1Char('0'));
     painter.drawText(QRect(left, y, column, QFontMetrics(kicker).lineSpacing()),
                      Qt::AlignLeft | Qt::AlignVCenter, kicker_text);
     y += QFontMetrics(kicker).lineSpacing() + 8;
@@ -536,18 +557,14 @@ void RisStyle::PaintHero(QPainter& painter, const Colors& colors) {
         QString value;
     };
     QList<Stat> stats;
-    if (info.is_game) {
-        stats.append({tr("PLAY TIME"), info.play_time_text});
-        stats.append({tr("VERSION"), info.update_version.isEmpty()
-                                         ? tr("Base")
-                                         : QStringLiteral("v") + info.update_version});
-        if (show_info) {
-            stats.append({tr("FORMAT"), info.file_type});
-            stats.append({tr("SIZE"), info.size_text});
-            stats.append({tr("TITLE ID"), info.program_id_text});
-        }
-    } else {
-        stats.append({tr("ACTION"), tr("Add a games folder")});
+    stats.append({tr("PLAY TIME"), info.play_time_text});
+    stats.append({tr("VERSION"), info.update_version.isEmpty()
+                                     ? tr("Base")
+                                     : QStringLiteral("v") + info.update_version});
+    if (show_info) {
+        stats.append({tr("FORMAT"), info.file_type});
+        stats.append({tr("SIZE"), info.size_text});
+        stats.append({tr("TITLE ID"), info.program_id_text});
     }
     const QFont label_font = MonoFont(11);
     QFont value_font = font();
@@ -592,7 +609,7 @@ void RisStyle::PaintHero(QPainter& painter, const Colors& colors) {
         plate_font.setPixelSize(15);
         plate_font.setBold(true);
         plate_font.setLetterSpacing(QFont::AbsoluteSpacing, 2);
-        const QString plate_text = info.is_add_folder ? tr("A  ADD FOLDER") : tr("A  PLAY");
+        const QString plate_text = tr("A  PLAY");
         const int plate_width = QFontMetrics(plate_font).horizontalAdvance(plate_text) + 44;
         play_rect = QRect(left, y, plate_width, 38);
         QPainterPath plate;
