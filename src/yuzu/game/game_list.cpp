@@ -339,15 +339,17 @@ void GameList::ResetViewMode() {
     if (m_isFlat != newFlatMode) {
         m_isFlat = newFlatMode;
         item_model->SetFlat(newFlatMode);
-        if (!UISettings::values.game_dirs.empty()) {
-            item_model->PopulateAsync(UISettings::values.game_dirs);
-        }
+        item_model->PopulateAsync(UISettings::values.game_dirs);
     }
 
     if (mode == Settings::GameListMode::GridView) {
         grid_view->setRootIndex(QModelIndex{});
         if (!m_populating && item_model->rowCount() > 0) {
-            grid_view->setRowHidden(0, true);
+            const auto* first_item = item_model->item(0, 0);
+            const bool hide_favorites =
+                first_item && first_item->data(GameListItem::TypeRole).value<GameListItemType>() ==
+                                  GameListItemType::Favorites;
+            grid_view->setRowHidden(0, hide_favorites);
         }
         UpdateFolderNavigation();
     } else {
@@ -437,7 +439,11 @@ void GameList::OnPopulatingCompleted(const QStringList& watch_list) {
             grid_view->UpdateIconSize();
             grid_view->scrollToTop();
         } else {
-            grid_view->setRowHidden(0, true);
+            const auto* first_item = item_model->item(0, 0);
+            const bool hide_favorites =
+                first_item && first_item->data(GameListItem::TypeRole).value<GameListItemType>() ==
+                                  GameListItemType::Favorites;
+            grid_view->setRowHidden(0, hide_favorites);
         }
         UpdateFolderNavigation();
         for (int i = 1; i < item_model->rowCount() - 1; ++i) {

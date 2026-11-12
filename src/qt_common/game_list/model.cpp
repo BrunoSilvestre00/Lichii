@@ -124,10 +124,19 @@ bool GameListModel::IsEmpty() const {
              type == GameListItemType::SysNandDir)) {
             invisibleRootItem()->removeRow(child->row());
             i--;
+            continue;
+        }
+
+        if (type == GameListItemType::Favorites || type == GameListItemType::AddDir) {
+            continue;
+        }
+
+        if (type == GameListItemType::Game || child->hasChildren()) {
+            return false;
         }
     }
 
-    return !invisibleRootItem()->hasChildren();
+    return true;
 }
 
 void GameListModel::ToggleFavorite(u64 program_id) {

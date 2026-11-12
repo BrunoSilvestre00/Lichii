@@ -12,6 +12,8 @@
 #include <QWidget>
 #include <QtGlobal>
 
+#include "common/container/unordered_map.h"
+
 #if !QT_CONFIG(movie)
 #define YUZU_QT_MOVIE_MISSING 1
 #endif

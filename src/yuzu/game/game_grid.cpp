@@ -77,6 +77,8 @@ void GameGrid::ApplyFilter(const QString& edit_filter_text, GameListModel* model
         if (!root.isValid() &&
             (type == GameListItemType::CustomDir || type == GameListItemType::SdmcDir ||
              type == GameListItemType::UserNandDir || type == GameListItemType::SysNandDir)) {
+            matches = Yuzu::ContainsAllWords(
+                item->data(Qt::DisplayRole).toString().toLower(), edit_filter_text);
             for (int child = 0; !matches && child < item->rowCount(); ++child) {
                 matches = Yuzu::FilterMatches(edit_filter_text, item->child(child, 0));
             }

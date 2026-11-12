@@ -248,9 +248,9 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
         surface.setAlpha(dark ? 95 : 55);
         border = palette.highlight().color();
         border.setAlpha(190);
-        titleColor = palette.highlightedText().color();
-        subtitleColor = palette.highlightedText().color();
-        subtitleColor.setAlpha(190);
+        titleColor = dark ? palette.highlightedText().color() : palette.text().color();
+        subtitleColor = dark ? palette.highlightedText().color() : palette.text().color();
+        subtitleColor.setAlpha(dark ? 190 : 165);
     } else if (hovered) {
         surface = dark ? QColor(38, 39, 42) : QColor(248, 248, 249);
         border = palette.highlight().color();

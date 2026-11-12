@@ -128,6 +128,8 @@ ClassicLoadingScreen::ClassicLoadingScreen(QWidget* parent)
 ClassicLoadingScreen::~ClassicLoadingScreen() = default;
 
 void ClassicLoadingScreen::Prepare(Loader::AppLoader& loader) {
+    Clear();
+
     std::vector<u8> buffer;
     if (loader.ReadBanner(buffer) == Loader::ResultStatus::Success) {
 #ifdef YUZU_QT_MOVIE_MISSING
@@ -231,6 +233,8 @@ void ClassicLoadingScreen::paintEvent(QPaintEvent* event) {
 }
 
 void ClassicLoadingScreen::Clear() {
+    ui->logo->clear();
+    ui->banner->clear();
 #ifndef YUZU_QT_MOVIE_MISSING
     animation.reset();
     backing_buf.reset();
