@@ -96,6 +96,8 @@ private:
     QPixmap SpinePixmap(const QModelIndex& index, const Metrics& m, bool dark);
     QColor SpineColor(const QModelIndex& index);
     QPixmap WoodPixmap(int w, int h, int top_face, bool dark);
+    /// Contact and drop shadow of one case, cached per size.
+    QPixmap ShadowPixmap(const Metrics& m, bool selected, double lift);
 
     QPointer<QAbstractItemModel> m_model;
     QPersistentModelIndex m_current;
@@ -109,10 +111,13 @@ private:
     bool m_spines = false;
     double m_scroll = 0.0;
 
-    QCache<QString, QPixmap> m_pixmaps;
+    QCache<QString, QPixmap> m_pixmaps; // cost in KiB
     QHash<QString, QColor> m_colors;
     QHash<QString, int> m_gen; // bumped when a game's data changes, part of the pixmap cache key
     QHash<QString, QPixmap> m_wood;
+    QHash<QString, QPixmap> m_shadows;
+    QPixmap m_wall;
+    QString m_wall_key;
 };
 
 } // namespace LibraryStyles
