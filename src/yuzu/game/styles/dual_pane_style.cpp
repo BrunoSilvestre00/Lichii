@@ -71,33 +71,6 @@ QPixmap SourceArt(const QModelIndex& index) {
     return art;
 }
 
-/// Splits `text` into at most `max_lines` lines of `width`, breaking between words only. The last
-/// line ends in "…" when text is left over, and a word wider than a line is elided rather than
-/// split.
-QStringList WrapWords(const QString& text, const QFontMetrics& fm, int width, int max_lines) {
-    QStringList lines;
-    const QStringList words = text.split(QLatin1Char(' '), Qt::SkipEmptyParts);
-    int next = 0;
-    while (next < words.size() && lines.size() < max_lines) {
-        if (lines.size() == max_lines - 1) {
-            lines.append(fm.elidedText(words.mid(next).join(QLatin1Char(' ')), Qt::ElideRight,
-                                       width));
-            break;
-        }
-        QString line = words[next++];
-        while (next < words.size()) {
-            const QString longer = line + QLatin1Char(' ') + words[next];
-            if (fm.horizontalAdvance(longer) > width) {
-                break;
-            }
-            line = longer;
-            ++next;
-        }
-        lines.append(fm.elidedText(line, Qt::ElideRight, width));
-    }
-    return lines;
-}
-
 } // namespace
 
 DualPaneStyle::DualPaneStyle(QWidget* parent)
@@ -472,37 +445,41 @@ void DualPaneStyle::DrawPreview(QPainter& painter, const QModelIndex& index, qre
                 12, title_font.pixelSize() * text_area.width() / std::max(1, longest)));
         }
         const QFontMetrics tfm(title_font);
-        // At most two lines, then "…" (S4).
-        const QStringList title_lines = WrapWords(title, tfm, text_area.width(), 2);
+        // At most two lines, then "…" (S4); one gliding line with Scroll Long Names.
+        const int max_title_lines = LibraryStyleContext::TitleLines(2);
+        const QStringList title_lines = LibraryStyleContext::NameLines(
+            title, title_font, text_area.width(), max_title_lines, PanePad / 2);
         const int title_h = static_cast<int>(title_lines.size()) * tfm.lineSpacing();
 
+        QFont info_font = font();
+        info_font.setPixelSize(std::clamp(content.height() / 12, 11, 16));
+        const QFontMetrics ifm(info_font);
+        // The S3 info lines (fixed parts for the pane width), then the program id.
         QStringList info;
         if (show_info_) {
             const GameInfo game = LibraryStyleContext::Info(index);
             if (game.is_game) {
-                info << game.info_line;
+                info << LibraryStyleContext::InfoLines(
+                    game, LibraryStyleContext::LayoutInfo(info_font, text_area.width()),
+                    info_font);
                 if (game.program_id != 0) {
                     info << game.program_id_text;
                 }
             }
         }
-        QFont info_font = font();
-        info_font.setPixelSize(std::clamp(content.height() / 12, 11, 16));
-        const QFontMetrics ifm(info_font);
         const int info_h =
             info.isEmpty() ? 0 : static_cast<int>(info.size()) * ifm.lineSpacing() + 10;
 
         const int total = title_h + info_h;
         int y = content.top() + std::max(0, (content.height() - total) / 2);
 
-        painter.setFont(title_font);
-        painter.setPen(pal.text().color());
-        painter.setClipRect(text_area);
-        for (const QString& line : title_lines) {
-            painter.drawText(QRect(text_area.left(), y, text_area.width(), tfm.lineSpacing()),
-                             Qt::AlignLeft | Qt::AlignVCenter, line);
-            y += tfm.lineSpacing();
-        }
+        // Half the pane padding is room for a title line that only just overflows (S4).
+        painter.setClipRect(text_area.adjusted(0, 0, PanePad / 2, 0));
+        LibraryStyleContext::PaintTitle(
+            &painter, QRect(text_area.left(), y, text_area.width(), title_h), title,
+            pal.text().color(), title_font, Qt::AlignLeft | Qt::AlignVCenter, max_title_lines,
+            index == QModelIndex(shown_) ? this : nullptr, PanePad / 2);
+        y += title_h;
         y += 10;
 
         painter.setFont(info_font);
@@ -555,15 +532,15 @@ void DualPaneStyle::DrawGrid(QPainter& painter) {
             painter.drawPixmap(tile.topLeft(), Art(index, icon_px_));
 
             if (show_names_) {
-                // Two lines, broken between words only (S4).
-                painter.setPen(pal.text().color());
-                painter.setFont(font());
-                int line_y = tile.bottom() + 6;
-                for (const QString& text : WrapWords(TitleOf(index), fm, cell.width() - 4, 2)) {
-                    painter.drawText(QRect(cell.left() + 2, line_y, cell.width() - 4, fm.height()),
-                                     Qt::AlignHCenter | Qt::AlignVCenter, text);
-                    line_y += fm.lineSpacing();
-                }
+                // Two lines, broken between words only (S4); the selected one glides with
+                // Scroll Long Names.
+                const int lines = LibraryStyleContext::TitleLines(2);
+                LibraryStyleContext::PaintTitle(
+                    &painter,
+                    QRect(cell.left() + 2, tile.bottom() + 6, cell.width() - 4,
+                          fm.lineSpacing() * lines),
+                    TitleOf(index), pal.text().color(), font(), Qt::AlignHCenter | Qt::AlignTop,
+                    lines, selected ? this : nullptr, 2);
             }
 
             if (selected) {
