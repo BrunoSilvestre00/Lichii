@@ -19,10 +19,10 @@ namespace LibraryStyles {
 
 /**
  * RIS: the branded showcase of RIS (Red Industries Society, PantACRO4life). A header with the RIS
- * wordmark and the PantACRO4life tagline, a hero area with the selected game (large cover, title,
- * play time and version, a Play plate), and a horizontal shelf of covers under it. Uses the RIS
- * colors with the RIS theme and the palette of any other theme. The option (R / X) switches the
- * shelf between compact and large covers.
+ * name in text and the PantACRO4life tagline, a hero area with the selected game (large cover,
+ * title, play time and version, a Play plate), and a horizontal shelf of covers under it. Uses the
+ * RIS colors with the RIS theme and the palette of any other theme. The option (R / X) switches
+ * the shelf between compact and large covers.
  */
 class RisStyle final : public LibraryStyleView {
     Q_OBJECT
@@ -91,7 +91,6 @@ private:
     /// Horizontal scroll of the shelf, in pixels.
     qreal offset = 0;
     QVariantAnimation* scroll_animation = nullptr;
-    QPixmap wordmark;
     QString display_family;
     /// Where the Play plate was painted last, for mouse clicks.
     QRect play_rect;

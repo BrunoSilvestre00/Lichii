@@ -482,24 +482,11 @@ void LoadingScreen::hideEvent(QHideEvent* event) {
 
 namespace {
 
-/// RIS theme only: hazard stripes along the top and bottom edges and the RIS mark as a faint
-/// watermark in the lower right corner, like the RIS boot screens. Drawn under the card.
-void PaintRisBranding(QPainter& p, const QRect& rect) {
-    static const QPixmap mark(QStringLiteral(":/ris/brand/ris_mark.png"));
+/// RIS theme only: hazard stripes along the top and bottom edges, like the RIS boot screens.
+/// Drawn under the card.
+void PaintRisStripes(QPainter& p, const QRect& rect) {
     p.save();
     p.setRenderHint(QPainter::Antialiasing, true);
-    p.setRenderHint(QPainter::SmoothPixmapTransform, true);
-
-    if (!mark.isNull()) {
-        const int height = rect.height() * 11 / 20;
-        const QSize size = mark.size().scaled(height, height, Qt::KeepAspectRatio);
-        const QRect target(rect.right() - size.width() - rect.width() / 24,
-                           rect.bottom() - size.height() - rect.height() / 14, size.width(),
-                           size.height());
-        p.setOpacity(0.13);
-        p.drawPixmap(target, mark);
-        p.setOpacity(1.0);
-    }
 
     constexpr int stripe = 6;
     const QColor red(0xe0, 0x1b, 0x31);
@@ -527,7 +514,7 @@ void LoadingScreen::paintEvent(QPaintEvent* event) {
     QPainter p(this);
     style()->drawPrimitive(QStyle::PE_Widget, &opt, &p, this);
     if (UISettings::IsRisTheme()) {
-        PaintRisBranding(p, rect());
+        PaintRisStripes(p, rect());
     }
     QWidget::paintEvent(event);
 }

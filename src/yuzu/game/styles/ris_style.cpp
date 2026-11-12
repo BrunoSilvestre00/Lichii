@@ -117,7 +117,6 @@ RisStyle::RisStyle(QWidget* parent) : LibraryStyleView{parent} {
     setMouseTracking(true);
     setAttribute(Qt::WA_OpaquePaintEvent, true);
     display_family = LoadDisplayFamily();
-    wordmark = QPixmap(QStringLiteral(":/ris/brand/ris_wordmark.png"));
 
     scroll_animation = new QVariantAnimation(this);
     scroll_animation->setDuration(200);
@@ -400,16 +399,8 @@ void RisStyle::PaintHeader(QPainter& painter, const Colors& colors) {
     PaintHazard(painter, QRect(header.left(), header.bottom() - Hazard + 1, header.width(), Hazard),
                 colors.accent, colors.header);
 
-    int x = Margin;
+    const int x = Margin;
     const int content_height = header.height() - Hazard;
-    if (!wordmark.isNull()) {
-        const QSize size = wordmark.size().scaled(QSize(200, content_height - 12),
-                                                  Qt::KeepAspectRatio);
-        painter.drawPixmap(QRect(x - 6, (content_height - size.height()) / 2, size.width(),
-                                 size.height()),
-                           wordmark);
-        x += size.width() + 6;
-    }
 
     QFont display = font();
     if (!display_family.isEmpty()) {

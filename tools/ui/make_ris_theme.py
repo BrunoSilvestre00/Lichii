@@ -3,11 +3,12 @@
 
 # Builds dist/qt_themes/ris (RIS, PantACRO4life) from the Lichii Dark theme.
 # The stylesheet and icons are Lichii Dark recolored to the RIS palette (near black steel, signal
-# red, square corners); the Lichii Modern library rules are appended. The brand images get the
-# red rim glow of the RIS boot logos so the black glyph reads on the dark background.
+# red, square corners); the Lichii Modern library rules are appended. Chakra Petch (SIL Open Font
+# License 1.1) is copied with its OFL.txt. The theme has no logo images.
 # Needs ImageMagick 7 (magick) with the librsvg delegate. Python standard library only.
-#   python tools/ui/make_ris_theme.py <ris logo png> <ris wordmark png> <font dir>
-# Defaults: the RIS site logo, the uLaunch RIS wordmark and its Chakra Petch fonts.
+#   python tools/ui/make_ris_theme.py <font dir>
+# <font dir> holds ChakraPetch-SemiBold.ttf and ChakraPetch-Bold.ttf (Google Fonts download).
+# Without it, the fonts and OFL.txt already in dist/qt_themes/ris/fonts are kept.
 import os
 import re
 import shutil
@@ -20,9 +21,8 @@ LICHII = os.path.join(THEMES, "lichii")
 MODERN = os.path.join(THEMES, "lichii_modern")
 OUT = os.path.join(THEMES, "ris")
 
-LOGO = sys.argv[1] if len(sys.argv) > 1 else "D:/.devops/Web/React/RIS/public/img/ris-logo.png"
-WORDMARK = sys.argv[2] if len(sys.argv) > 2 else "D:/.devops/App/uLaunch-RIS/ris/theme/ris-wordmark.png"
-FONTS = sys.argv[3] if len(sys.argv) > 3 else "D:/.devops/App/uLaunch-RIS/ris/theme"
+FONTS = sys.argv[1] if len(sys.argv) > 1 else None
+FONT_FILES = ("ChakraPetch-SemiBold.ttf", "ChakraPetch-Bold.ttf")
 
 # Lichii Dark token -> RIS token (Web/React/RIS/src/styles.css)
 COLORS = {
@@ -86,27 +86,9 @@ def render_svg(svg_path, png_base):
                png_base + suffix + ".png")
 
 
-def glow(src, dst, height):
-    # Black glyph -> thin red-hot rim and a soft red glow behind it, like the RIS boot logos.
-    pad = max(8, height // 10)
-    magick(src, "-trim", "+repage", "-resize", "x%d" % (height - 2 * pad),
-           "-bordercolor", "none", "-border", str(pad),
-           # soft glow
-           "(", "-clone", "0", "-channel", "A", "-morphology", "Dilate", "Disk:%d" % max(3, height // 48),
-           "-blur", "0x%d" % max(5, height // 20), "-evaluate", "multiply", "0.85", "+channel",
-           "-fill", "#e01b31", "-colorize", "100", ")",
-           # thin rim
-           "(", "-clone", "0", "-channel", "A", "-morphology", "Dilate", "Disk:%d" % max(1, height // 170),
-           "+channel", "-fill", "#ff3347", "-colorize", "100", ")",
-           # order: glow, rim, glyph
-           "(", "-clone", "0", ")", "-delete", "0",
-           "-background", "none", "-compose", "over", "-flatten", dst)
-
-
 def main():
     os.makedirs(os.path.join(OUT, "svg"), exist_ok=True)
     os.makedirs(os.path.join(OUT, "icons"), exist_ok=True)
-    os.makedirs(os.path.join(OUT, "brand"), exist_ok=True)
     os.makedirs(os.path.join(OUT, "fonts"), exist_ok=True)
 
     # Stylesheet: Lichii Dark + Lichii Modern library rules, recolored, plus ris_extra.qss.
@@ -148,13 +130,17 @@ def main():
             os.remove(white)
             icons += [stem + "_white.png", stem + "_white@2x.png"]
 
-    # Brand images.
-    glow(LOGO, os.path.join(OUT, "brand", "ris_mark.png"), 512)
-    glow(WORDMARK, os.path.join(OUT, "brand", "ris_wordmark.png"), 256)
-    fonts = []
-    for font in ("ChakraPetch-SemiBold.ttf", "ChakraPetch-Bold.ttf"):
-        shutil.copyfile(os.path.join(FONTS, font), os.path.join(OUT, "fonts", font))
-        fonts.append(font)
+    # Fonts: Chakra Petch, SIL Open Font License 1.1. OFL.txt must stay next to the font files.
+    if FONTS:
+        for font in FONT_FILES:
+            shutil.copyfile(os.path.join(FONTS, font), os.path.join(OUT, "fonts", font))
+        ofl = os.path.join(FONTS, "OFL.txt")
+        if os.path.isfile(ofl):
+            shutil.copyfile(ofl, os.path.join(OUT, "fonts", "OFL.txt"))
+    for name in FONT_FILES + ("OFL.txt",):
+        if not os.path.isfile(os.path.join(OUT, "fonts", name)):
+            sys.exit("missing dist/qt_themes/ris/fonts/%s" % name)
+    fonts = list(FONT_FILES)
 
     lines = [
         "<!--",
@@ -169,8 +155,6 @@ def main():
         "    </qresource>",
         '    <qresource prefix="ris">',
         "        <file>style.qss</file>",
-        "        <file>brand/ris_mark.png</file>",
-        "        <file>brand/ris_wordmark.png</file>",
     ]
     lines += ["        <file>fonts/%s</file>" % f for f in fonts]
     lines += ["        <file>icons/%s</file>" % i for i in sorted(icons)]

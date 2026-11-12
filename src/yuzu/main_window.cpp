@@ -6296,16 +6296,6 @@ void MainWindow::UpdateUITheme() {
 
     UpdateMenuIcons();
 
-    // RIS shows its mark as the window icon; every other theme keeps the application icon.
-    static bool ris_icon = false;
-    if (UISettings::IsRisTheme()) {
-        setWindowIcon(QIcon(QStringLiteral(":/ris/brand/ris_mark.png")));
-        ris_icon = true;
-    } else if (ris_icon) {
-        setWindowIcon(QIcon());
-        ris_icon = false;
-    }
-
 #ifdef _WIN32
     RemoveTitlebarFilter();
     ApplyGlobalDarkTitlebar(UISettings::IsDarkTheme());

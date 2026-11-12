@@ -45,7 +45,7 @@ bool IsDarkTheme();
 /// RIS is a recolored Lichii Dark, so it counts as a Lichii theme too.
 bool IsLichiiTheme();
 
-/// RIS (PantACRO4life): Lichii Dark in the RIS colors, with its own icons and brand images.
+/// RIS (PantACRO4life): Lichii Dark in the RIS colors, with its own recolored icons.
 bool IsRisTheme();
 
 /// Resource folder of the Lichii style icons for the current theme: "ris" or "lichii".
