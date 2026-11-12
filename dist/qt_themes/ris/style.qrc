@@ -12,6 +12,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
         <file>style.qss</file>
         <file>fonts/ChakraPetch-SemiBold.ttf</file>
         <file>fonts/ChakraPetch-Bold.ttf</file>
+        <file>fonts/OFL.txt</file>
         <file>icons/apps.png</file>
         <file>icons/apps@2x.png</file>
         <file>icons/apps_active.png</file>
