@@ -55,39 +55,6 @@ GameListItemType TypeOf(const QModelIndex& index) {
     return index.data(GameListItem::TypeRole).value<GameListItemType>();
 }
 
-struct CanvasInfo {
-    QString title;
-    /// "1.9 h played · v1.3.0"
-    QString line;
-};
-
-CanvasInfo ReadInfo(const QModelIndex& index) {
-    const LibraryStyles::GameInfo shared = LibraryStyleContext::Info(index);
-    return {shared.title, shared.info_line};
-}
-
-// Greedy two line wrap: the first line breaks at the last space that fits, the rest is elided.
-void TwoLines(const QString& text, const QFontMetrics& fm, int width, QString* first,
-              QString* second) {
-    *first = text;
-    second->clear();
-    if (fm.horizontalAdvance(text) <= width) {
-        return;
-    }
-    int fit = 0;
-    for (int i = 1; i <= text.size(); ++i) {
-        if (fm.horizontalAdvance(text.left(i)) > width) {
-            break;
-        }
-        fit = i;
-    }
-    fit = std::max(fit, 1);
-    const int space = text.lastIndexOf(QLatin1Char(' '), fit - 1);
-    const int cut = space > 0 ? space : fit;
-    *first = text.left(cut).trimmed();
-    *second = fm.elidedText(text.mid(cut).trimmed(), Qt::ElideRight, width);
-}
-
 QColor HueColor(uint seed, int saturation, int lightness) {
     return QColor::fromHsl(static_cast<int>(seed % 360), saturation, lightness);
 }
@@ -622,7 +589,7 @@ void CanvasStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
                 QPainterPath clip;
                 clip.addRoundedRect(rectf, radius, radius);
                 p.setClipPath(clip);
-                const CanvasInfo info = ReadInfo(index);
+                const GameInfo info = LibraryStyleContext::Info(index);
                 const int pad = std::max(8, layout.tile / 18);
                 QFont title_font = font();
                 title_font.setFamilies({QStringLiteral("Nunito"), title_font.family()});
@@ -634,13 +601,19 @@ void CanvasStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
                 const QFontMetrics tfm(title_font);
                 const QFontMetrics sfm(sub_font);
                 const int text_w = rect.width() - 2 * pad;
-                QString line1;
-                QString line2;
-                if (show_names) {
-                    TwoLines(info.title, tfm, text_w, &line1, &line2);
-                }
-                const int lines = !show_names ? 0 : line2.isEmpty() ? 1 : 2;
-                const int sub_h = show_info ? sfm.lineSpacing() : 0;
+                // S4 title lines and S3 info lines, the same code as every style.
+                const int title_lines = LibraryStyleContext::TitleLines(2);
+                const QStringList names =
+                    show_names ? LibraryStyleContext::NameLines(info.title, title_font, text_w,
+                                                                title_lines)
+                               : QStringList{};
+                const QStringList info_lines =
+                    show_info ? LibraryStyleContext::InfoLines(
+                                    info, LibraryStyleContext::LayoutInfo(sub_font, text_w),
+                                    sub_font)
+                              : QStringList{};
+                const int lines = static_cast<int>(names.size());
+                const int sub_h = static_cast<int>(info_lines.size()) * sfm.lineSpacing();
                 const int text_h = lines * tfm.lineSpacing() + sub_h + 4;
                 const int grad_h = text_h + pad * 3;
                 const QRectF grad_rect(rectf.left(), rectf.bottom() - grad_h, rectf.width(),
@@ -651,24 +624,16 @@ void CanvasStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
                 g.setColorAt(1.0, QColor(0, 0, 0, 225));
                 p.fillRect(grad_rect, g);
 
-                p.setPen(Qt::white);
-                p.setFont(sub_font);
                 const int sub_y = rect.bottom() - pad - sub_h;
-                if (show_info) {
-                    p.drawText(QRect(rect.left() + pad, sub_y, text_w, sfm.lineSpacing()),
-                               Qt::AlignHCenter | Qt::AlignVCenter,
-                               sfm.elidedText(info.line, Qt::ElideRight, text_w));
-                }
-                p.setFont(title_font);
-                int y = sub_y - 2 - lines * tfm.lineSpacing();
-                if (show_names) {
-                    p.drawText(QRect(rect.left() + pad, y, text_w, tfm.lineSpacing()),
-                               Qt::AlignHCenter | Qt::AlignVCenter, line1);
-                }
-                if (!line2.isEmpty()) {
-                    y += tfm.lineSpacing();
-                    p.drawText(QRect(rect.left() + pad, y, text_w, tfm.lineSpacing()),
-                               Qt::AlignHCenter | Qt::AlignVCenter, line2);
+                LibraryStyleContext::PaintInfoLines(
+                    &p, QRect(rect.left() + pad, sub_y, text_w, sub_h), info_lines, Qt::white,
+                    sub_font, Qt::AlignHCenter | Qt::AlignTop);
+                const int y = sub_y - 2 - lines * tfm.lineSpacing();
+                if (lines > 0) {
+                    LibraryStyleContext::PaintTitle(
+                        &p, QRect(rect.left() + pad, y, text_w, lines * tfm.lineSpacing()),
+                        info.title, Qt::white, title_font, Qt::AlignHCenter | Qt::AlignTop,
+                        title_lines, this);
                 }
             }
             p.restore();
