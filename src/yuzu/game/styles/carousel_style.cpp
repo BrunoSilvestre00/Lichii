@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Cover Flow library style. Concept by inxomnyaa.
+// Showcase library style. Concept by inxomnyaa.
 
 #include <algorithm>
 #include <cmath>
@@ -806,7 +806,7 @@ LibraryStyleView* Make(QWidget* parent) {
 }
 
 [[maybe_unused]] const bool registered =
-    LibraryStyles::Register({"carousel", QT_TR_NOOP("Cover Flow"), &Make});
+    LibraryStyles::Register({"carousel", QT_TR_NOOP("Showcase"), &Make});
 
 } // namespace
 

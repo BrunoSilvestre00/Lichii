@@ -22,7 +22,7 @@ class QVariantAnimation;
 
 namespace LibraryStyles {
 
-/// "Cover Flow" library style: one large selected cover with the neighbours stacked behind it.
+/// "Showcase" library style: one large selected cover with the neighbours stacked behind it.
 /// Concept by inxomnyaa.
 class CarouselStyle final : public LibraryStyleView {
     Q_OBJECT
