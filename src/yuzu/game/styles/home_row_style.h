@@ -60,7 +60,7 @@ private:
     QString TitleAt(int row) const;
     void MoveTo(int row);
     void AnimateToCurrent(bool animate);
-    void ModelChanged();
+    void ModelChanged(bool notify);
     QPixmap CoverPixmap(int row, int side);
     void DrawPlaceholder(QPainter& painter, const QRectF& rect, const QString& title);
 
@@ -69,6 +69,7 @@ private:
     double m_offset = 0.0; // in cover steps
     bool m_show_names = true;
     bool m_show_info = true;
+    int m_wheel_remainder = 0;
     QVariantAnimation* m_animation = nullptr;
     QTimer* m_clock = nullptr;
     QCache<QString, QPixmap> m_cache{96};

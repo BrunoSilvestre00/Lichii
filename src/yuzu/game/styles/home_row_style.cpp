@@ -67,16 +67,17 @@ HomeRowStyle::~HomeRowStyle() = default;
 
 void HomeRowStyle::SetModel(QAbstractItemModel* model) {
     if (m_model) {
-        disconnect(m_model, nullptr, this, nullptr);
+        disconnect(m_model.data(), nullptr, this, nullptr);
     }
     m_model = model;
     if (m_model) {
-        connect(m_model, &QAbstractItemModel::modelReset, this, &HomeRowStyle::ModelChanged);
-        connect(m_model, &QAbstractItemModel::layoutChanged, this, &HomeRowStyle::ModelChanged);
-        connect(m_model, &QAbstractItemModel::rowsInserted, this, &HomeRowStyle::ModelChanged);
-        connect(m_model, &QAbstractItemModel::rowsRemoved, this, &HomeRowStyle::ModelChanged);
-        connect(m_model, &QAbstractItemModel::rowsMoved, this, &HomeRowStyle::ModelChanged);
-        connect(m_model, &QAbstractItemModel::dataChanged, this, [this] {
+        QAbstractItemModel* const model = m_model.data();
+        connect(model, &QAbstractItemModel::modelReset, this, [this] { ModelChanged(true); });
+        connect(model, &QAbstractItemModel::layoutChanged, this, [this] { ModelChanged(true); });
+        connect(model, &QAbstractItemModel::rowsInserted, this, [this] { ModelChanged(false); });
+        connect(model, &QAbstractItemModel::rowsRemoved, this, [this] { ModelChanged(false); });
+        connect(model, &QAbstractItemModel::rowsMoved, this, [this] { ModelChanged(false); });
+        connect(model, &QAbstractItemModel::dataChanged, this, [this] {
             m_cache.clear();
             update();
         });
@@ -98,7 +99,7 @@ QModelIndex HomeRowStyle::CurrentIndex() const {
 }
 
 void HomeRowStyle::SetCurrentIndex(const QModelIndex& index) {
-    if (!m_model || !index.isValid() || index.model() != m_model || index.parent().isValid()) {
+    if (!m_model || !index.isValid() || index.model() != m_model.data() || index.parent().isValid()) {
         return;
     }
     if (index.row() == m_current) {
@@ -194,13 +195,17 @@ void HomeRowStyle::AnimateToCurrent(bool animate) {
     m_animation->start();
 }
 
-void HomeRowStyle::ModelChanged() {
+void HomeRowStyle::ModelChanged(bool notify) {
     m_cache.clear();
     const int count = RowCount();
+    const int previous = m_current;
     m_current = count == 0 ? -1 : std::clamp(m_current, 0, count - 1);
     AnimateToCurrent(false);
     update();
-    emit CurrentChanged(CurrentIndex());
+    // Row inserts arrive one by one while the library loads, so only report a real change.
+    if (notify || m_current != previous) {
+        emit CurrentChanged(CurrentIndex());
+    }
 }
 
 QPixmap HomeRowStyle::CoverPixmap(int row, int side) {
@@ -356,10 +361,13 @@ void HomeRowStyle::paintEvent(QPaintEvent* event) {
             painter.setFont(font);
             painter.setPen(accent);
             const QFontMetrics fm(font);
-            const QRect text(static_cast<int>(width() * 0.08),
-                             static_cast<int>(cover.top()) - fm.height() - m.side / 14,
-                             static_cast<int>(width() * 0.84), fm.height());
-            painter.drawText(text, Qt::AlignHCenter | Qt::AlignBottom,
+            const int left = std::max(static_cast<int>(width() * 0.04),
+                                      std::min(static_cast<int>(cover.left()),
+                                               static_cast<int>(width() * 0.5)));
+            const QRect text(left, static_cast<int>(cover.top()) - fm.height() - m.side / 14,
+                             std::max(1, width() - left - static_cast<int>(width() * 0.04)),
+                             fm.height());
+            painter.drawText(text, Qt::AlignLeft | Qt::AlignBottom,
                              fm.elidedText(title, Qt::ElideRight, text.width()));
         }
 
@@ -458,7 +466,13 @@ void HomeRowStyle::wheelEvent(QWheelEvent* event) {
         event->ignore();
         return;
     }
-    MoveTo(m_current + (amount < 0 ? 1 : -1));
+    // Touchpads send many small deltas; move one cover per notch (120 units).
+    m_wheel_remainder += amount;
+    const int steps = m_wheel_remainder / 120;
+    if (steps != 0) {
+        m_wheel_remainder -= steps * 120;
+        MoveTo(m_current - steps);
+    }
     event->accept();
 }
 
