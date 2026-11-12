@@ -51,6 +51,7 @@ private:
     QRect GridArea() const;
     int TileSize() const;
     int CellHeight() const;
+    QFont TileFont() const;
 
     QPointer<QAbstractItemModel> model;
     QList<QPersistentModelIndex> entries;

@@ -5,8 +5,11 @@
 
 #pragma once
 
+#include <vector>
+
 #include <QCache>
 #include <QModelIndex>
+#include <QPersistentModelIndex>
 #include <QPixmap>
 #include <QPointer>
 #include <QString>
@@ -55,6 +58,9 @@ private:
 
     Metrics ComputeMetrics() const;
     int RowCount() const;
+    QModelIndex IndexAt(int row) const;
+    /// The model is a tree (folders hold the games): collect the games flat, Add Folder last.
+    void RebuildItems();
     int RowAt(const QPoint& pos) const;
     QRectF CoverRect(int row, const Metrics& m) const;
     QString TitleAt(int row) const;
@@ -65,6 +71,7 @@ private:
     void DrawPlaceholder(QPainter& painter, const QRectF& rect, const QString& title);
 
     QPointer<QAbstractItemModel> m_model;
+    std::vector<QPersistentModelIndex> m_items;
     int m_current = -1;
     double m_offset = 0.0; // in cover steps
     bool m_show_names = true;

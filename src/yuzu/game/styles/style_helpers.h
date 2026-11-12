@@ -39,11 +39,11 @@ struct GameInfo {
     bool is_nx2 = false;
     bool has_icon = false;
     u64 play_time_seconds = 0;
-    /// "Never played", "45 min" or "12.5 h".
+    /// "New" (never played), "45 min" or "12.5 h".
     QString play_time_text;
     /// Version of the applied update without a prefix ("1.4.3"), empty for the base version.
     QString update_version;
-    /// "1.0 h · v1.4.3": the play time and the update version, the line the concepts show.
+    /// "1.0 h played · v1.4.3": the play time and the update version, the line the concepts show.
     QString info_line;
     /// Readable size ("14.2 GiB").
     QString size_text;
@@ -71,11 +71,22 @@ public:
     static bool IsDark(const QPalette& palette);
     /// Selection colour of the theme.
     static QColor Accent(const QPalette& palette);
+    /// Side of the square cover art in every grid style: View > Game Icon Size, at least 96 px.
+    /// One setting gives the same art size in every style.
+    static int ArtSize();
+    /// Art of the one-row showcase styles (Home Row tiles, Showcase centre): 1.6x ArtSize.
+    static int FeaturedArtSize();
+    /// CSS-like box shadow for a rounded rect of `size`: blurred by `blur` px, `alpha` 0..1.
+    /// Draw it at the rect's top left minus blur (plus your offset). Cached per size.
+    static QPixmap SoftShadow(const QSize& size, qreal radius, int blur, qreal alpha, qreal dpr);
     /// Card surface colour behind covers and panels.
     static QColor Surface(const QPalette& palette);
     /// Secondary text colour (info lines, hints).
     static QColor MutedText(const QPalette& palette);
 
+    /// Wooden tabletop shared by the Cartridges and Box Shelf styles, sized to the viewport.
+    /// Draw it at the origin; it does not scroll.
+    static QPixmap WoodTable(const QSize& size, qreal dpr, bool dark);
     /// Cover clipped to a rounded rectangle.
     static void PaintCover(QPainter* painter, const QRect& rect, const QModelIndex& index,
                            const QPalette& palette, int radius);

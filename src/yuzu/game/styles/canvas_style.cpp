@@ -26,6 +26,7 @@
 #include "qt_common/config/uisettings.h"
 #include "qt_common/game_list/game_list_p.h"
 #include "yuzu/game/styles/canvas_style.h"
+#include "yuzu/game/styles/style_helpers.h"
 
 namespace LibraryStyles {
 
@@ -54,35 +55,15 @@ GameListItemType TypeOf(const QModelIndex& index) {
     return index.data(GameListItem::TypeRole).value<GameListItemType>();
 }
 
-struct GameInfo {
+struct CanvasInfo {
     QString title;
-    QString play_time;
-    QString version;
-    QString program_id;
+    /// "1.9 h played · v1.3.0"
+    QString line;
 };
 
-// Play time and version are only exposed through the tooltip ("Play Time: X" or "Never Played",
-// then "Version: Y"), so read them from there by line position and strip the label.
-GameInfo ReadInfo(const QModelIndex& index) {
-    GameInfo info;
-    info.title = index.data(GameListItemPath::TitleRole).toString();
-    if (info.title.isEmpty()) {
-        info.title = index.data(Qt::DisplayRole).toString().section(QLatin1Char('\n'), 0, 0);
-    }
-    const QStringList lines = index.data(Qt::ToolTipRole).toString().split(QLatin1Char('\n'));
-    const auto value_of = [](const QString& line) {
-        const int colon = line.indexOf(QLatin1Char(':'));
-        return colon < 0 ? line.trimmed() : line.mid(colon + 1).trimmed();
-    };
-    if (lines.size() > 0) {
-        info.play_time = value_of(lines[0]);
-    }
-    if (lines.size() > 1) {
-        info.version = value_of(lines[1]);
-    }
-    const qulonglong pid = index.data(GameListItemPath::ProgramIdRole).toULongLong();
-    info.program_id = QStringLiteral("%1").arg(pid, 16, 16, QLatin1Char('0')).toUpper();
-    return info;
+CanvasInfo ReadInfo(const QModelIndex& index) {
+    const LibraryStyles::GameInfo shared = LibraryStyleContext::Info(index);
+    return {shared.title, shared.info_line};
 }
 
 // Greedy two line wrap: the first line breaks at the last space that fits, the rest is elided.
@@ -268,12 +249,11 @@ void CanvasStyle::Rebuild() {
 CanvasStyle::Layout CanvasStyle::ComputeLayout() const {
     Layout l;
     l.gap = 18;
-    const int target =
-        std::max(96, static_cast<int>(UISettings::values.game_cover_size.GetValue()) * 7 / 4);
+    // Tiles are exactly View > Game Icon Size; the grid is centred instead of stretched.
+    const int target = LibraryStyleContext::ArtSize();
     const int avail = std::max(1, width() - 2 * SidePadding);
     l.columns = std::max(1, (avail + l.gap) / (target + l.gap));
-    int tile = (avail - l.gap * (l.columns - 1)) / l.columns;
-    tile = std::clamp(tile, 64, target * 3 / 2);
+    const int tile = std::clamp(target, 64, std::max(64, avail));
     l.tile = tile;
     const int grid_width = l.columns * tile + (l.columns - 1) * l.gap;
     l.margin = std::max(SidePadding, (width() - grid_width) / 2);
@@ -526,7 +506,7 @@ void CanvasStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
 
     const QPalette pal = palette();
     const bool dark = pal.window().color().lightness() < 128;
-    const QColor accent = pal.highlight().color();
+    const QColor accent = LibraryStyleContext::Accent(pal);
     const int w = width();
     const int h = height();
 
@@ -548,16 +528,28 @@ void CanvasStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
             if (!index.isValid()) {
                 continue;
             }
-            const QRect rect = TileRect(row).translated(0, -scroll);
+            const bool selected = row == current;
+            QRect rect = TileRect(row).translated(0, -scroll);
             if (rect.bottom() < -8 || rect.top() > h + 8) {
                 continue;
             }
-            const bool selected = row == current;
+            if (selected) {
+                // The selected tile lifts a little, like the concept.
+                const int lift = std::max(2, layout.tile / 40);
+                rect.adjust(-lift, -lift, lift, lift);
+            }
             const QRectF rectf(rect);
 
+            // Concept shadow: 0 8px 20px, 45 % black at night, 25 % by day; the selected tile
+            // casts a deeper one (0 14px 30px).
+            {
+                const int blur = selected ? 30 : 20;
+                const qreal offset = selected ? 14.0 : 8.0;
+                const QPixmap shadow = LibraryStyleContext::SoftShadow(
+                    rect.size(), radius, blur, dark ? 0.45 : 0.25, devicePixelRatioF());
+                p.drawPixmap(rectf.topLeft() + QPointF(-blur, -blur + offset), shadow);
+            }
             p.setPen(Qt::NoPen);
-            p.setBrush(QColor(0, 0, 0, dark ? 90 : 45));
-            p.drawRoundedRect(rectf.translated(0, 4), radius, radius);
 
             QPainterPath clip;
             clip.addRoundedRect(rectf, radius, radius);
@@ -588,22 +580,27 @@ void CanvasStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
                 DrawPlaceholder(&p, rectf, title, seed, dark);
             }
 
-            if (selected && show_names) {
-                const GameInfo info = ReadInfo(index);
+            if (selected && (show_names || show_info)) {
+                const CanvasInfo info = ReadInfo(index);
                 const int pad = std::max(8, layout.tile / 18);
                 QFont title_font = font();
-                title_font.setBold(true);
+                title_font.setFamilies({QStringLiteral("Nunito"), title_font.family()});
+                title_font.setWeight(QFont::Black);
                 title_font.setPixelSize(std::clamp(layout.tile / 12, 11, 20));
-                QFont sub_font = font();
+                QFont sub_font = title_font;
+                sub_font.setWeight(QFont::ExtraBold);
                 sub_font.setPixelSize(std::clamp(layout.tile / 15, 9, 16));
                 const QFontMetrics tfm(title_font);
                 const QFontMetrics sfm(sub_font);
                 const int text_w = rect.width() - 2 * pad;
                 QString line1;
                 QString line2;
-                TwoLines(info.title, tfm, text_w, &line1, &line2);
-                const int lines = line2.isEmpty() ? 1 : 2;
-                const int text_h = lines * tfm.lineSpacing() + sfm.lineSpacing() + 4;
+                if (show_names) {
+                    TwoLines(info.title, tfm, text_w, &line1, &line2);
+                }
+                const int lines = !show_names ? 0 : line2.isEmpty() ? 1 : 2;
+                const int sub_h = show_info ? sfm.lineSpacing() : 0;
+                const int text_h = lines * tfm.lineSpacing() + sub_h + 4;
                 const int grad_h = text_h + pad * 3;
                 const QRectF grad_rect(rectf.left(), rectf.bottom() - grad_h, rectf.width(),
                                        grad_h);
@@ -615,23 +612,22 @@ void CanvasStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
 
                 p.setPen(Qt::white);
                 p.setFont(sub_font);
-                const QString sub =
-                    info.version.isEmpty()
-                        ? info.play_time
-                        : QStringLiteral("%1 %2 %3")
-                              .arg(info.play_time, QString(QChar(0x00B7)), info.version);
-                const int sub_y = rect.bottom() - pad - sfm.lineSpacing();
-                p.drawText(QRect(rect.left() + pad, sub_y, text_w, sfm.lineSpacing()),
-                           Qt::AlignLeft | Qt::AlignVCenter,
-                           sfm.elidedText(sub, Qt::ElideRight, text_w));
+                const int sub_y = rect.bottom() - pad - sub_h;
+                if (show_info) {
+                    p.drawText(QRect(rect.left() + pad, sub_y, text_w, sfm.lineSpacing()),
+                               Qt::AlignHCenter | Qt::AlignVCenter,
+                               sfm.elidedText(info.line, Qt::ElideRight, text_w));
+                }
                 p.setFont(title_font);
                 int y = sub_y - 2 - lines * tfm.lineSpacing();
-                p.drawText(QRect(rect.left() + pad, y, text_w, tfm.lineSpacing()),
-                           Qt::AlignLeft | Qt::AlignVCenter, line1);
+                if (show_names) {
+                    p.drawText(QRect(rect.left() + pad, y, text_w, tfm.lineSpacing()),
+                               Qt::AlignHCenter | Qt::AlignVCenter, line1);
+                }
                 if (!line2.isEmpty()) {
                     y += tfm.lineSpacing();
                     p.drawText(QRect(rect.left() + pad, y, text_w, tfm.lineSpacing()),
-                               Qt::AlignLeft | Qt::AlignVCenter, line2);
+                               Qt::AlignHCenter | Qt::AlignVCenter, line2);
                 }
             }
             p.restore();
@@ -691,54 +687,6 @@ void CanvasStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
             p.drawText(QRectF(x, cy - 12, label_w + 2, 24), Qt::AlignLeft | Qt::AlignVCenter,
                        hint.label);
             x += label_w + item_gap;
-        }
-    }
-
-    // Info panel for the selected game.
-    if (show_info && current >= 0) {
-        const GameInfo info = ReadInfo(IndexAt(current));
-        QFont title_font = font();
-        title_font.setBold(true);
-        title_font.setPixelSize(16);
-        QFont body_font = font();
-        body_font.setPixelSize(13);
-        const QFontMetrics tfm(title_font);
-        const QFontMetrics bfm(body_font);
-        const int panel_w = std::min(320, std::max(200, w / 3));
-        const int inner = panel_w - 28;
-        QString t1;
-        QString t2;
-        TwoLines(info.title, tfm, inner, &t1, &t2);
-        const int title_lines = t2.isEmpty() ? 1 : 2;
-        const int panel_h =
-            14 + title_lines * tfm.lineSpacing() + 8 + 3 * bfm.lineSpacing() + 14;
-        const QRectF panel(w - panel_w - 20, 20, panel_w, panel_h);
-        QColor fill = dark ? pal.window().color().lighter(120) : QColor(255, 255, 255);
-        fill.setAlpha(235);
-        p.setBrush(fill);
-        p.setPen(QPen(accent, 1.5));
-        p.drawRoundedRect(panel, 14, 14);
-
-        qreal y = panel.top() + 14;
-        const qreal x = panel.left() + 14;
-        p.setPen(pal.text().color());
-        p.setFont(title_font);
-        p.drawText(QRectF(x, y, inner, tfm.lineSpacing()), Qt::AlignLeft | Qt::AlignVCenter, t1);
-        y += tfm.lineSpacing();
-        if (!t2.isEmpty()) {
-            p.drawText(QRectF(x, y, inner, tfm.lineSpacing()), Qt::AlignLeft | Qt::AlignVCenter,
-                       t2);
-            y += tfm.lineSpacing();
-        }
-        y += 8;
-        p.setFont(body_font);
-        const QString rows[] = {tr("Play time: %1").arg(info.play_time),
-                                tr("Version: %1").arg(info.version),
-                                tr("Program ID: %1").arg(info.program_id)};
-        for (const QString& row : rows) {
-            p.drawText(QRectF(x, y, inner, bfm.lineSpacing()), Qt::AlignLeft | Qt::AlignVCenter,
-                       bfm.elidedText(row, Qt::ElideRight, inner));
-            y += bfm.lineSpacing();
         }
     }
 }

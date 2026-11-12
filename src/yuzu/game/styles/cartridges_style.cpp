@@ -30,23 +30,25 @@
 
 #include "qt_common/game_list/game_list_p.h"
 #include "yuzu/game/styles/cartridges_style.h"
+#include "yuzu/game/styles/style_helpers.h"
 
 namespace LibraryStyles {
 
 namespace {
 
-constexpr qreal TargetCellWidth = 260.0;
 constexpr qreal SideMargin = 18.0;
-constexpr qreal TopMargin = 24.0;
-constexpr qreal LiftAmount = 10.0;
+constexpr qreal TopMargin = 18.0;
+constexpr qreal LiftAmount = 12.0;
+constexpr qreal SelectedScale = 1.06;
+constexpr qreal RingWidth = 3.0;
+/// Name bubble metrics from the concept: 14 px below the cart's resting edge, 7 px arrow.
+constexpr qreal BubbleGap = 14.0;
+constexpr qreal BubbleArrow = 7.0;
+constexpr int BubbleFontPx = 13;
 
-quint32 Hash32(quint32 x) {
-    x ^= x >> 16;
-    x *= 0x7feb352dU;
-    x ^= x >> 15;
-    x *= 0x846ca68bU;
-    x ^= x >> 16;
-    return x;
+/// How far the lifted, scaled selected cart and its ring reach above its resting top edge.
+qreal SelectedHeadroom(qreal card_h) {
+    return LiftAmount + card_h * (SelectedScale - 1.0) / 2 + RingWidth + 6.0;
 }
 
 quint64 Hash64(quint64 x) {
@@ -73,64 +75,15 @@ bool IsDark(const QPalette& palette) {
     return palette.color(QPalette::Window).lightness() < 128;
 }
 
-QColor BodyColor(const QPalette& palette) {
-    const int window_lightness = palette.color(QPalette::Window).lightness();
-    const int lightness = std::clamp(window_lightness * 12 / 100 + 36, 40, 84);
-    return QColor::fromHsl(220, 22, lightness);
-}
-
+/// Room around the card in its pixmap: the stickers stick out past the right edge.
 qreal CardMargin(qreal card_w) {
-    return card_w * 0.07;
+    return card_w * 0.2;
 }
 
 QPainterPath BodyPath(qreal w, qreal h) {
     QPainterPath body;
-    body.addRoundedRect(QRectF(0, 0, w, h), w * 0.08, w * 0.08);
-    QPainterPath notch;
-    notch.addRoundedRect(QRectF(w * 0.39, -2.0, w * 0.22, h * 0.03 + 2.0), w * 0.02, w * 0.02);
-    return body.subtracted(notch);
-}
-
-/// Average colour of the cover, weighted towards saturated mid tones, then normalised so the
-/// header strip is always readable.
-QColor DominantColor(const QPixmap& cover, quint32 fallback_seed) {
-    double r = 0.0;
-    double g = 0.0;
-    double b = 0.0;
-    double weight_sum = 0.0;
-    if (!cover.isNull()) {
-        const QImage small = cover.toImage()
-                                 .scaled(12, 12, Qt::IgnoreAspectRatio, Qt::FastTransformation)
-                                 .convertToFormat(QImage::Format_ARGB32);
-        for (int y = 0; y < small.height(); ++y) {
-            for (int x = 0; x < small.width(); ++x) {
-                const QColor c = QColor::fromRgba(small.pixel(x, y));
-                if (c.alpha() < 128) {
-                    continue;
-                }
-                const double weight =
-                    0.05 + c.hsvSaturationF() * (1.0 - std::abs(c.lightnessF() - 0.5) * 1.4);
-                r += c.redF() * weight;
-                g += c.greenF() * weight;
-                b += c.blueF() * weight;
-                weight_sum += weight;
-            }
-        }
-    }
-    if (weight_sum <= 0.0) {
-        return QColor::fromHslF((fallback_seed % 360) / 360.0f, 0.55f, 0.45f);
-    }
-    const QColor average = QColor::fromRgbF(static_cast<float>(r / weight_sum),
-                                            static_cast<float>(g / weight_sum),
-                                            static_cast<float>(b / weight_sum));
-    float hue = 0.0f;
-    float sat = 0.0f;
-    float light = 0.0f;
-    average.getHslF(&hue, &sat, &light);
-    if (hue < 0.0f) {
-        return QColor::fromHslF(0.0f, 0.0f, std::clamp(light, 0.35f, 0.55f));
-    }
-    return QColor::fromHslF(hue, std::clamp(sat, 0.5f, 0.9f), std::clamp(light, 0.38f, 0.52f));
+    body.addRoundedRect(QRectF(0, 0, w, h), w * 0.085, w * 0.085);
+    return body;
 }
 
 QFont FitFont(QFont font, const QString& text, qreal max_w, qreal max_h) {
@@ -143,60 +96,36 @@ QFont FitFont(QFont font, const QString& text, qreal max_w, qreal max_h) {
     return font;
 }
 
-/// The model only exposes play time and version through the tooltip ("Play Time: x" and
-/// "Version: y" lines), so read them back from there.
-void ParseInfo(const QString& tooltip, QString& play_time, QString& version) {
-    const QStringList lines = tooltip.split(QLatin1Char('\n'));
-    const auto value = [](const QString& line) {
-        const qsizetype colon = line.indexOf(QLatin1Char(':'));
-        return colon < 0 ? QString{} : line.mid(colon + 1).trimmed();
-    };
-    if (lines.size() > 0) {
-        play_time = value(lines[0]);
-    }
-    if (lines.size() > 1) {
-        version = value(lines[1]);
-        if (!version.isEmpty() && version.at(0).isDigit()) {
-            version.prepend(QLatin1Char('v'));
-        }
-    }
-}
-
 struct CardData {
     QPixmap cover;
     QString title;
-    QString header_text;
     QString id_text;
+    /// Short play time ("1.9 h") and version ("v1.3.0") stickers; empty = no sticker.
     QString play_time;
     QString version;
-    QColor strip;
-    QColor body;
-    int tag_seed = 0;
+    /// A title of the newer generation: red body and a "2" next to the header glyph.
+    bool is_nx2 = false;
+    bool is_game = true;
 };
 
-void DrawTag(QPainter& p, const QPointF& center, const QString& text, qreal angle, qreal px) {
-    QFont font = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
-    font.setBold(true);
-    font.setPixelSize(std::max(6, static_cast<int>(px)));
-    const QFontMetricsF fm(font);
-    const qreal tw = fm.horizontalAdvance(text) + px * 1.1;
-    const qreal th = px * 1.7;
-    p.save();
-    p.translate(center);
-    p.rotate(angle);
-    const QRectF rect(-tw / 2, -th / 2, tw, th);
+/// A sticker: rounded tag with a soft shadow, drawn upright in the card's own coordinates, so it
+/// tilts together with the card.
+void DrawSticker(QPainter& p, const QRectF& rect, const QString& text, const QColor& fill,
+                 const QFont& font) {
+    const qreal r = rect.height() * 0.28;
     p.setPen(Qt::NoPen);
-    p.setBrush(QColor(0, 0, 0, 60));
-    p.drawRoundedRect(rect.translated(0, px * 0.18), th * 0.3, th * 0.3);
-    p.setPen(QPen(QColor(196, 150, 40), 1.0));
-    p.setBrush(QColor(255, 218, 110));
-    p.drawRoundedRect(rect, th * 0.3, th * 0.3);
-    p.setPen(QColor(64, 42, 8));
+    p.setBrush(QColor(0, 0, 0, 70));
+    p.drawRoundedRect(rect.translated(0, rect.height() * 0.12), r, r);
+    p.setBrush(fill);
+    p.drawRoundedRect(rect, r, r);
+    p.setPen(QColor(0x3b, 0x2a, 0x12));
     p.setFont(font);
     p.drawText(rect, Qt::AlignCenter, text);
-    p.restore();
 }
 
+/// The cart, after the Cartridges concept: dark (or red) body with a slot on the top rim and an
+/// arrow at the bottom, and a light label with a red header band, the square art and a dark strip
+/// with the program id. Everything scales with the card width.
 QPixmap RenderCard(const CardData& d, qreal w, qreal h, qreal dpr) {
     const qreal m = CardMargin(w);
     QPixmap pixmap(QSize(static_cast<int>(std::ceil((w + 2 * m) * dpr)),
@@ -210,103 +139,132 @@ QPixmap RenderCard(const CardData& d, qreal w, qreal h, qreal dpr) {
     p.setRenderHint(QPainter::TextAntialiasing, true);
     p.translate(m, m);
 
+    const QColor body_color = d.is_nx2 ? QColor(0xec, 0x2a, 0x35) : QColor(0x3a, 0x3a, 0x3f);
+    const QColor ridge_color = d.is_nx2 ? QColor(0xc3, 0x14, 0x1f) : QColor(0x26, 0x26, 0x2a);
+
+    // Body, with a darker lip along the bottom edge.
     const QPainterPath body = BodyPath(w, h);
-    QLinearGradient body_gradient(0, 0, 0, h);
-    body_gradient.setColorAt(0.0, d.body.lighter(118));
-    body_gradient.setColorAt(1.0, d.body.darker(118));
-    p.setPen(QPen(d.body.lighter(150), 1.0));
-    p.setBrush(body_gradient);
-    p.drawPath(body);
-
-    const qreal pad = w * 0.07;
-    const QFont base_font = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
-
-    // Header strip, coloured from the cover.
-    const QRectF header(pad, h * 0.06, w - 2 * pad, h * 0.075);
     p.setPen(Qt::NoPen);
-    p.setBrush(d.strip);
-    p.drawRoundedRect(header, 3.0, 3.0);
-    if (header.height() >= 12.0 && !d.header_text.isEmpty()) {
-        QFont font =
-            FitFont(base_font, d.header_text, header.width() * 0.6, header.height() * 0.55);
-        font.setBold(true);
-        font.setLetterSpacing(QFont::AbsoluteSpacing, 1.0);
-        p.setFont(font);
-        p.setPen(d.strip.lightness() > 140 ? QColor(30, 30, 30) : QColor(250, 250, 250));
-        p.drawText(header, Qt::AlignCenter, d.header_text);
-    }
+    p.setBrush(body_color.darker(135));
+    p.drawPath(body);
+    p.save();
+    p.setClipPath(body);
+    p.setBrush(body_color);
+    p.drawRoundedRect(QRectF(0, 0, w, h - std::max(1.5, w * 0.014)), w * 0.085, w * 0.085);
+    p.restore();
 
-    // Label with the cover art.
-    const QRectF label(pad, h * 0.145, w - 2 * pad, h * 0.69);
+    // Label geometry: header band, square art, id strip.
+    const qreal side_pad = w * 0.064;
+    const qreal lw = w - 2 * side_pad;
+    const qreal header_h = lw * 0.17;
+    const qreal strip_h = lw * 0.15;
+    const QRectF label(side_pad, w * 0.1, lw, header_h + lw + strip_h);
+    const qreal label_r = std::max(2.0, w * 0.03);
+
+    // Slot: the short darker ridge in the middle of the top rim, sitting on the label.
+    p.setBrush(ridge_color);
+    const QRectF slot(w * 0.34, w * 0.05, w * 0.32, label.top() - w * 0.05 + 1.0);
+    p.drawRoundedRect(slot, w * 0.02, w * 0.02);
+    p.fillRect(slot.adjusted(0, slot.height() / 2, 0, 0), ridge_color);
+
+    // Arrow under the label.
+    const qreal ax = w / 2;
+    const qreal arrow_w = w * 0.114;
+    const qreal arrow_h = w * 0.05;
+    const qreal arrow_top = h - w * 0.03 - arrow_h;
+    p.drawPolygon(QPolygonF{{ax - arrow_w / 2, arrow_top},
+                            {ax + arrow_w / 2, arrow_top},
+                            {ax, arrow_top + arrow_h}});
+
     QPainterPath label_path;
-    label_path.addRoundedRect(label, 4.0, 4.0);
+    label_path.addRoundedRect(label, label_r, label_r);
     p.save();
     p.setClipPath(label_path);
-    p.fillRect(label, d.strip.darker(220));
+    p.fillRect(label, QColor(0xf2, 0xf2, 0xf2));
+
+    // Header band with a neutral glyph (a rounded pill), "2" for the newer generation.
+    const QRectF header(label.left(), label.top(), lw, header_h);
+    p.fillRect(header, QColor(0xe6, 0x00, 0x12));
+    {
+        const qreal pill_h = header_h * 0.38;
+        const qreal pill_w = pill_h * 1.45;
+        QFont two = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
+        two.setBold(true);
+        two.setPixelSize(std::max(6, static_cast<int>(header_h * 0.56)));
+        const qreal two_w = d.is_nx2 ? QFontMetricsF(two).horizontalAdvance(QStringLiteral("2")) : 0;
+        const qreal gap = d.is_nx2 ? header_h * 0.18 : 0;
+        const qreal x0 = header.center().x() - (pill_w + gap + two_w) / 2;
+        p.setPen(QPen(Qt::white, std::max(1.0, header_h * 0.07)));
+        p.setBrush(Qt::NoBrush);
+        p.drawRoundedRect(QRectF(x0, header.center().y() - pill_h / 2, pill_w, pill_h),
+                          pill_h / 2, pill_h / 2);
+        if (d.is_nx2) {
+            p.setFont(two);
+            p.setPen(Qt::white);
+            p.drawText(QRectF(x0 + pill_w + gap, header.top(), two_w + 2, header_h),
+                       Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("2"));
+        }
+    }
+
+    // Square art, cropped to fill.
+    const QRectF art(label.left(), header.bottom(), lw, lw);
     if (!d.cover.isNull()) {
         QSizeF scaled = QSizeF(d.cover.size()) / std::max(1.0, d.cover.devicePixelRatio());
-        scaled.scale(label.size(), Qt::KeepAspectRatioByExpanding);
-        const QRectF target(label.center().x() - scaled.width() / 2,
-                            label.center().y() - scaled.height() / 2, scaled.width(),
+        scaled.scale(art.size(), Qt::KeepAspectRatioByExpanding);
+        const QRectF target(art.center().x() - scaled.width() / 2,
+                            art.center().y() - scaled.height() / 2, scaled.width(),
                             scaled.height());
+        p.save();
+        p.setClipRect(art);
         p.drawPixmap(target, d.cover, QRectF(d.cover.rect()));
+        p.restore();
     } else {
-        QLinearGradient art(label.topLeft(), label.bottomRight());
-        art.setColorAt(0.0, d.strip.darker(130));
-        art.setColorAt(1.0, d.strip.darker(280));
-        p.fillRect(label, art);
-        QFont font = base_font;
+        p.fillRect(art, QColor(0x23, 0x24, 0x2a));
+        QFont font = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
         font.setBold(true);
-        font.setPixelSize(std::max(8, static_cast<int>(w * 0.09)));
+        font.setPixelSize(std::max(7, static_cast<int>(lw * 0.1)));
         p.setFont(font);
-        p.setPen(QColor(245, 245, 245));
-        p.drawText(label.adjusted(8, 8, -8, -8), Qt::AlignCenter | Qt::TextWordWrap, d.title);
+        p.setPen(QColor(0xed, 0xed, 0xee));
+        p.drawText(art.adjusted(lw * 0.08, lw * 0.08, -lw * 0.08, -lw * 0.08),
+                   Qt::AlignCenter | Qt::TextWordWrap, d.title);
     }
-    QLinearGradient gloss(label.topLeft(), label.bottomLeft());
-    gloss.setColorAt(0.0, QColor(255, 255, 255, 38));
-    gloss.setColorAt(0.35, QColor(255, 255, 255, 0));
-    p.fillRect(label, gloss);
-    p.restore();
-    p.setPen(QPen(QColor(0, 0, 0, 90), 1.0));
-    p.setBrush(Qt::NoBrush);
-    p.drawRoundedRect(label, 4.0, 4.0);
 
-    // Program id label.
-    if (!d.id_text.isEmpty()) {
-        const QRectF id_rect(pad, h * 0.865, w - 2 * pad, h * 0.08);
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor(0, 0, 0, 150));
-        p.drawRoundedRect(id_rect, 3.0, 3.0);
+    // Id strip.
+    const QRectF strip(label.left(), art.bottom(), lw, label.bottom() - art.bottom());
+    p.fillRect(strip, QColor(0x16, 0x16, 0x18));
+    if (!d.id_text.isEmpty() && strip.height() >= 6) {
         QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-        mono.setBold(true);
-        mono = FitFont(mono, d.id_text, id_rect.width() - 8.0, id_rect.height() * 0.6);
+        mono.setLetterSpacing(QFont::PercentageSpacing, 108);
+        mono = FitFont(mono, d.id_text, strip.width() * 0.86, strip.height() * 0.5);
         p.setFont(mono);
-        p.setPen(QColor(228, 230, 235));
-        p.drawText(id_rect, Qt::AlignCenter, d.id_text);
+        p.setPen(QColor(0xed, 0xed, 0xee));
+        p.drawText(strip, Qt::AlignCenter, d.id_text);
     }
+    p.restore();
 
-    // Stickers on the top right of the label.
-    const qreal tag_px = std::max(7.0, h * 0.04);
-    QFont tag_font = base_font;
-    tag_font.setBold(true);
-    tag_font.setPixelSize(static_cast<int>(tag_px));
+    // Stickers: play time (yellow) and version (paler) under it, one tilt, poking out on the right.
+    QFont tag_font = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
+    tag_font.setWeight(QFont::Black);
+    tag_font.setPixelSize(std::max(7, static_cast<int>(w * 0.085)));
     const QFontMetricsF tag_metrics(tag_font);
-    int slot = 0;
-    const auto place_tag = [&](const QString& text) {
+    const qreal tag_h = tag_font.pixelSize() * 1.75;
+    qreal tag_y = h * 0.17;
+    const auto sticker = [&](const QString& text, const QColor& fill) {
         if (text.isEmpty()) {
             return;
         }
-        const QString shown = tag_metrics.elidedText(text, Qt::ElideRight, w * 0.4);
-        const qreal tw = tag_metrics.horizontalAdvance(shown) + tag_px * 1.1;
-        const qreal angle = (slot % 2 == 0 ? 6.0 : -5.0) + (d.tag_seed % 3) - 1;
-        DrawTag(p,
-                QPointF(label.right() - tw * 0.4,
-                        label.top() + tag_px * 1.2 + slot * tag_px * 2.2),
-                shown, angle, tag_px);
-        ++slot;
+        const qreal tw = tag_metrics.horizontalAdvance(text) + tag_font.pixelSize() * 1.4;
+        const QRectF rect(w + w * 0.07 - tw, tag_y, tw, tag_h);
+        p.save();
+        p.translate(rect.center());
+        p.rotate(8.0);
+        p.translate(-rect.center());
+        DrawSticker(p, rect, text, fill, tag_font);
+        p.restore();
+        tag_y += tag_h + w * 0.035;
     };
-    place_tag(d.play_time);
-    place_tag(d.version);
+    sticker(d.play_time, QColor(0xff, 0xd3, 0x6b));
+    sticker(d.version, QColor(0xff, 0xf3, 0xc9));
 
     p.end();
     return pixmap;
@@ -339,7 +297,7 @@ void CartridgesStyle::SetModel(QAbstractItemModel* model) {
     card_cache_.clear();
     if (model_) {
         // Structural changes rebuild the flat list (deferred, so a burst of inserts costs one
-        // rebuild). Data changes only repaint: the card cache key covers cover, title and tooltip.
+        // rebuild). Data changes only repaint: the card cache key covers cover, title and info.
         const auto structural = [this] { ScheduleRebuild(); };
         const auto repaint = [this] { update(); };
         connections_.push_back(connect(model_, &QAbstractItemModel::dataChanged, this, repaint));
@@ -411,7 +369,9 @@ void CartridgesStyle::Rebuild() {
             }
         }
     }
-    if (new_row < 0 && !entries_.empty() && current_row_ >= 0) {
+    if (new_row < 0 && !entries_.empty()) {
+        // Keep the position after a removal; with nothing selected yet, start on the first cart
+        // like the other styles (otherwise nothing is selected until a click).
         new_row = std::clamp(current_row_, 0, static_cast<int>(entries_.size()) - 1);
     }
     const QModelIndex before = previous;
@@ -463,13 +423,24 @@ int CartridgesStyle::RowCount() const {
 CartridgesStyle::Metrics CartridgesStyle::ComputeMetrics() const {
     Metrics m;
     const qreal avail = std::max<qreal>(1.0, width() - 2 * SideMargin);
-    m.cols = std::max(1, static_cast<int>(avail / TargetCellWidth));
+    // The square label art is View > Game Icon Size; the cart is sized around it. Columns get
+    // the concept's 26 px gap plus room for the stickers on the right edge.
+    m.card_w = LibraryStyleContext::ArtSize() / 0.872;
+    m.card_w = std::min(m.card_w, (avail - 26.0) / 1.12);
+    m.cols = std::max(1, static_cast<int>(avail / (m.card_w * 1.12 + 26.0)));
     m.cell_w = avail / m.cols;
-    m.card_w = m.cell_w * 0.72;
-    m.card_h = m.card_w * 1.3;
-    m.cell_h = m.card_h + 30.0;
+    // Label (header + square art + id strip) plus the rims lands at the real ~21:30 cart shape.
+    m.card_h = m.card_w * 1.408;
+    // Concept row gap of 34 px. With names on, the gap holds a two-line bubble plus the lifted,
+    // scaled selected cart of the next row, so neither covers the other.
+    QFont bubble_font = font();
+    bubble_font.setPixelSize(BubbleFontPx);
+    bubble_font.setBold(true);
+    const qreal bubble_h = BubbleGap + QFontMetrics(bubble_font).lineSpacing() * 2 + 16.0;
+    m.cell_h = m.card_h + (show_names_ ? std::max(34.0, bubble_h + SelectedHeadroom(m.card_h) + 6.0)
+                                       : 34.0);
     m.margin_x = SideMargin;
-    m.margin_top = TopMargin;
+    m.margin_top = TopMargin + SelectedHeadroom(m.card_h);
     const int n = RowCount();
     m.rows = (n + m.cols - 1) / m.cols;
     return m;
@@ -480,7 +451,7 @@ CartridgesStyle::Placement CartridgesStyle::Place(int row, const Metrics& m, boo
     const int col = row % m.cols;
     const int r = row / m.cols;
     place.center = QPointF(m.margin_x + (col + 0.5) * m.cell_w,
-                           m.margin_top + r * m.cell_h + m.card_h / 2 + 6.0);
+                           m.margin_top + r * m.cell_h + m.card_h / 2);
     if (scattered_) {
         const QModelIndex index = IndexAt(row);
         quint64 key = index.data(GameListItemPath::ProgramIdRole).toULongLong();
@@ -498,6 +469,9 @@ CartridgesStyle::Placement CartridgesStyle::Place(int row, const Metrics& m, boo
     }
     place.transform.translate(place.center.x(), place.center.y());
     place.transform.rotate(place.angle);
+    if (selected) {
+        place.transform.scale(SelectedScale, SelectedScale);
+    }
     place.transform.translate(-m.card_w / 2, -m.card_h / 2);
     return place;
 }
@@ -557,9 +531,11 @@ void CartridgesStyle::EnsureVisible(int row) {
         return;
     }
     const Metrics m = ComputeMetrics();
-    const int top = static_cast<int>(m.margin_top + (row / m.cols) * m.cell_h - 12);
-    const int bottom = static_cast<int>(m.margin_top + (row / m.cols + 1) * m.cell_h +
-                                        (show_names_ ? 60 : 12));
+    // Keep the lifted cart's ring and its name bubble on screen.
+    const qreal card_top = m.margin_top + (row / m.cols) * m.cell_h;
+    const int top = static_cast<int>(card_top - SelectedHeadroom(m.card_h) - 6.0);
+    const int bottom = static_cast<int>(card_top + m.card_h + BubbleGap +
+                                        QFontMetrics(font()).lineSpacing() * 2 + 30.0);
     if (top < bar_->value()) {
         bar_->setValue(top);
     } else if (bottom > bar_->value() + height()) {
@@ -591,78 +567,13 @@ void CartridgesStyle::Launch(const QModelIndex& index) {
     }
 }
 
-const QPixmap& CartridgesStyle::WoodTile(qreal dpr) const {
-    const int tile_w = std::max(256, ((width() + 255) / 256) * 256);
-    const bool dark = IsDark(palette());
-    const QString key = QStringLiteral("%1|%2|%3")
-                            .arg(tile_w)
-                            .arg(static_cast<int>(dpr * 100))
-                            .arg(static_cast<int>(dark));
-    if (!wood_.isNull() && wood_key_ == key) {
-        return wood_;
-    }
-    const int wd = static_cast<int>(std::ceil(tile_w * dpr));
-    const int plank_h = std::max(8, static_cast<int>(std::lround(120.0 * dpr)));
-    const int hd = plank_h * 4;
-    QImage image(wd, hd, QImage::Format_RGB32);
-    const float base_r = dark ? 98.0f : 214.0f;
-    const float base_g = dark ? 68.0f : 170.0f;
-    const float base_b = dark ? 46.0f : 120.0f;
-    const int seam = std::max(1, static_cast<int>(dpr * 1.5));
-    const int joint_width = std::max(1, static_cast<int>(dpr));
-    constexpr float TwoPi = 6.2831853f;
-    for (int y = 0; y < hd; ++y) {
-        const quint32 plank = static_cast<quint32>(y / plank_h);
-        const int ly = y % plank_h;
-        const float tone =
-            0.86f + 0.24f * static_cast<float>(Hash32(plank * 977u + 13u) & 255u) / 255.0f;
-        const int joint_x = static_cast<int>(Hash32(plank * 131u + 7u) % static_cast<quint32>(wd));
-        const float phase =
-            static_cast<float>(Hash32(plank * 31u + 5u) & 255u) / 255.0f * TwoPi;
-        const float ring =
-            0.03f * std::sin(TwoPi * 2.0f * static_cast<float>(ly) / static_cast<float>(plank_h) +
-                             phase);
-        auto* line = reinterpret_cast<QRgb*>(image.scanLine(y));
-        for (int x = 0; x < wd; ++x) {
-            const float streak =
-                static_cast<float>(Hash32(static_cast<quint32>(x >> 5) * 7919u +
-                                          static_cast<quint32>(y) * 104729u) &
-                                   255u) /
-                    255.0f -
-                0.5f;
-            const float noise =
-                static_cast<float>(Hash32(static_cast<quint32>(x) * 73856093u ^
-                                          static_cast<quint32>(y) * 19349663u) &
-                                   255u) /
-                    255.0f -
-                0.5f;
-            float t = tone + 0.05f * streak + 0.025f * noise + ring;
-            if (ly < seam) {
-                t *= 0.62f;
-            } else if (ly < seam * 2) {
-                t *= 0.9f;
-            }
-            if (std::abs(x - joint_x) < joint_width) {
-                t *= 0.65f;
-            }
-            line[x] = qRgb(std::clamp(static_cast<int>(base_r * t), 0, 255),
-                           std::clamp(static_cast<int>(base_g * t), 0, 255),
-                           std::clamp(static_cast<int>(base_b * t), 0, 255));
-        }
-    }
-    wood_ = QPixmap::fromImage(image);
-    wood_.setDevicePixelRatio(dpr);
-    wood_key_ = key;
-    return wood_;
-}
-
-QPixmap CartridgesStyle::CardPixmap(const QModelIndex& index, const Metrics& m, qreal dpr) const {
+QPixmap CartridgesStyle::CardPixmap(const QModelIndex& index, const Metrics& m, qreal dpr,
+                                    bool selected) const {
     const auto type = TypeOf(index);
     const bool is_game = IsGameType(type);
     const QPalette pal = palette();
 
     QPixmap cover;
-    QString tooltip;
     quint64 program_id = 0;
     QString path;
     if (is_game) {
@@ -670,7 +581,6 @@ QPixmap CartridgesStyle::CardPixmap(const QModelIndex& index, const Metrics& m, 
         if (cover.isNull() && index.data(GameListItemPath::HasIconRole).toBool()) {
             cover = index.data(Qt::DecorationRole).value<QPixmap>();
         }
-        tooltip = index.data(Qt::ToolTipRole).toString();
         program_id = index.data(GameListItemPath::ProgramIdRole).toULongLong();
         path = index.data(GameListItemPath::FullPathRole).toString();
     }
@@ -678,18 +588,21 @@ QPixmap CartridgesStyle::CardPixmap(const QModelIndex& index, const Metrics& m, 
     if (title.isEmpty()) {
         title = index.data(Qt::DisplayRole).toString().section(QLatin1Char('\n'), 0, 0);
     }
-    const QColor body = BodyColor(pal);
-    const bool info = show_info_ && is_game;
+    const bool info = (show_info_ || selected) && is_game;
+    const GameInfo game = is_game ? LibraryStyleContext::Info(index) : GameInfo{};
+    if (!is_game) {
+        // Add Folder and the like: the shared folder-with-plus art on the label.
+        cover = LibraryStyleContext::Cover(index, QSize(256, 256), pal);
+    }
 
     const QString key = QStringList{path,
                                     title,
                                     QString::number(program_id),
                                     QString::number(cover.cacheKey()),
                                     QString::number(static_cast<int>(type)),
-                                    info ? tooltip : QString{},
+                                    info ? game.info_line : QString{},
                                     QString::number(static_cast<int>(m.card_w * 100)),
-                                    QString::number(static_cast<int>(dpr * 100)),
-                                    body.name()}
+                                    QString::number(static_cast<int>(dpr * 100))}
                             .join(QLatin1Char('|'));
     if (QPixmap* cached = card_cache_.object(key)) {
         return *cached;
@@ -698,20 +611,19 @@ QPixmap CartridgesStyle::CardPixmap(const QModelIndex& index, const Metrics& m, 
     CardData card_data;
     card_data.cover = cover;
     card_data.title = title;
-    card_data.body = body;
-    card_data.header_text = tr("GAME");
+    card_data.is_game = is_game;
     if (is_game) {
-        card_data.id_text = QStringLiteral("%1")
-                           .arg(static_cast<qulonglong>(program_id), 16, 16, QLatin1Char('0'))
-                           .toUpper();
-        card_data.strip = DominantColor(cover, static_cast<quint32>(qHash(title)));
+        card_data.id_text = game.program_id_text;
+        card_data.is_nx2 = game.is_nx2 || (program_id >> 56) == 0x04;
         if (info) {
-            ParseInfo(tooltip, card_data.play_time, card_data.version);
+            if (game.is_game) { // "New" when never played
+                card_data.play_time = game.play_time_text;
+            }
+            if (!game.update_version.isEmpty()) {
+                card_data.version = QStringLiteral("v") + game.update_version;
+            }
         }
-    } else {
-        card_data.strip = pal.color(QPalette::Highlight);
     }
-    card_data.tag_seed = static_cast<int>(program_id % 7);
 
     auto* pixmap = new QPixmap(RenderCard(card_data, m.card_w, m.card_h, dpr));
     const int cost = std::max(
@@ -721,8 +633,12 @@ QPixmap CartridgesStyle::CardPixmap(const QModelIndex& index, const Metrics& m, 
     return result;
 }
 
-void CartridgesStyle::DrawNameBubble(QPainter& painter, const QModelIndex& index, const Metrics& m,
+void CartridgesStyle::DrawNameBubble(QPainter& painter, int row, const Metrics& m,
                                      const Placement& place) const {
+    const QModelIndex index = IndexAt(row);
+    if (!index.isValid()) {
+        return;
+    }
     const auto type = index.data(GameListItem::TypeRole).value<GameListItemType>();
     QString title = type == GameListItemType::Game
                         ? index.data(GameListItemPath::TitleRole).toString()
@@ -734,41 +650,45 @@ void CartridgesStyle::DrawNameBubble(QPainter& painter, const QModelIndex& index
         return;
     }
     QFont bubble_font = font();
+    bubble_font.setPixelSize(BubbleFontPx);
     bubble_font.setBold(true);
     const QFontMetrics fm(bubble_font);
-    const int max_w = static_cast<int>(m.card_w * 1.25);
+    // With every name showing, each bubble keeps to its own column so neighbours never overlap;
+    // at most two lines, the rest is cut with "...", so the row gap always holds it.
+    const int max_w = static_cast<int>(
+        std::max(40.0, (show_names_ ? m.cell_w - 12.0 : std::max(190.0, m.cell_w)) - 24.0));
     const QRect text_box =
         fm.boundingRect(QRect(0, 0, max_w, 1000), Qt::AlignHCenter | Qt::TextWordWrap, title);
     const qreal bw = text_box.width() + 24.0;
-    const qreal bh = text_box.height() + 16.0;
-    const qreal arrow = 7.0;
-    const qreal top = place.center.y() + m.card_h / 2 + 8.0;
+    const qreal bh = std::min(text_box.height(), fm.lineSpacing() * 2) + 16.0;
+    const qreal arrow = BubbleArrow;
+    // Anchored to the cart's resting bottom edge, so lifting the selected cart opens a gap.
+    const qreal rest_bottom = m.margin_top + (row / m.cols) * m.cell_h + m.card_h;
+    const qreal top = std::max(rest_bottom, place.center.y() + m.card_h * SelectedScale / 2) +
+                      BubbleGap - arrow;
     qreal left = place.center.x() - bw / 2;
     left = std::clamp(left, 6.0, std::max(6.0, width() - 6.0 - bw));
     const QRectF rect(left, top + arrow, bw, bh);
-    const QPalette pal = palette();
 
     painter.save();
     painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(0, 0, 0, 55));
-    painter.drawRoundedRect(rect.translated(0, 3), 10, 10);
-    painter.setBrush(pal.color(QPalette::Base));
-    painter.setPen(QPen(pal.color(QPalette::Highlight), 1.5));
-    painter.drawRoundedRect(rect, 10, 10);
+    for (int i = 1; i <= 4; ++i) {
+        painter.setBrush(QColor(0, 0, 0, 18));
+        painter.drawRoundedRect(rect.adjusted(-i, -i + 5, i, i + 5), 12 + i, 12 + i);
+    }
+    const QColor bubble(255, 255, 255, 235);
+    painter.setBrush(bubble);
+    painter.drawRoundedRect(rect, 12, 12);
     const qreal cx = std::clamp(place.center.x(), rect.left() + 14.0, rect.right() - 14.0);
     QPolygonF tip;
     tip << QPointF(cx - arrow, rect.top() + 0.75) << QPointF(cx, rect.top() - arrow)
         << QPointF(cx + arrow, rect.top() + 0.75);
     painter.setPen(Qt::NoPen);
-    painter.setBrush(pal.color(QPalette::Base));
+    painter.setBrush(bubble);
     painter.drawPolygon(tip);
-    painter.setPen(QPen(pal.color(QPalette::Highlight), 1.5));
-    painter.drawLine(tip.at(0), tip.at(1));
-    painter.drawLine(tip.at(1), tip.at(2));
-    painter.setFont(bubble_font);
-    painter.setPen(pal.color(QPalette::Text));
-    painter.drawText(rect.adjusted(12, 8, -12, -8),
-                     Qt::AlignHCenter | Qt::AlignVCenter | Qt::TextWordWrap, title);
+    LibraryStyleContext::PaintName(&painter, rect.adjusted(12, 8, -12, -8).toAlignedRect(), title,
+                                   QColor(0x16, 0x14, 0x1c), bubble_font,
+                                   Qt::AlignHCenter | Qt::AlignVCenter, 2);
     painter.restore();
 }
 
@@ -779,11 +699,8 @@ void CartridgesStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
     const qreal dpr = devicePixelRatioF();
     const int scroll = bar_->value();
 
-    const QPixmap& tile = WoodTile(dpr);
-    const qreal tile_h = std::max<qreal>(1.0, tile.height() / dpr);
-    for (qreal y = -std::fmod(static_cast<qreal>(scroll), tile_h); y < height(); y += tile_h) {
-        painter.drawPixmap(QPointF(0, y), tile);
-    }
+    painter.drawPixmap(QPointF(0, 0),
+                       LibraryStyleContext::WoodTable(size(), dpr, IsDark(palette())));
 
     const int n = RowCount();
     if (n == 0) {
@@ -803,7 +720,7 @@ void CartridgesStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
         if (!index.isValid()) {
             return;
         }
-        const QPixmap pixmap = CardPixmap(index, m, dpr);
+        const QPixmap pixmap = CardPixmap(index, m, dpr, is_selected);
         const Placement place = Place(row, m, is_selected);
         painter.save();
         painter.setTransform(place.transform, true);
@@ -812,23 +729,27 @@ void CartridgesStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
             for (int i = 0; i < 6; ++i) {
                 painter.setBrush(QColor(0, 0, 0, 20));
                 painter.drawRoundedRect(QRectF(-i, -i + 12, m.card_w + 2 * i, m.card_h + 2 * i),
-                                        m.card_w * 0.08 + i, m.card_w * 0.08 + i);
+                                        m.card_w * 0.085 + i, m.card_w * 0.085 + i);
             }
         } else {
             painter.setBrush(QColor(0, 0, 0, 45));
-            painter.drawRoundedRect(QRectF(0, 3, m.card_w, m.card_h), m.card_w * 0.08,
-                                    m.card_w * 0.08);
+            painter.drawRoundedRect(QRectF(0, 3, m.card_w, m.card_h), m.card_w * 0.085,
+                                    m.card_w * 0.085);
         }
-        painter.drawPixmap(QPointF(-margin, -margin), pixmap);
         if (is_selected) {
-            QColor accent = palette().color(QPalette::Highlight);
+            QColor ring = LibraryStyleContext::Accent(palette());
             if (!hasFocus()) {
-                accent.setAlpha(170);
+                ring.setAlpha(170);
             }
-            painter.setPen(QPen(accent, 3.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+            // Ring hugging the body from outside, concentric with its corners.
+            const qreal grow = RingWidth / 2;
+            painter.setPen(QPen(ring, RingWidth, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
             painter.setBrush(Qt::NoBrush);
-            painter.drawPath(BodyPath(m.card_w, m.card_h));
+            painter.drawRoundedRect(QRectF(-grow, -grow, m.card_w + 2 * grow, m.card_h + 2 * grow),
+                                    m.card_w * 0.085 + grow, m.card_w * 0.085 + grow);
         }
+        // Drawn after the ring: the stickers stick out past the body and sit on top of it.
+        painter.drawPixmap(QPointF(-margin, -margin), pixmap);
         painter.restore();
     };
 
@@ -838,11 +759,17 @@ void CartridgesStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
             draw_card(row, false);
         }
     }
+    if (show_names_) {
+        for (int row = first_row * m.cols; row < end_row; ++row) {
+            if (row != selected) {
+                DrawNameBubble(painter, row, m, Place(row, m, false));
+            }
+        }
+    }
     if (selected >= 0 && selected < n) {
         draw_card(selected, true);
-        if (show_names_) {
-            DrawNameBubble(painter, IndexAt(selected), m, Place(selected, m, true));
-        }
+        // The selected cart always names itself.
+        DrawNameBubble(painter, selected, m, Place(selected, m, true));
     }
 }
 

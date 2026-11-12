@@ -28,10 +28,14 @@
 
 #include "qt_common/game_list/game_list_p.h"
 #include "yuzu/game/styles/carousel_style.h"
+#include "yuzu/game/styles/style_helpers.h"
 
 namespace LibraryStyles {
 
 namespace {
+
+/// Cover corner radius as a share of its side (the concept: 10 px on a 230 px cover).
+constexpr qreal kCoverRadius = 10.0 / 230.0;
 
 bool IsGameType(GameListItemType type) {
     return type == GameListItemType::Game;
@@ -49,12 +53,6 @@ GameListItemType TypeOf(const QModelIndex& index) {
 constexpr int kAnimationMs = 180;
 constexpr int kMaxDots = 15;
 constexpr int kVisibleRadius = 4;
-
-QColor Lerp(const QColor& a, const QColor& b, qreal t) {
-    return QColor::fromRgbF(a.redF() + (b.redF() - a.redF()) * t,
-                            a.greenF() + (b.greenF() - a.greenF()) * t,
-                            a.blueF() + (b.blueF() - a.blueF()) * t);
-}
 
 QColor HashColor(const QString& text) {
     const size_t hash = static_cast<size_t>(qHash(text));
@@ -140,6 +138,7 @@ void CarouselStyle::SetModel(QAbstractItemModel* model) {
         connect(model_, &QAbstractItemModel::dataChanged, this, [this] {
             cover_cache_.clear();
             tint_cache_.clear();
+            background_cache_.clear();
             update();
         });
         connect(model_, &QObject::destroyed, this, [this] {
@@ -254,6 +253,7 @@ void CarouselStyle::Rebuild() {
     previous_row_ = -1;
     cover_cache_.clear();
     tint_cache_.clear();
+    background_cache_.clear();
 }
 
 QModelIndex CarouselStyle::IndexAt(int row) const {
@@ -313,7 +313,9 @@ CarouselStyle::Metrics CarouselStyle::ComputeMetrics() const {
     Metrics m;
     const qreal w = width();
     const qreal h = height();
-    m.side = std::clamp(std::min(w * 0.3, h * 0.46), 96.0, 440.0);
+    // The centre cover is the featured size (1.6x the icon size), shrunk only to fit the window.
+    m.side = std::max(96.0, std::min<qreal>({static_cast<qreal>(LibraryStyleContext::FeaturedArtSize()),
+                                             w * 0.45, h * 0.46}));
     m.title_px = std::clamp(m.side * 0.1, 15.0, 32.0);
     m.info_px = std::clamp(m.title_px * 0.5, 11.0, 15.0);
 
@@ -325,7 +327,7 @@ CarouselStyle::Metrics CarouselStyle::ComputeMetrics() const {
         block += m.info_px * 1.6 + 6.0;
     }
     const qreal top = std::max(12.0, (h - block) * 0.45);
-    m.center_x = w * 0.5 - m.side * 0.2;
+    m.center_x = w * 0.5;
     m.center_y = top + m.side * 0.5;
     qreal y = top + m.side + 22.0;
     m.title_y = y;
@@ -364,14 +366,7 @@ QString CarouselStyle::TitleFor(int row) const {
 }
 
 QString CarouselStyle::InfoFor(int row) const {
-    const QModelIndex index = IndexAt(row);
-    // The item tooltip already holds the play time and version lines.
-    QStringList parts =
-        index.data(Qt::ToolTipRole).toString().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
-    const qulonglong program_id = index.data(GameListItemPath::ProgramIdRole).toULongLong();
-    parts << tr("Program ID: %1")
-                 .arg(QString::number(program_id, 16).rightJustified(16, QLatin1Char('0')).toUpper());
-    return parts.join(QString(QChar(0x2022)).prepend(QStringLiteral("   ")).append(QStringLiteral("   ")));
+    return LibraryStyleContext::Info(IndexAt(row)).info_line;
 }
 
 const CarouselStyle::Tint& CarouselStyle::TintFor(int row) {
@@ -417,12 +412,13 @@ QPixmap CarouselStyle::CoverPixmap(int row, int side) {
         p.setRenderHint(QPainter::Antialiasing);
         p.setRenderHint(QPainter::SmoothPixmapTransform);
         QPainterPath path;
-        const qreal radius = px * 0.1;
+        const qreal radius = px * kCoverRadius;
         path.addRoundedRect(QRectF(0, 0, px, px), radius, radius);
         p.setClipPath(path);
         if (has_art) {
+            // Fill the square (crop, never letterbox) so the ring always meets art.
             const QPixmap scaled =
-                art.scaled(px, px, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                art.scaled(px, px, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
             p.drawPixmap((px - scaled.width()) / 2, (px - scaled.height()) / 2, scaled);
         } else {
             const QColor base = HashColor(TitleFor(row));
@@ -447,54 +443,99 @@ QPixmap CarouselStyle::CoverPixmap(int row, int side) {
     return pixmap;
 }
 
-void CarouselStyle::PaintBackground(QPainter& painter) {
+QPixmap CarouselStyle::BackgroundFor(int row) {
+    const auto found = background_cache_.constFind(row);
+    if (found != background_cache_.constEnd()) {
+        return *found;
+    }
+    // Only the selected row and the one being left are ever needed.
+    if (background_cache_.size() > 4) {
+        background_cache_.clear();
+    }
+    const qreal dpr = devicePixelRatioF();
+    QPixmap pixmap(size() * dpr);
+    pixmap.setDevicePixelRatio(dpr);
     const QPalette& pal = palette();
-    painter.fillRect(rect(), pal.color(QPalette::Window));
+    const QRect area = rect();
+    {
+        QPainter painter(&pixmap);
+        painter.fillRect(area, pal.color(QPalette::Window));
+        const Tint tint = TintFor(row);
+        if (!tint.blur.isNull()) {
+            painter.setRenderHint(QPainter::SmoothPixmapTransform);
+            painter.setOpacity(0.5);
+            painter.drawPixmap(area, tint.blur);
+            painter.setOpacity(1.0);
+        }
+
+        // Wash the blurred cover with its dominant colour, then fade into the palette at the
+        // bottom.
+        QColor wash = tint.color;
+        wash.setAlpha(110);
+        painter.fillRect(area, wash);
+
+        QRadialGradient glow(QPointF(width() * 0.4, height() * 0.4),
+                             std::max(width(), height()) * 0.6);
+        QColor glow_color = tint.color.lighter(150);
+        glow_color.setAlpha(90);
+        glow.setColorAt(0.0, glow_color);
+        glow_color.setAlpha(0);
+        glow.setColorAt(1.0, glow_color);
+        painter.fillRect(area, glow);
+
+        QColor base = pal.color(QPalette::Window);
+        QLinearGradient fade(0, 0, 0, height());
+        base.setAlpha(60);
+        fade.setColorAt(0.0, base);
+        base.setAlpha(190);
+        fade.setColorAt(1.0, base);
+        painter.fillRect(area, fade);
+    }
+    background_cache_.insert(row, pixmap);
+    return pixmap;
+}
+
+void CarouselStyle::PaintBackground(QPainter& painter) {
     if (items_.empty()) {
+        painter.fillRect(rect(), palette().color(QPalette::Window));
         return;
     }
-
     const int cur = std::clamp(current_, 0, static_cast<int>(items_.size()) - 1);
-    const Tint to = TintFor(cur);
-    QColor tint = to.color;
-    QPixmap from_blur;
-    if (progress_ < 1.0 && previous_row_ >= 0 && previous_row_ < static_cast<int>(items_.size())) {
-        const Tint from = TintFor(previous_row_);
-        tint = Lerp(from.color, to.color, progress_);
-        from_blur = from.blur;
+    const bool fading =
+        progress_ < 1.0 && previous_row_ >= 0 && previous_row_ < static_cast<int>(items_.size());
+    // Two cached blits per frame instead of four full-window gradient and scaling passes.
+    if (fading) {
+        painter.drawPixmap(0, 0, BackgroundFor(previous_row_));
+        painter.setOpacity(progress_);
     }
-
-    painter.setRenderHint(QPainter::SmoothPixmapTransform);
-    if (!from_blur.isNull()) {
-        painter.setOpacity(0.5 * (1.0 - progress_));
-        painter.drawPixmap(rect(), from_blur);
-    }
-    if (!to.blur.isNull()) {
-        painter.setOpacity(0.5 * (from_blur.isNull() ? 1.0 : progress_));
-        painter.drawPixmap(rect(), to.blur);
-    }
+    painter.drawPixmap(0, 0, BackgroundFor(cur));
     painter.setOpacity(1.0);
+}
 
-    // Wash the blurred cover with its dominant colour, then fade into the palette at the bottom.
-    QColor wash = tint;
-    wash.setAlpha(110);
-    painter.fillRect(rect(), wash);
-
-    QRadialGradient glow(QPointF(width() * 0.4, height() * 0.4), std::max(width(), height()) * 0.6);
-    QColor glow_color = tint.lighter(150);
-    glow_color.setAlpha(90);
-    glow.setColorAt(0.0, glow_color);
-    glow_color.setAlpha(0);
-    glow.setColorAt(1.0, glow_color);
-    painter.fillRect(rect(), glow);
-
-    QColor base = pal.color(QPalette::Window);
-    QLinearGradient fade(0, 0, 0, height());
-    base.setAlpha(60);
-    fade.setColorAt(0.0, base);
-    base.setAlpha(190);
-    fade.setColorAt(1.0, base);
-    painter.fillRect(rect(), fade);
+QPixmap CarouselStyle::Reflection(const QPixmap& cover) {
+    const qint64 key = cover.cacheKey();
+    if (const auto it = reflection_cache_.constFind(key); it != reflection_cache_.constEnd()) {
+        return *it;
+    }
+    if (reflection_cache_.size() > 48) {
+        reflection_cache_.clear();
+    }
+    const QImage source = cover.toImage().convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    const int h = std::max(1, static_cast<int>(source.height() * 0.22));
+    QImage part = source.copy(0, source.height() - h, source.width(), h).flipped(Qt::Vertical);
+    {
+        // Strongest next to the cover (28 %), gone by 80 % of the way down.
+        QPainter p(&part);
+        p.setCompositionMode(QPainter::CompositionMode_DestinationIn);
+        QLinearGradient fade(0, 0, 0, h);
+        fade.setColorAt(0.0, QColor(0, 0, 0, 72));
+        fade.setColorAt(0.8, QColor(0, 0, 0, 0));
+        p.fillRect(part.rect(), fade);
+    }
+    QPixmap out = QPixmap::fromImage(part);
+    out.setDevicePixelRatio(cover.devicePixelRatio());
+    reflection_cache_.insert(key, out);
+    return out;
 }
 
 void CarouselStyle::PaintCover(QPainter& painter, const Metrics& m, int row, qreal d) {
@@ -550,30 +591,41 @@ void CarouselStyle::PaintCover(QPainter& painter, const Metrics& m, int row, qre
     painter.save();
     painter.setOpacity(opacity);
 
-    // Soft shadow under the covers that are close to the selection.
-    if (a < 1.0) {
-        painter.setPen(Qt::NoPen);
-        for (int i = 0; i < 4; ++i) {
-            painter.setBrush(QColor(0, 0, 0, static_cast<int>(18 * (1.0 - a))));
-            const qreal grow = 4.0 * i;
-            painter.drawRoundedRect(
-                quad.boundingRect().adjusted(-grow, -grow + 10, grow, grow + 10), side * 0.1,
-                side * 0.1);
-        }
+    // Concept shadow: 0 18px 30px at 40 %, the selected cover 0 24px 40px at 50 %. Scaled with
+    // the cover (the concept cover is 230 px).
+    const qreal k = side * scale / 230.0;
+    {
+        const bool sel = a < 0.5;
+        const int blur = std::max(4, static_cast<int>(std::lround((sel ? 40.0 : 30.0) * k)));
+        const qreal drop = (sel ? 24.0 : 18.0) * k;
+        const QRect box = quad.boundingRect().toAlignedRect();
+        const QPixmap shadow = LibraryStyleContext::SoftShadow(
+            box.size(), side * scale * kCoverRadius, blur, sel ? 0.5 : 0.4, devicePixelRatioF());
+        painter.drawPixmap(QPointF(box.left() - blur, box.top() - blur + drop), shadow);
     }
 
     painter.setWorldTransform(transform);
     painter.drawPixmap(QRectF(0, 0, side, side), pixmap, QRectF(pixmap.rect()));
 
+    // Reflection: the bottom 22 % of the art, mirrored 6 px under the cover, fading out.
+    {
+        const QPixmap mirror = Reflection(pixmap);
+        const qreal gap = 6.0 * side / 230.0;
+        painter.drawPixmap(QRectF(0, side + gap, side, side * 0.22), mirror,
+                           QRectF(mirror.rect()));
+    }
+
     if (a < 0.5) {
-        QColor accent = palette().color(QPalette::Highlight);
+        QColor accent = LibraryStyleContext::Accent(palette());
         accent.setAlphaF(1.0 - a * 2.0);
-        QPen pen(accent, std::max(2.0, side * 0.012) * 1.5);
+        // 4 px ring (at the concept's 230 px cover) hugging the cover, concentric corners.
+        QPen pen(accent, std::max(2.5, 4.0 * side / 230.0));
+        pen.setJoinStyle(Qt::RoundJoin);
         painter.setPen(pen);
         painter.setBrush(Qt::NoBrush);
-        const qreal inset = pen.widthF() / 2.0;
-        painter.drawRoundedRect(QRectF(inset, inset, side - 2 * inset, side - 2 * inset),
-                                side * 0.1, side * 0.1);
+        const qreal grow = pen.widthF() / 2.0;
+        painter.drawRoundedRect(QRectF(-grow, -grow, side + 2 * grow, side + 2 * grow),
+                                side * kCoverRadius + grow, side * kCoverRadius + grow);
     }
     painter.restore();
 }
@@ -629,7 +681,7 @@ void CarouselStyle::PaintDots(QPainter& painter, const Metrics& m) {
     painter.setPen(Qt::NoPen);
     for (int i = 0; i < dots; ++i) {
         const bool on = i == active;
-        painter.setBrush(on ? palette().color(QPalette::Highlight) : muted);
+        painter.setBrush(on ? LibraryStyleContext::Accent(palette()) : muted);
         const qreal radius = on ? 4.5 : 3.0;
         painter.drawEllipse(QPointF(start + spacing * i, m.dots_y), radius, radius);
     }
@@ -676,6 +728,14 @@ void CarouselStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
 void CarouselStyle::resizeEvent(QResizeEvent* event) {
     LibraryStyleView::resizeEvent(event);
     cover_cache_.clear();
+    background_cache_.clear();
+}
+
+void CarouselStyle::changeEvent(QEvent* event) {
+    LibraryStyleView::changeEvent(event);
+    if (event->type() == QEvent::PaletteChange || event->type() == QEvent::StyleChange) {
+        background_cache_.clear();
+    }
 }
 
 void CarouselStyle::keyPressEvent(QKeyEvent* event) {

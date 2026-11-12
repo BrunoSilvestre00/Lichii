@@ -2,21 +2,27 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <algorithm>
+#include <cmath>
+#include <vector>
 
 #include <QAbstractItemModel>
 #include <QCoreApplication>
 #include <QFileInfo>
 #include <QFontMetrics>
+#include <QHash>
+#include <QImage>
 #include <QItemSelectionModel>
 #include <QLabel>
 #include <QLinearGradient>
 #include <QListView>
 #include <QPainter>
 #include <QPainterPath>
+#include <QRadialGradient>
 #include <QRegularExpression>
 #include <QTextLayout>
 #include <QVBoxLayout>
 
+#include "qt_common/config/uisettings.h"
 #include "qt_common/game_list/game_list_p.h"
 #include "qt_common/game_list/model.h"
 #include "yuzu/game/styles/library_style_view.h"
@@ -36,7 +42,7 @@ QModelIndex Column(const QModelIndex& index, int column) {
 
 QString PlayTimeText(u64 seconds) {
     if (seconds == 0) {
-        return Tr("Never played");
+        return Tr("New");
     }
     if (seconds < 3600) {
         return Tr("%1 min").arg(std::max<u64>(1, seconds / 60));
@@ -146,7 +152,8 @@ GameInfo LibraryStyleContext::Info(const QModelIndex& index) {
     info.size_text = Column(index, GameListModel::COLUMN_SIZE).data(Qt::DisplayRole).toString();
 
     QStringList parts;
-    parts.append(info.play_time_text);
+    parts.append(info.play_time_seconds == 0 ? info.play_time_text
+                                             : Tr("%1 played").arg(info.play_time_text));
     if (!info.update_version.isEmpty()) {
         parts.append(QStringLiteral("v%1").arg(info.update_version));
     }
@@ -206,7 +213,18 @@ bool LibraryStyleContext::IsDark(const QPalette& palette) {
 }
 
 QColor LibraryStyleContext::Accent(const QPalette& palette) {
-    return palette.highlight().color();
+    QColor accent = palette.highlight().color();
+    // Stylesheets set the highlight as a translucent selection fill (the Lichii theme uses its
+    // pink at 35 %); a selection ring needs it solid.
+    accent.setAlpha(255);
+    // Dark themes may also use a deep highlight that disappears as a thin ring on dark art; lift
+    // it to a bright tone of the same hue.
+    if (IsDark(palette) && accent.lightnessF() < 0.55) {
+        float h = 0, s = 0, l = 0, a = 1;
+        accent.getHslF(&h, &s, &l, &a);
+        accent = QColor::fromHslF(h, std::max(s, 0.8f), 0.58f, a);
+    }
+    return accent;
 }
 
 QColor LibraryStyleContext::Surface(const QPalette& palette) {
@@ -217,6 +235,145 @@ QColor LibraryStyleContext::MutedText(const QPalette& palette) {
     QColor color = palette.text().color();
     color.setAlpha(IsDark(palette) ? 200 : 150);
     return color;
+}
+
+int LibraryStyleContext::ArtSize() {
+    return std::max(96, static_cast<int>(UISettings::values.game_cover_size.GetValue()));
+}
+
+int LibraryStyleContext::FeaturedArtSize() {
+    return ArtSize() * 8 / 5;
+}
+
+QPixmap LibraryStyleContext::SoftShadow(const QSize& size, qreal radius, int blur, qreal alpha,
+                                        qreal dpr) {
+    static QHash<QString, QPixmap> cache;
+    const QString key = QStringLiteral("%1x%2|%3|%4|%5|%6")
+                            .arg(size.width())
+                            .arg(size.height())
+                            .arg(qRound(radius))
+                            .arg(blur)
+                            .arg(qRound(alpha * 100))
+                            .arg(qRound(dpr * 100));
+    if (const auto it = cache.constFind(key); it != cache.constEnd()) {
+        return *it;
+    }
+    if (cache.size() > 64) {
+        cache.clear();
+    }
+    const int b = std::max(1, static_cast<int>(std::lround(blur * dpr)));
+    const int w = static_cast<int>(std::lround(size.width() * dpr)) + 2 * b;
+    const int h = static_cast<int>(std::lround(size.height() * dpr)) + 2 * b;
+    // Alpha mask of the shape, then three box blurs (close to a Gaussian, like CSS blur).
+    QImage mask(w, h, QImage::Format_Alpha8);
+    mask.fill(0);
+    {
+        QPainter mp(&mask);
+        mp.setRenderHint(QPainter::Antialiasing, true);
+        mp.setPen(Qt::NoPen);
+        mp.setBrush(QColor(0, 0, 0, 255));
+        mp.drawRoundedRect(QRectF(b, b, w - 2 * b, h - 2 * b), radius * dpr, radius * dpr);
+    }
+    const int r = std::max(1, b / 3);
+    std::vector<int> line(static_cast<size_t>(std::max(w, h)));
+    const auto blur_pass = [&](bool horizontal) {
+        const int outer = horizontal ? h : w;
+        const int inner = horizontal ? w : h;
+        for (int o = 0; o < outer; ++o) {
+            const auto px = [&](int i) -> uchar& {
+                return horizontal ? mask.scanLine(o)[i] : mask.scanLine(i)[o];
+            };
+            for (int i = 0; i < inner; ++i) {
+                line[static_cast<size_t>(i)] = px(i);
+            }
+            int sum = 0;
+            for (int i = -r; i <= r; ++i) {
+                sum += line[static_cast<size_t>(std::clamp(i, 0, inner - 1))];
+            }
+            for (int i = 0; i < inner; ++i) {
+                px(i) = static_cast<uchar>(sum / (2 * r + 1));
+                sum += line[static_cast<size_t>(std::min(i + r + 1, inner - 1))] -
+                       line[static_cast<size_t>(std::max(i - r, 0))];
+            }
+        }
+    };
+    for (int pass = 0; pass < 3; ++pass) {
+        blur_pass(true);
+        blur_pass(false);
+    }
+    QImage shadow(w, h, QImage::Format_ARGB32_Premultiplied);
+    shadow.fill(Qt::transparent);
+    {
+        QPainter sp(&shadow);
+        sp.setOpacity(std::clamp(alpha, 0.0, 1.0));
+        sp.fillRect(shadow.rect(), Qt::black);
+        sp.setCompositionMode(QPainter::CompositionMode_DestinationIn);
+        sp.setOpacity(1.0);
+        sp.drawImage(0, 0, mask);
+    }
+    QPixmap pixmap = QPixmap::fromImage(shadow);
+    pixmap.setDevicePixelRatio(dpr);
+    cache.insert(key, pixmap);
+    return pixmap;
+}
+
+QPixmap LibraryStyleContext::WoodTable(const QSize& size, qreal dpr, bool dark) {
+    // Warm tabletop: a radial glow from the upper left plus faint, nearly vertical grain lines.
+    // It covers the whole viewport and stays put while the items scroll over it.
+    static QPixmap wood_;
+    static QString wood_key_;
+    const QString key = QStringLiteral("%1x%2|%3|%4")
+                            .arg(size.width())
+                            .arg(size.height())
+                            .arg(static_cast<int>(dpr * 100))
+                            .arg(static_cast<int>(dark));
+    if (!wood_.isNull() && wood_key_ == key) {
+        return wood_;
+    }
+    const qreal w = std::max(1, size.width());
+    const qreal h = std::max(1, size.height());
+    QPixmap pixmap(static_cast<int>(std::ceil(w * dpr)), static_cast<int>(std::ceil(h * dpr)));
+    pixmap.setDevicePixelRatio(dpr);
+    QPainter p(&pixmap);
+    p.setRenderHint(QPainter::Antialiasing, true);
+
+    // Ellipse centred at 30% / 20%, reaching the far corner (CSS "ellipse farthest-corner").
+    const QPointF centre(w * 0.3, h * 0.2);
+    const qreal rx = std::sqrt(2.0) * (w - centre.x());
+    const qreal ry = std::sqrt(2.0) * (h - centre.y());
+    QRadialGradient glow(QPointF(0, 0), 1.0);
+    if (dark) {
+        glow.setColorAt(0.0, QColor(0x6b, 0x4a, 0x33));
+        glow.setColorAt(0.6, QColor(0x3d, 0x2a, 0x1d));
+        glow.setColorAt(1.0, QColor(0x2a, 0x1c, 0x13));
+    } else {
+        glow.setColorAt(0.0, QColor(0xe6, 0xc9, 0xa0));
+        glow.setColorAt(0.6, QColor(0xcd, 0xa5, 0x77));
+        glow.setColorAt(1.0, QColor(0xb4, 0x8c, 0x5f));
+    }
+    QBrush brush(glow);
+    QTransform to_ellipse;
+    to_ellipse.translate(centre.x(), centre.y());
+    to_ellipse.scale(rx, ry);
+    brush.setTransform(to_ellipse);
+    p.fillRect(QRectF(0, 0, w, h), brush);
+
+    // Grain: a dark and a light hairline every 41 px, tilted 2 degrees.
+    const qreal grain = dark ? 0.25 : 0.2;
+    const QColor line_dark(0, 0, 0, static_cast<int>(255 * 0.35 * grain));
+    const QColor line_light(255, 220, 180, static_cast<int>(255 * 0.12 * grain));
+    p.translate(w / 2, h / 2);
+    p.rotate(2.0);
+    const qreal reach = std::hypot(w, h) / 2 + 42.0;
+    for (qreal x = -reach; x < reach; x += 41.0) {
+        p.fillRect(QRectF(x + 18.0, -reach, 1.0, 2 * reach), line_dark);
+        p.fillRect(QRectF(x + 41.0, -reach, 1.0, 2 * reach), line_light);
+    }
+    p.end();
+
+    wood_ = pixmap;
+    wood_key_ = key;
+    return wood_;
 }
 
 void LibraryStyleContext::PaintCover(QPainter* painter, const QRect& rect,

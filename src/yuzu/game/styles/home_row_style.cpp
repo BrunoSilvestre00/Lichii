@@ -26,8 +26,18 @@
 #include <QVariantAnimation>
 #include <QWheelEvent>
 
+#include <QFileInfo>
+#include <fmt/format.h>
+
+#include "common/fs/path_util.h"
+#include "common/settings.h"
+#include "core/constants.h"
+#include "core/core.h"
+#include "core/hle/service/acc/profile_manager.h"
 #include "qt_common/game_list/game_list_p.h"
+#include "qt_common/qt_common.h"
 #include "yuzu/game/styles/home_row_style.h"
+#include "yuzu/game/styles/style_helpers.h"
 
 namespace LibraryStyles {
 
@@ -82,6 +92,7 @@ void HomeRowStyle::SetModel(QAbstractItemModel* model) {
         });
     }
     m_cache.clear();
+    RebuildItems();
     m_current = RowCount() > 0 ? 0 : -1;
     AnimateToCurrent(false);
     update();
@@ -94,17 +105,22 @@ QModelIndex HomeRowStyle::CurrentIndex() const {
     if (!m_model || m_current < 0 || m_current >= RowCount()) {
         return {};
     }
-    return m_model->index(m_current, 0);
+    return IndexAt(m_current);
 }
 
 void HomeRowStyle::SetCurrentIndex(const QModelIndex& index) {
-    if (!m_model || !index.isValid() || index.model() != m_model.data() || index.parent().isValid()) {
+    if (!m_model || !index.isValid() || index.model() != m_model.data()) {
         return;
     }
-    if (index.row() == m_current) {
+    const auto it = std::find(m_items.begin(), m_items.end(), QPersistentModelIndex(index));
+    if (it == m_items.end()) {
         return;
     }
-    m_current = index.row();
+    const int row = static_cast<int>(it - m_items.begin());
+    if (row == m_current) {
+        return;
+    }
+    m_current = row;
     AnimateToCurrent(isVisible());
     update();
     emit CurrentChanged(CurrentIndex());
@@ -121,14 +137,57 @@ void HomeRowStyle::SetShowInfo(bool show) {
 }
 
 int HomeRowStyle::RowCount() const {
-    return m_model ? m_model->rowCount() : 0;
+    return static_cast<int>(m_items.size());
+}
+
+QModelIndex HomeRowStyle::IndexAt(int row) const {
+    if (row < 0 || row >= RowCount()) {
+        return {};
+    }
+    return QModelIndex(m_items[static_cast<size_t>(row)]);
+}
+
+void HomeRowStyle::RebuildItems() {
+    m_items.clear();
+    if (!m_model) {
+        return;
+    }
+    QPersistentModelIndex add_folder;
+    const auto type_of = [](const QModelIndex& index) {
+        return index.data(GameListItem::TypeRole).value<GameListItemType>();
+    };
+    for (int r = 0; r < m_model->rowCount(); ++r) {
+        const QModelIndex index = m_model->index(r, 0);
+        switch (type_of(index)) {
+        case GameListItemType::Game:
+            m_items.emplace_back(index);
+            break;
+        case GameListItemType::AddDir:
+            add_folder = index;
+            break;
+        case GameListItemType::Favorites:
+            break; // Its games are listed in their folders too.
+        default:
+            for (int c = 0; c < m_model->rowCount(index); ++c) {
+                const QModelIndex child = m_model->index(c, 0, index);
+                if (type_of(child) == GameListItemType::Game) {
+                    m_items.emplace_back(child);
+                }
+            }
+            break;
+        }
+    }
+    if (add_folder.isValid()) {
+        m_items.push_back(add_folder);
+    }
 }
 
 HomeRowStyle::Metrics HomeRowStyle::ComputeMetrics() const {
     Metrics m{};
-    const int by_width = static_cast<int>(width() / 5.6);
+    // Tiles are the featured size (1.6x the icon size), shrunk only to fit the window.
     const int by_height = static_cast<int>(height() * 0.42);
-    m.side = std::max(64, std::min(by_width, by_height));
+    const int by_width = static_cast<int>(width() / 2.4);
+    m.side = std::max(64, std::min({LibraryStyleContext::FeaturedArtSize(), by_height, by_width}));
     m.step = static_cast<int>(m.side * 1.14);
     m.center_y = static_cast<int>(height() * 0.5);
     return m;
@@ -144,7 +203,7 @@ QRectF HomeRowStyle::CoverRect(int row, const Metrics& m) const {
 }
 
 QString HomeRowStyle::TitleAt(int row) const {
-    const QModelIndex index = m_model->index(row, 0);
+    const QModelIndex index = IndexAt(row);
     QString title = index.data(GameListItemPath::TitleRole).toString();
     if (title.isEmpty()) {
         title = index.data(Qt::DisplayRole).toString();
@@ -196,8 +255,16 @@ void HomeRowStyle::AnimateToCurrent(bool animate) {
 
 void HomeRowStyle::ModelChanged(bool notify) {
     m_cache.clear();
+    const QPersistentModelIndex selected = IndexAt(m_current);
+    RebuildItems();
     const int count = RowCount();
     const int previous = m_current;
+    if (selected.isValid()) {
+        const auto it = std::find(m_items.begin(), m_items.end(), selected);
+        if (it != m_items.end()) {
+            m_current = static_cast<int>(it - m_items.begin());
+        }
+    }
     m_current = count == 0 ? -1 : std::clamp(m_current, 0, count - 1);
     AnimateToCurrent(false);
     update();
@@ -208,7 +275,7 @@ void HomeRowStyle::ModelChanged(bool notify) {
 }
 
 QPixmap HomeRowStyle::CoverPixmap(int row, int side) {
-    const QModelIndex index = m_model->index(row, 0);
+    const QModelIndex index = IndexAt(row);
     const qreal dpr = devicePixelRatioF();
     const int target = std::max(1, static_cast<int>(std::ceil(side * kSelectedScale * dpr)));
     const QString key = QStringLiteral("%1|%2|%3")
@@ -267,6 +334,45 @@ void HomeRowStyle::DrawPlaceholder(QPainter& painter, const QRectF& rect, const 
     painter.drawText(rect, Qt::AlignCenter, title.left(1).toUpper());
 }
 
+namespace {
+
+/// Picture of the active profile, or the default account picture; reloaded only when the
+/// profile or its image file changes.
+QPixmap UserAvatar() {
+    static QPixmap cached;
+    static QString cached_key;
+    QString path;
+    if (QtCommon::system) {
+        const auto uuid = QtCommon::system->GetProfileManager().GetUser(
+            static_cast<std::size_t>(Settings::values.current_user.GetValue()));
+        if (uuid.has_value()) {
+            const auto file = Common::FS::GetEdenPath(Common::FS::EdenPath::NANDDir) /
+                              fmt::format("system/save/8000000000000010/su/avators/{}.jpg",
+                                          uuid->FormattedString());
+            path = QString::fromStdString(Common::FS::PathToUTF8String(file));
+        }
+    }
+    const QFileInfo info(path);
+    const QString key =
+        path + QLatin1Char('|') + QString::number(info.exists() ? info.lastModified().toSecsSinceEpoch() : 0);
+    if (!cached.isNull() && key == cached_key) {
+        return cached;
+    }
+    QPixmap pixmap;
+    if (!path.isEmpty() && info.exists()) {
+        pixmap.load(path);
+    }
+    if (pixmap.isNull()) {
+        pixmap.loadFromData(Core::Constants::ACCOUNT_BACKUP_JPEG.data(),
+                            static_cast<uint>(Core::Constants::ACCOUNT_BACKUP_JPEG.size()));
+    }
+    cached = pixmap;
+    cached_key = key;
+    return cached;
+}
+
+} // namespace
+
 void HomeRowStyle::paintEvent(QPaintEvent* event) {
     Q_UNUSED(event);
     QPainter painter(this);
@@ -280,9 +386,31 @@ void HomeRowStyle::paintEvent(QPaintEvent* event) {
     background.setColorAt(1.0, base.darker(104));
     painter.fillRect(rect(), background);
 
-    const QColor accent = pal.color(QPalette::Highlight);
+    const QColor accent = LibraryStyleContext::Accent(pal);
     const Metrics m = ComputeMetrics();
     const int count = RowCount();
+
+    // Profile picture, top left.
+    {
+        const QPixmap avatar = UserAvatar();
+        const double d = std::clamp(m.side / 3.6, 36.0, 72.0);
+        const QRectF circle(m.side / 4.0, m.side / 9.0, d, d);
+        if (!avatar.isNull()) {
+            painter.save();
+            QPainterPath clip;
+            clip.addEllipse(circle);
+            painter.setClipPath(clip);
+            const double scale = std::max(d / avatar.width(), d / avatar.height());
+            const QSizeF fitted(avatar.width() * scale, avatar.height() * scale);
+            painter.drawPixmap(QRectF(circle.center() - QPointF(fitted.width(), fitted.height()) / 2,
+                                      fitted),
+                               avatar, QRectF(avatar.rect()));
+            painter.restore();
+        }
+        painter.setBrush(Qt::NoBrush);
+        painter.setPen(QPen(QColor(255, 255, 255, 230), std::max(2.0, d / 22.0)));
+        painter.drawEllipse(circle);
+    }
 
     // Status cluster: the clock only.
     {
@@ -328,7 +456,7 @@ void HomeRowStyle::paintEvent(QPaintEvent* event) {
     }
 
     if (m_current >= 0 && m_current < count) {
-        const QModelIndex index = m_model->index(m_current, 0);
+        const QModelIndex index = IndexAt(m_current);
         const QRectF cover = CoverRect(m_current, m);
         const double radius = cover.width() * 0.06;
 
@@ -353,42 +481,47 @@ void HomeRowStyle::paintEvent(QPaintEvent* event) {
         painter.setPen(QPen(accent, std::max(2.0, cover.width() * 0.018)));
         painter.drawRoundedRect(cover, radius, radius);
 
-        if (m_show_names) {
-            QFont font = painter.font();
-            font.setPixelSize(std::max(15, m.side / 8));
-            font.setBold(true);
-            painter.setFont(font);
-            painter.setPen(accent);
-            const QFontMetrics fm(font);
-            const int left = std::max(static_cast<int>(width() * 0.04),
-                                      std::min(static_cast<int>(cover.left()),
-                                               static_cast<int>(width() * 0.5)));
-            const QRect text(left, static_cast<int>(cover.top()) - fm.height() - m.side / 14,
-                             std::max(1, width() - left - static_cast<int>(width() * 0.04)),
-                             fm.height());
-            painter.drawText(text, Qt::AlignLeft | Qt::AlignBottom,
-                             fm.elidedText(title, Qt::ElideRight, text.width()));
-        }
-
-        if (m_show_info) {
-            // The item tooltip holds the play time and version lines.
-            const QString tip = index.data(Qt::ToolTipRole).toString();
-            const QString info = tip.split(QLatin1Char('\n'), Qt::SkipEmptyParts)
-                                     .join(QStringLiteral("   |   "));
+        // Title and info on one line, centred over the selected tile.
+        const GameInfo game = LibraryStyleContext::Info(index);
+        const QString name = m_show_names ? title : QString{};
+        const QString info = m_show_info ? game.info_line : QString{};
+        if (!name.isEmpty() || !info.isEmpty()) {
+            QFont title_font = painter.font();
+            title_font.setPixelSize(std::max(15, m.side / 8));
+            title_font.setBold(true);
+            QFont info_font = painter.font();
+            info_font.setPixelSize(std::max(12, m.side / 13));
+            info_font.setBold(true);
+            const QFontMetrics title_fm(title_font);
+            const QFontMetrics info_fm(info_font);
+            const int gap = name.isEmpty() || info.isEmpty() ? 0 : title_fm.height() / 2;
+            const int max_w = static_cast<int>(width() * 0.92);
+            // Measured widths plus a pixel of slack: eliding to the exact advance can cut the
+            // last word through rounding even when it fits.
+            int info_w = info.isEmpty() ? 0 : info_fm.horizontalAdvance(info) + 2;
+            const int name_w = std::min(name.isEmpty() ? 0 : title_fm.horizontalAdvance(name) + 2,
+                                        std::max(0, max_w - info_w - gap));
+            info_w = std::min(info_w, max_w - name_w - gap);
+            const int total = name_w + gap + info_w;
+            const int left = std::clamp(static_cast<int>(cover.center().x()) - total / 2,
+                                        static_cast<int>(width() * 0.04),
+                                        std::max(static_cast<int>(width() * 0.04),
+                                                 static_cast<int>(width() * 0.96) - total));
+            const int baseline =
+                static_cast<int>(cover.top()) - m.side / 14 - title_fm.descent();
+            if (!name.isEmpty()) {
+                painter.setFont(title_font);
+                painter.setPen(accent);
+                painter.drawText(QPoint(left, baseline),
+                                 title_fm.elidedText(name, Qt::ElideRight, name_w));
+            }
             if (!info.isEmpty()) {
-                QFont font = painter.font();
-                font.setPixelSize(std::max(12, m.side / 11));
-                font.setBold(false);
-                painter.setFont(font);
                 QColor muted = pal.color(QPalette::WindowText);
-                muted.setAlphaF(0.7);
+                muted.setAlphaF(0.6);
+                painter.setFont(info_font);
                 painter.setPen(muted);
-                const QFontMetrics fm(font);
-                const QRect text(static_cast<int>(width() * 0.08),
-                                 static_cast<int>(cover.bottom()) + m.side / 10,
-                                 static_cast<int>(width() * 0.84), fm.height() + 4);
-                painter.drawText(text, Qt::AlignHCenter | Qt::AlignTop,
-                                 fm.elidedText(info, Qt::ElideRight, text.width()));
+                painter.drawText(QPoint(left + name_w + gap, baseline),
+                                 info_fm.elidedText(info, Qt::ElideRight, info_w));
             }
         }
     }
@@ -438,7 +571,7 @@ void HomeRowStyle::mousePressEvent(QMouseEvent* event) {
     }
     MoveTo(row);
     if (event->button() == Qt::RightButton) {
-        emit ContextMenuRequested(m_model->index(row, 0), event->globalPosition().toPoint());
+        emit ContextMenuRequested(IndexAt(row), event->globalPosition().toPoint());
     }
     event->accept();
 }
@@ -454,7 +587,7 @@ void HomeRowStyle::mouseDoubleClickEvent(QMouseEvent* event) {
         return;
     }
     MoveTo(row);
-    emit LaunchRequested(m_model->index(row, 0));
+    emit LaunchRequested(IndexAt(row));
     event->accept();
 }
 

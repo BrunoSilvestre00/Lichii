@@ -78,9 +78,9 @@ private:
     void Rebuild();
     void Launch(const QModelIndex& index);
 
-    QPixmap CardPixmap(const QModelIndex& index, const Metrics& m, qreal dpr) const;
-    const QPixmap& WoodTile(qreal dpr) const;
-    void DrawNameBubble(QPainter& painter, const QModelIndex& index, const Metrics& m,
+    QPixmap CardPixmap(const QModelIndex& index, const Metrics& m, qreal dpr,
+                       bool selected) const;
+    void DrawNameBubble(QPainter& painter, int row, const Metrics& m,
                         const Placement& place) const;
 
     QPointer<QAbstractItemModel> model_;
@@ -96,8 +96,6 @@ private:
     bool scattered_ = false;
 
     mutable QCache<QString, QPixmap> card_cache_;
-    mutable QPixmap wood_;
-    mutable QString wood_key_;
 };
 
 } // namespace LibraryStyles

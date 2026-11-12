@@ -25,7 +25,9 @@
 #include <QWheelEvent>
 
 #include "qt_common/game_list/game_list_p.h"
+#include "qt_common/config/uisettings.h"
 #include "yuzu/game/styles/dual_pane_style.h"
+#include "yuzu/game/styles/style_helpers.h"
 
 namespace LibraryStyles {
 
@@ -266,8 +268,13 @@ void DualPaneStyle::ComputeLayout() {
                        std::max(0, total_h - top_h));
     grid_area_ = grid_pane_.adjusted(PanePad - 4, PanePad - 4, -(PanePad - 4), -(PanePad - 4));
 
-    static constexpr int base_px[3] = {52, 72, 100};
-    icon_px_ = base_px[std::clamp(icon_level_, 0, 2)];
+    // The global cover size is the base (Cover 160 -> 72 px, the old medium); the style's own
+    // option (X) still steps it smaller or larger.
+    static constexpr qreal level_scale[3] = {0.72, 1.0, 1.39};
+    const int base = std::max(
+        32, static_cast<int>(UISettings::values.game_cover_size.GetValue()) * 72 / 160);
+    icon_px_ = std::clamp(static_cast<int>(base * level_scale[std::clamp(icon_level_, 0, 2)]),
+                          32, 256);
     const int gap_w = icon_px_ / 4 + 6;
     cols_ = std::max(1, (grid_area_.width() + gap_w) / (icon_px_ + gap_w));
     cell_w_ = std::max(1, grid_area_.width() / cols_);
@@ -424,32 +431,34 @@ void DualPaneStyle::DrawPreview(QPainter& painter, const QModelIndex& index, qre
                           std::max(0, content.right() - cover.right() - PanePad - 6),
                           content.height());
     if (text_area.width() > 20) {
+        const QString title = TitleOf(index);
         QFont title_font = font();
         title_font.setPixelSize(std::clamp(content.height() / 6, 16, 36));
         title_font.setBold(true);
+        // Wrap between words only; shrink the font until the longest word fits on a line.
+        int longest = 0;
+        for (const QString& word : title.split(QLatin1Char(' '), Qt::SkipEmptyParts)) {
+            longest = std::max(longest, QFontMetrics(title_font).horizontalAdvance(word));
+        }
+        if (longest > text_area.width()) {
+            title_font.setPixelSize(std::max(
+                12, title_font.pixelSize() * text_area.width() / std::max(1, longest)));
+        }
         const QFontMetrics tfm(title_font);
         const int max_title_h = tfm.lineSpacing() * 3;
-        const int flags = Qt::TextWordWrap | Qt::TextWrapAnywhere | Qt::AlignLeft | Qt::AlignTop;
-        const QString title = TitleOf(index);
+        const int flags = Qt::TextWordWrap | Qt::AlignLeft | Qt::AlignTop;
         QRect title_box =
             tfm.boundingRect(QRect(0, 0, text_area.width(), max_title_h), flags, title);
         title_box.setHeight(std::min(title_box.height(), max_title_h));
 
         QStringList info;
         if (show_info_) {
-            const QStringList tip =
-                index.data(Qt::ToolTipRole).toString().split(QLatin1Char('\n'));
-            for (const QString& line : tip) {
-                if (!line.trimmed().isEmpty()) {
-                    info << line.trimmed();
+            const GameInfo game = LibraryStyleContext::Info(index);
+            if (game.is_game) {
+                info << game.info_line;
+                if (game.program_id != 0) {
+                    info << game.program_id_text;
                 }
-            }
-            const qulonglong pid = index.data(GameListItemPath::ProgramIdRole).toULongLong();
-            if (pid != 0) {
-                info << tr("Program ID: %1")
-                            .arg(QString::number(pid, 16)
-                                     .toUpper()
-                                     .rightJustified(16, QLatin1Char('0')));
             }
         }
         QFont info_font = font();
@@ -484,7 +493,7 @@ void DualPaneStyle::DrawPreview(QPainter& painter, const QModelIndex& index, qre
 
 void DualPaneStyle::DrawGrid(QPainter& painter) {
     const QPalette pal = palette();
-    const QColor accent = pal.highlight().color();
+    const QColor accent = LibraryStyleContext::Accent(pal);
     const bool dark = IsDark(pal);
     const QFontMetrics fm(font());
 

@@ -30,6 +30,7 @@
 #include "qt_common/game_list/game_list_p.h"
 #include "qt_common/game_list/model.h"
 #include "yuzu/game/styles/channel_grid_style.h"
+#include "yuzu/game/styles/style_helpers.h"
 
 namespace LibraryStyles {
 
@@ -72,28 +73,6 @@ QString TitleOf(const QModelIndex& index) {
     const QString full = index.data(GameListItemPath::TitleRole).toString();
     return full.isEmpty() ? index.data(Qt::DisplayRole).toString().section(QLatin1Char('\n'), 0, 0)
                           : full;
-}
-
-QString VersionOf(const QModelIndex& index) {
-    // The tooltip is "Play Time...\nVersion: x.y.z"; keep what follows the last colon.
-    const QString tip = index.data(Qt::ToolTipRole).toString();
-    const QString last = tip.section(QLatin1Char('\n'), -1);
-    const qsizetype colon = last.lastIndexOf(QLatin1Char(':'));
-    return colon < 0 ? QString{} : last.mid(colon + 1).trimmed();
-}
-
-QString PlayedOf(const QModelIndex& index) {
-    const QModelIndex cell = index.sibling(index.row(), GameListModel::COLUMN_PLAY_TIME);
-    if (!cell.isValid()) {
-        // The model passed in has no play time column: the tooltip carries the readable text.
-        const QString line = index.data(Qt::ToolTipRole).toString().section(QLatin1Char('\n'), 0, 0);
-        return line.isEmpty() ? QObject::tr("Never played") : line;
-    }
-    const qulonglong seconds = cell.data(GameListItemPlayTime::PlayTimeRole).toULongLong();
-    if (seconds == 0) {
-        return QObject::tr("Never played");
-    }
-    return QObject::tr("%1 h played").arg(QLocale().toString(seconds / 3600.0, 'f', 1));
 }
 
 } // namespace
@@ -237,10 +216,13 @@ ChannelGridStyle::Layout ChannelGridStyle::ComputeLayout() const {
     const int w = std::max(1, width());
     const int h = std::max(1, height());
     l.margin = std::clamp(w / 40, 12, 48);
-    l.columns = std::max(1, (w - 2 * l.margin) / 340);
-    l.cell_w = std::max(1, (w - 2 * l.margin) / l.columns);
-    l.tile_w = std::max(1, l.cell_w - Gap);
+    // Wide channel tiles: as tall as View > Game Icon Size, 16:10. Extra width spreads the
+    // columns instead of growing the tiles.
+    const int avail = std::max(1, w - 2 * l.margin);
+    l.tile_w = std::min(LibraryStyleContext::ArtSize() * 16 / 10, std::max(1, avail - Gap));
     l.tile_h = std::max(1, l.tile_w * 10 / 16);
+    l.columns = std::max(1, avail / (l.tile_w + Gap));
+    l.cell_w = std::max(1, avail / l.columns);
     l.row_h = l.tile_h + Gap + (show_names ? NameHeight : 0);
     l.top = l.margin;
     l.dock_h = std::clamp(h / 5, 110, 200);
@@ -469,7 +451,7 @@ void ChannelGridStyle::PaintTile(QPainter& p, const Layout& l, int row, bool sel
     const bool dark = IsDark(pal);
     const QRectF tile = TileRect(l, row);
     const qreal radius = tile.height() * 0.11;
-    const QColor accent = pal.highlight().color();
+    const QColor accent = LibraryStyleContext::Accent(pal);
 
     // Soft drop shadow.
     p.setPen(Qt::NoPen);
@@ -549,9 +531,11 @@ void ChannelGridStyle::PaintTile(QPainter& p, const Layout& l, int row, bool sel
     gloss.quadTo(art.center().x(), art.top() + art.height() * 0.52, art.left(),
                  art.top() + art.height() * 0.30);
     gloss.closeSubpath();
-    QLinearGradient gl(art.topLeft(), QPointF(art.left(), art.top() + art.height() * 0.5));
-    gl.setColorAt(0.0, QColor(255, 255, 255, dark ? 50 : 78));
-    gl.setColorAt(1.0, QColor(255, 255, 255, 0));
+    // Strong enough to read over busy cover art; it stays faintly visible down to its curved
+    // lower edge, like the shine on a glossy plastic tile.
+    QLinearGradient gl(art.topLeft(), QPointF(art.left(), art.top() + art.height() * 0.52));
+    gl.setColorAt(0.0, QColor(255, 255, 255, dark ? 95 : 110));
+    gl.setColorAt(1.0, QColor(255, 255, 255, dark ? 22 : 30));
     p.setPen(Qt::NoPen);
     p.setBrush(gl);
     p.drawPath(gloss);
@@ -605,7 +589,7 @@ void ChannelGridStyle::PaintDock(QPainter& p, const Layout& l) {
         p.restore();
     }
     p.setBrush(fill);
-    QColor edge = pal.highlight().color();
+    QColor edge = LibraryStyleContext::Accent(pal);
     edge.setAlpha(dark ? 110 : 90);
     p.setPen(QPen(edge, 1.5));
     p.drawPath(dock);
@@ -656,7 +640,7 @@ void ChannelGridStyle::PaintDock(QPainter& p, const Layout& l) {
     const int diameter = std::clamp(l.dock_h * 52 / 100, 48, 120);
     const QRectF button(margin + 8, mid_y - diameter / 2.0, diameter, diameter);
     if (button.right() < w / 2 - clock_half - 8) {
-        const QColor accent = pal.highlight().color();
+        const QColor accent = LibraryStyleContext::Accent(pal);
         QRadialGradient rg(button.center() - QPointF(diameter * 0.15, diameter * 0.2),
                            diameter * 0.75);
         rg.setColorAt(0.0, accent.lighter(130));
@@ -684,7 +668,7 @@ void ChannelGridStyle::PaintDock(QPainter& p, const Layout& l) {
         const int card_h = std::clamp(l.dock_h * 58 / 100, 56, 110);
         const QRectF card(w - margin - 8 - card_w, mid_y - card_h / 2.0, card_w, card_h);
         if (card.left() > w / 2 + clock_half + 12) {
-            const QColor accent = pal.highlight().color();
+            const QColor accent = LibraryStyleContext::Accent(pal);
             p.setPen(Qt::NoPen);
             p.setBrush(QColor(0, 0, 0, dark ? 40 : 20));
             p.drawRoundedRect(card.translated(0, 3), 14, 14);
@@ -694,11 +678,7 @@ void ChannelGridStyle::PaintDock(QPainter& p, const Layout& l) {
             p.setPen(QPen(outline, 2.0));
             p.drawRoundedRect(card, 14, 14);
 
-            QStringList meta{PlayedOf(index)};
-            const QString version = VersionOf(index);
-            if (!version.isEmpty()) {
-                meta << tr("v%1").arg(version);
-            }
+            const QStringList meta{LibraryStyleContext::Info(index).info_line};
             QFont tf = font();
             tf.setBold(true);
             tf.setPixelSize(std::clamp(card_h * 20 / 100, 11, 18));

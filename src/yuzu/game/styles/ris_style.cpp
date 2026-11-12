@@ -257,8 +257,9 @@ RisStyle::Colors RisStyle::Scheme() const {
 }
 
 int RisStyle::TileSize() const {
-    const int cover = static_cast<int>(UISettings::values.game_cover_size.GetValue());
-    return large_shelf ? std::clamp(cover * 4 / 5, 120, 220) : std::clamp(cover * 3 / 5, 84, 150);
+    // Large shelf: the icon size every style uses; small shelf: three quarters of it.
+    const int art = LibraryStyleContext::ArtSize();
+    return large_shelf ? art : art * 3 / 4;
 }
 
 int RisStyle::NameHeight() const {

@@ -40,6 +40,7 @@ public:
 protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
+    void changeEvent(QEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
@@ -82,7 +83,9 @@ private:
     QString TitleFor(int row) const;
     QString InfoFor(int row) const;
 
+    QPixmap BackgroundFor(int row);
     void PaintBackground(QPainter& painter);
+    QPixmap Reflection(const QPixmap& cover);
     void PaintCover(QPainter& painter, const Metrics& metrics, int row, qreal offset);
     void PaintTexts(QPainter& painter, const Metrics& metrics);
     void PaintDots(QPainter& painter, const Metrics& metrics);
@@ -106,6 +109,10 @@ private:
 
     QHash<int, QPixmap> cover_cache_;
     QHash<int, Tint> tint_cache_;
+    /// Finished background per selected row at the current widget size: blurred art, wash, glow
+    /// and fade composed once, so a frame only blits one or two pixmaps.
+    QHash<int, QPixmap> background_cache_;
+    QHash<qint64, QPixmap> reflection_cache_;
     int cover_cache_side_ = 0;
 
     std::vector<Hit> hits_;

@@ -7,6 +7,7 @@
 
 #include <QAbstractItemModel>
 #include <QContextMenuEvent>
+#include <QFontInfo>
 #include <QFontMetrics>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -156,8 +157,16 @@ void DenseGridStyle::Rebuild() {
 }
 
 int DenseGridStyle::TileSize() const {
-    const int cover = static_cast<int>(UISettings::values.game_cover_size.GetValue());
-    return std::clamp(cover * 4 / 5, 96, 200);
+    // Same art size as every other style; this one is dense through its tight gaps.
+    return LibraryStyleContext::ArtSize();
+}
+
+QFont DenseGridStyle::TileFont() const {
+    // Small tiles get small text: about 11 px on a 128 px tile, never above the UI font.
+    QFont f = font();
+    const int ui_px = QFontInfo(f).pixelSize();
+    f.setPixelSize(std::clamp(TileSize() / 12, 9, std::max(9, ui_px)));
+    return f;
 }
 
 int DenseGridStyle::CellHeight() const {
@@ -165,7 +174,7 @@ int DenseGridStyle::CellHeight() const {
     if (!show_names || names_on_tiles) {
         return tile;
     }
-    return tile + 6 + QFontMetrics(font()).lineSpacing() * 2;
+    return tile + 4 + QFontMetrics(TileFont()).lineSpacing() * 2;
 }
 
 QRect DenseGridStyle::GridArea() const {
@@ -246,7 +255,8 @@ void DenseGridStyle::paintEvent(QPaintEvent*) {
 
     painter.save();
     painter.setClipRect(area);
-    const QFontMetrics metrics(font());
+    const QFont tile_font = TileFont();
+    const QFontMetrics tile_metrics(tile_font);
     for (int i = 0; i < entries.size(); ++i) {
         const QRect tile = TileRect(i);
         if (tile.bottom() + CellHeight() < 0 || tile.top() > area.bottom()) {
@@ -255,20 +265,21 @@ void DenseGridStyle::paintEvent(QPaintEvent*) {
         const QModelIndex index = entries[i];
         LibraryStyleContext::PaintCover(&painter, tile, index, pal, Radius);
         if (show_names && names_on_tiles) {
-            LibraryStyleContext::PaintCoverCaption(&painter, tile, index, font(),
+            LibraryStyleContext::PaintCoverCaption(&painter, tile, index, tile_font,
                                                    show_info && i == current);
         } else if (show_names) {
-            const QRect name(tile.left(), tile.bottom() + 6, tile.width(),
-                             metrics.lineSpacing() * 2);
+            const QRect name(tile.left(), tile.bottom() + 4, tile.width(),
+                             tile_metrics.lineSpacing() * 2);
             LibraryStyleContext::PaintName(&painter, name, LibraryStyleContext::Title(index),
-                                           pal.text().color(), font(),
+                                           pal.text().color(), tile_font,
                                            Qt::AlignHCenter | Qt::AlignTop);
         }
         if (i == current) {
-            LibraryStyleContext::PaintSelection(&painter, tile, pal, Radius, 2);
+            LibraryStyleContext::PaintSelection(&painter, tile, pal, Radius, 3);
         }
     }
     painter.restore();
+    const QFontMetrics metrics(font());
 
     // Status bar: selected title (and its info line) on the left, the controls on the right.
     const QRect bar(0, area.bottom() + 1, width(), BarHeight);
@@ -286,11 +297,16 @@ void DenseGridStyle::paintEvent(QPaintEvent*) {
 
     const QModelIndex selected = CurrentIndex();
     if (selected.isValid()) {
+        // The bar follows the same toggles as the tiles: no names, no title down here either.
         const GameInfo info = LibraryStyleContext::Info(selected);
-        QString text = info.title;
-        if (show_info && !info.info_line.isEmpty()) {
-            text += QStringLiteral("    ") + info.info_line;
+        QStringList parts;
+        if (show_names) {
+            parts.append(info.title);
         }
+        if (show_info && !info.info_line.isEmpty()) {
+            parts.append(info.info_line);
+        }
+        const QString text = parts.join(QStringLiteral("    "));
         QFont bold = font();
         bold.setBold(true);
         const QRect title_rect(bar.left() + Margin, bar.top(),

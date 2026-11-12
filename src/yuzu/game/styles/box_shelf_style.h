@@ -86,6 +86,11 @@ private:
     void DrawWall(QPainter& p, bool dark);
     void DrawPlank(QPainter& p, const Metrics& m, int row, bool dark);
     void DrawItem(QPainter& p, const Metrics& m, int pos, bool selected, bool dark);
+    /// Front mode: the case turned to show its spine, the selected one facing the viewer.
+    void DrawFront(QPainter& p, const Metrics& m, int pos, bool selected);
+    /// White name bubble under a case (front mode), the same one the Cartridges style uses.
+    void DrawNameBubble(QPainter& p, const Metrics& m, const QRectF& base, const QString& title,
+                        bool selected);
     void DrawBubble(QPainter& p, const Metrics& m, const QRectF& base, const QString& title,
                     bool dark);
     void DrawPlainTitle(QPainter& p, const Metrics& m, const QRectF& base, const QString& title);

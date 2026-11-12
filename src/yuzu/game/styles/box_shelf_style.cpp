@@ -27,6 +27,7 @@
 #include "qt_common/config/uisettings.h"
 #include "qt_common/game_list/game_list_p.h"
 #include "yuzu/game/styles/box_shelf_style.h"
+#include "yuzu/game/styles/style_helpers.h"
 
 namespace LibraryStyles {
 
@@ -78,15 +79,6 @@ QString ItemKey(const QModelIndex& index) {
 
 /// Reads "label: value" style tooltip line `line` and returns the value, or empty when the line has
 /// no label (for example "Never Played").
-QString TooltipValue(const QModelIndex& index, int line) {
-    const QStringList lines = index.data(Qt::ToolTipRole).toString().split(QLatin1Char('\n'));
-    if (line < 0 || line >= lines.size()) {
-        return {};
-    }
-    const qsizetype colon = lines.at(line).indexOf(QLatin1Char(':'));
-    return colon < 0 ? QString() : lines.at(line).mid(colon + 1).trimmed();
-}
-
 QPixmap CoverOf(const QModelIndex& index) {
     if (!index.data(GameListItemPath::HasIconRole).toBool()) {
         return {};
@@ -152,6 +144,67 @@ void DrawCover(QPainter* p, const QRectF& r, const QModelIndex& index, const QSt
         p->setPen(QColor(255, 255, 255, 215));
         p->drawText(r, Qt::AlignCenter, Initials(title));
     }
+    p->restore();
+}
+
+/// Front outline of a case: square on the spine (left) side, rounded on the right.
+QPainterPath CaseShape(double w, double h) {
+    const double r = w * 0.035;
+    QPainterPath path;
+    path.moveTo(0, 0);
+    path.lineTo(w - r, 0);
+    path.quadTo(w, 0, w, r);
+    path.lineTo(w, h - r);
+    path.quadTo(w, h, w - r, h);
+    path.lineTo(0, h);
+    path.closeSubpath();
+    return path;
+}
+
+/// CSS-like 3D for one case: `perspective(d) translateY(lift) scale(k) rotateY(angle)` with the
+/// transform origin at the bottom centre of the case (local x 0..w, y 0..h, z towards viewer).
+struct CaseView {
+    double w = 0, h = 0, d = 800, angle_deg = 0, scale = 1, lift = 0;
+    QPointF origin; // screen position of the bottom centre
+
+    QPointF Map(double x, double y, double z) const {
+        const double a = qDegreesToRadians(angle_deg);
+        const double dx = (x - w / 2) * scale;
+        const double dy = (y - h) * scale;
+        const double dz = z * scale;
+        const double xr = dx * std::cos(a) + dz * std::sin(a);
+        const double zr = -dx * std::sin(a) + dz * std::cos(a);
+        const double k = d / std::max(1.0, d - zr);
+        return {origin.x() + xr * k, origin.y() + (dy - lift) * k};
+    }
+    QPolygonF Front() const {
+        return QPolygonF{Map(0, 0, 0), Map(w, 0, 0), Map(w, h, 0), Map(0, h, 0)};
+    }
+    QPolygonF Spine(double depth) const {
+        return QPolygonF{Map(0, 0, -depth), Map(0, 0, 0), Map(0, h, 0), Map(0, h, -depth)};
+    }
+};
+
+/// Sticker in the Cartridges look: rounded tag, soft shadow, tilted 8 degrees.
+void DrawSticker(QPainter* p, const QPointF& right_top, const QString& text, const QFont& font,
+                 const QColor& fill) {
+    const QFontMetricsF fm(font);
+    const double w = fm.horizontalAdvance(text) + font.pixelSize() * 1.4;
+    const double h = font.pixelSize() * 1.75;
+    const QRectF rect(right_top.x() - w, right_top.y(), w, h);
+    p->save();
+    p->translate(rect.center());
+    p->rotate(8.0);
+    p->translate(-rect.center());
+    const double r = h * 0.28;
+    p->setPen(Qt::NoPen);
+    p->setBrush(QColor(0, 0, 0, 70));
+    p->drawRoundedRect(rect.translated(0, h * 0.12), r, r);
+    p->setBrush(fill);
+    p->drawRoundedRect(rect, r, r);
+    p->setFont(font);
+    p->setPen(QColor(0x3b, 0x2a, 0x12));
+    p->drawText(rect, Qt::AlignCenter, text);
     p->restore();
 }
 
@@ -395,11 +448,14 @@ BoxShelfStyle::Metrics BoxShelfStyle::ComputeMetrics() const {
     const double w = std::max(1, width());
     const double usable = std::max(60.0, w - 48.0);
     if (!m_spines) {
-        m.cols = std::max(1, static_cast<int>(usable / 260.0));
+        // The front art is View > Game Icon Size wide; columns leave room for the turned
+        // spine, the stickers and the concept's 26 px gap.
+        m.case_w = std::min<double>(LibraryStyleContext::ArtSize(), (usable - 26.0) / 1.12);
+        m.cols = std::max(1, static_cast<int>(usable / (m.case_w * 1.12 + 26.0)));
         m.cell_w = usable / m.cols;
-        m.case_w = std::min(m.cell_w * 0.72, 300.0);
         m.case_h = m.case_w / kCaseAspect;
-        m.bubble_h = m_show_names ? 24.0 : 0.0;
+        // Names on: every case gets a bubble of up to two lines underneath.
+        m.bubble_h = m_show_names ? QFontMetrics(font()).lineSpacing() * 2 + 44.0 : 0.0;
     } else {
         const double spine_w = std::clamp(w / 56.0, 26.0, 44.0);
         m.case_w = spine_w;
@@ -409,11 +465,14 @@ BoxShelfStyle::Metrics BoxShelfStyle::ComputeMetrics() const {
         m.bubble_h = 0.0;
     }
     m.left = (w - m.cols * m.cell_w) / 2.0;
-    m.top_pad = 20.0;
+    // Front mode: the selected case grows 10 % upwards from its base and lifts, plus its ring
+    // and stickers; keep the first row clear of the top edge.
+    m.top_pad = m_spines ? 20.0 : m.case_h * 0.1 + m.case_w * 0.2 + 8.0;
     m.top_face = std::max(8.0, m.case_w * 0.05);
     m.plank_h = m.top_face + std::max(14.0, m.case_w * 0.09);
     const double plank_visible = m.plank_h - m.top_face * 0.55;
-    m.row_h = m.top_pad + m.case_h + std::max(plank_visible, m.bubble_h + 4.0) + 16.0;
+    m.row_h = m_spines ? m.top_pad + m.case_h + std::max(plank_visible, m.bubble_h + 4.0) + 16.0
+                       : m.top_pad + m.case_h + std::max(34.0, m.bubble_h) + 10.0;
     return m;
 }
 
@@ -660,7 +719,13 @@ void BoxShelfStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
     p.setRenderHint(QPainter::TextAntialiasing, true);
 
     const bool dark = IsDark();
-    DrawWall(p, dark);
+    if (m_spines) {
+        DrawWall(p, dark);
+    } else {
+        // The same wooden tabletop as the Cartridges style.
+        p.drawPixmap(QPointF(0, 0),
+                     LibraryStyleContext::WoodTable(size(), devicePixelRatioF(), dark));
+    }
 
     const int count = ItemCount();
     if (count == 0) {
@@ -679,7 +744,9 @@ void BoxShelfStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
     const int selected_pos = CurrentPos();
 
     for (int row = first_row; row <= last_row; ++row) {
-        DrawPlank(p, m, row, dark);
+        if (m_spines) {
+            DrawPlank(p, m, row, dark);
+        }
         const int begin = row * m.cols;
         const int end = std::min(count, begin + m.cols);
         for (int pos = begin; pos < end; ++pos) {
@@ -688,9 +755,21 @@ void BoxShelfStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
             }
         }
     }
+    if (!m_spines && m_show_names) {
+        for (int pos = first_row * m.cols; pos < std::min(count, (last_row + 1) * m.cols); ++pos) {
+            if (pos != selected_pos) {
+                DrawNameBubble(p, m, ItemRect(m, pos), TitleOf(IndexAtPos(pos)), false);
+            }
+        }
+    }
     if (selected_pos >= 0 && selected_pos / m.cols >= first_row - 1 &&
         selected_pos / m.cols <= last_row + 1) {
         DrawItem(p, m, selected_pos, true, dark);
+        if (!m_spines) {
+            // The selected case always names itself.
+            DrawNameBubble(p, m, ItemRect(m, selected_pos), TitleOf(IndexAtPos(selected_pos)),
+                           true);
+        }
     }
 
     // Slim scroll indicator.
@@ -849,8 +928,12 @@ QPixmap BoxShelfStyle::CasePixmap(const QModelIndex& index, const Metrics& m, bo
         return *cached;
     }
 
+    // The case seen from the front, after the Box shelf concept. Newer-generation titles: a red
+    // case with a header band. Others: a clear case (pale frame, open on the spine side) with a
+    // red corner tab. The glyph is a neutral rounded pill; no console names.
     const double w = m.case_w;
     const double h = m.case_h;
+    const double u = w / 150.0; // concept units: the concept case is 150 px wide
     QPixmap pm(QSize(std::max(1, qCeil(w * dpr)), std::max(1, qCeil(h * dpr))));
     pm.setDevicePixelRatio(dpr);
     pm.fill(Qt::transparent);
@@ -859,46 +942,56 @@ QPixmap BoxShelfStyle::CasePixmap(const QModelIndex& index, const Metrics& m, bo
     p.setRenderHint(QPainter::SmoothPixmapTransform, true);
     p.setRenderHint(QPainter::TextAntialiasing, true);
 
-    const double radius = w * 0.045;
-    const double spine_w = w * 0.07;
-    const QColor spine = SpineColor(index);
-    const QRectF full(0, 0, w, h);
-    QPainterPath shape;
-    shape.addRoundedRect(full.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
+    const bool is_game = IsGame(index);
+    const LibraryStyles::GameInfo info =
+        is_game ? LibraryStyleContext::Info(index) : LibraryStyles::GameInfo{};
+    const bool nx2 = info.is_nx2 || (info.program_id >> 56) == 0x04;
+    const QColor red(0xe3, 0x14, 0x1f);
+    const QColor clear(226, 228, 233, 242);
 
+    const QPainterPath shape = CaseShape(w, h);
     p.setClipPath(shape);
-    QLinearGradient spine_g(0, 0, spine_w, 0);
-    spine_g.setColorAt(0.0, spine.darker(130));
-    spine_g.setColorAt(1.0, spine.lighter(112));
-    p.fillRect(QRectF(0, 0, spine_w, h), spine_g);
+    const double border = std::max(2.0, 3.0 * u);
+    p.fillRect(QRectF(0, 0, w, h), nx2 ? red : clear);
 
-    const QRectF art(spine_w, 0, w - spine_w, h);
+    const auto pill = [&](const QPointF& center, double pw, double ph) {
+        p.setPen(QPen(Qt::white, std::max(1.2, 2.0 * u)));
+        p.setBrush(Qt::NoBrush);
+        const double r = std::min(pw, ph) * 0.33;
+        p.drawRoundedRect(QRectF(center.x() - pw / 2, center.y() - ph / 2, pw, ph), r, r);
+    };
+
+    QRectF art;
+    if (nx2) {
+        const QRectF band(border, border, w - 2 * border, h * 0.14 - border);
+        art = QRectF(border, band.bottom(), w - 2 * border, h - band.bottom() - border);
+        QFont two = font();
+        two.setBold(true);
+        two.setPixelSize(std::max(7, qRound(16.0 * u)));
+        const double two_w = QFontMetricsF(two).horizontalAdvance(QStringLiteral("2"));
+        const double gw = 12.0 * u;
+        const double gap = 3.0 * u;
+        const double x0 = band.center().x() - (gw + gap + two_w) / 2;
+        pill(QPointF(x0 + gw / 2, band.center().y()), gw, 15.0 * u);
+        p.setFont(two);
+        p.setPen(Qt::white);
+        p.drawText(QRectF(x0 + gw + gap, band.top(), two_w + 2, band.height()),
+                   Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("2"));
+    } else {
+        art = QRectF(0, border, w - border, h - 2 * border);
+    }
     DrawCover(&p, art, index, TitleOf(index));
+    if (!nx2 && is_game) {
+        const double corner = w * 0.3;
+        p.fillRect(QRectF(art.left(), art.top(), corner, corner), red);
+        pill(QPointF(art.left() + corner / 2, art.top() + corner / 2), 13.0 * u, 16.0 * u);
+    }
 
-    // Soft sheen over the art, and the crease where the spine meets the cover.
-    QLinearGradient sheen(0, 0, w, h);
-    sheen.setColorAt(0.0, QColor(255, 255, 255, 46));
-    sheen.setColorAt(0.35, QColor(255, 255, 255, 0));
-    sheen.setColorAt(1.0, QColor(0, 0, 0, 36));
-    p.fillRect(art, sheen);
-    p.setPen(QPen(QColor(0, 0, 0, 90), 1.0));
-    p.drawLine(QPointF(spine_w, 0), QPointF(spine_w, h));
-    p.setPen(QPen(QColor(255, 255, 255, 50), 1.0));
-    p.drawLine(QPointF(spine_w + 1.0, 0), QPointF(spine_w + 1.0, h));
-    p.setClipping(false);
-
-    // Plastic edge highlight and thin outline.
-    QLinearGradient edge(0, 0, w, h);
-    edge.setColorAt(0.0, QColor(255, 255, 255, 190));
-    edge.setColorAt(0.5, QColor(255, 255, 255, 40));
-    edge.setColorAt(1.0, QColor(255, 255, 255, 110));
-    p.setBrush(Qt::NoBrush);
-    p.setPen(QPen(QColor(0, 0, 0, 110), 1.0));
-    p.drawPath(shape);
-    p.setPen(QPen(QBrush(edge), 1.3));
-    QPainterPath inner;
-    inner.addRoundedRect(full.adjusted(1.4, 1.4, -1.4, -1.4), radius, radius);
-    p.drawPath(inner);
+    // Gloss from the top left.
+    QLinearGradient gloss(0, 0, w, w * 0.18);
+    gloss.setColorAt(0.0, QColor(255, 255, 255, 51));
+    gloss.setColorAt(0.35, QColor(255, 255, 255, 0));
+    p.fillRect(QRectF(0, 0, w, h), gloss);
     p.end();
 
     const int cost = std::max(1, pm.width() * pm.height() * 4 / 1024);
@@ -982,7 +1075,7 @@ void BoxShelfStyle::DrawBubble(QPainter& p, const Metrics& m, const QRectF& base
     f.setBold(true);
     f.setPixelSize(std::clamp(static_cast<int>(m.case_w * 0.075), 11, 15));
     const QFontMetrics fm(f);
-    const QColor accent = palette().highlight().color();
+    const QColor accent = LibraryStyleContext::Accent(palette());
     const double y = base.bottom() + 4.0;
     const double max_w = std::max(120.0, std::min(m.cell_w * 1.4, width() - 16.0));
     const QRect text_bounds = fm.boundingRect(QRect(0, 0, static_cast<int>(max_w - 24.0), 1000),
@@ -1029,6 +1122,10 @@ void BoxShelfStyle::DrawPlainTitle(QPainter& p, const Metrics& m, const QRectF& 
 }
 
 void BoxShelfStyle::DrawItem(QPainter& p, const Metrics& m, int pos, bool selected, bool dark) {
+    if (!m_spines) {
+        DrawFront(p, m, pos, selected);
+        return;
+    }
     const QModelIndex index = IndexAtPos(pos);
     if (!index.isValid()) {
         return;
@@ -1041,7 +1138,7 @@ void BoxShelfStyle::DrawItem(QPainter& p, const Metrics& m, int pos, bool select
     const QRectF r = base.translated(0, -lift);
     const double w = m.case_w;
     const double h = m.case_h;
-    const QColor accent = palette().highlight().color();
+    const QColor accent = LibraryStyleContext::Accent(palette());
 
     // Contact shadow on the plank.
     p.save();
@@ -1109,16 +1206,13 @@ void BoxShelfStyle::DrawItem(QPainter& p, const Metrics& m, int pos, bool select
 
     // Play time and version tags, top right of the case.
     if (m_show_info && IsGame(index) && (!m_spines || selected)) {
-        // Play time and version are only exposed through the tooltip: "Play Time: X" (or "Never
-        // Played"), then "Version: Y".
+        const LibraryStyles::GameInfo info = LibraryStyleContext::Info(index);
         QStringList tags;
-        const QString play = TooltipValue(index, 0);
-        if (!play.isEmpty()) {
-            tags << play;
+        if (info.is_game) {
+            tags << info.play_time_text;
         }
-        const QString version = TooltipValue(index, 1);
-        if (!version.isEmpty()) {
-            tags << QStringLiteral("v") + version;
+        if (!info.update_version.isEmpty()) {
+            tags << QStringLiteral("v") + info.update_version;
         }
         QFont f = font();
         f.setBold(true);
@@ -1131,6 +1225,170 @@ void BoxShelfStyle::DrawItem(QPainter& p, const Metrics& m, int pos, bool select
             ty += fm.height() + 10.0;
         }
     }
+}
+
+void BoxShelfStyle::DrawFront(QPainter& p, const Metrics& m, int pos, bool selected) {
+    const QModelIndex index = IndexAtPos(pos);
+    if (!index.isValid()) {
+        return;
+    }
+    const QRectF base = ItemRect(m, pos);
+    if (base.bottom() < -80.0 || base.top() > height() + 80.0) {
+        return;
+    }
+    const double w = m.case_w;
+    const double h = m.case_h;
+    const double u = w / 150.0;
+
+    // Unselected cases are turned so the spine shows; the selected one turns to face you.
+    CaseView view;
+    view.w = w;
+    view.h = h;
+    view.d = 800.0 * u;
+    view.angle_deg = selected ? 0.0 : 24.0;
+    view.scale = selected ? 1.1 : 1.0;
+    view.lift = 6.0 * u;
+    view.origin = QPointF(base.center().x(), base.bottom());
+    const QPolygonF front = view.Front();
+    const QRectF rect_src(0, 0, w, h);
+
+    // Soft drop shadow under the front.
+    p.save();
+    p.setPen(Qt::NoPen);
+    for (int i = 1; i <= 5; ++i) {
+        p.setBrush(QColor(0, 0, 0, selected ? 22 : 18));
+        const QPointF c = front.boundingRect().center();
+        QTransform grow;
+        grow.translate(c.x(), c.y() + (selected ? 12.0 : 7.0) * u);
+        grow.scale(1.0 + 0.012 * i, 1.0 + 0.008 * i);
+        grow.translate(-c.x(), -c.y());
+        p.drawPolygon(grow.map(front));
+    }
+    p.restore();
+
+    const LibraryStyles::GameInfo info =
+        IsGame(index) ? LibraryStyleContext::Info(index) : LibraryStyles::GameInfo{};
+    const bool nx2 = info.is_nx2 || (info.program_id >> 56) == 0x04;
+
+    // Spine face, hinged on the left edge and folded back.
+    if (!selected) {
+        const double depth = 13.0 * u;
+        QTransform spine_map;
+        if (QTransform::quadToQuad(QPolygonF(QRectF(0, 0, depth, h)), view.Spine(depth),
+                                   spine_map)) {
+            p.save();
+            p.setTransform(spine_map, true);
+            p.setPen(Qt::NoPen);
+            QLinearGradient g(0, 0, depth, 0);
+            if (nx2) {
+                g.setColorAt(0.0, QColor(0xa9, 0x0c, 0x15));
+                g.setColorAt(0.4, QColor(0xc9, 0x11, 0x1c));
+                g.setColorAt(1.0, QColor(0xa9, 0x0c, 0x15));
+                p.fillRect(QRectF(0, 0, depth, h), g);
+            } else {
+                // Clear plastic with the red cover sheet showing through.
+                g.setColorAt(0.0, QColor(0xd6, 0xd8, 0xde));
+                g.setColorAt(0.4, QColor(0xee, 0xf0, 0xf3));
+                g.setColorAt(1.0, QColor(0xd6, 0xd8, 0xde));
+                p.fillRect(QRectF(0, 0, depth, h), g);
+                QLinearGradient sheet(0, 0, depth, 0);
+                sheet.setColorAt(0.0, QColor(0xc8, 0x10, 0x1b));
+                sheet.setColorAt(0.4, QColor(0xe3, 0x14, 0x1f));
+                sheet.setColorAt(1.0, QColor(0xc8, 0x10, 0x1b));
+                // Full height: a clear stub under the sheet read as the spine poking out.
+                p.fillRect(QRectF(0, 0, depth - 1.0, h), sheet);
+            }
+            p.restore();
+        }
+    }
+
+    // Front face.
+    QTransform front_map;
+    if (QTransform::quadToQuad(QPolygonF(rect_src), front, front_map)) {
+        const QPixmap pix = CasePixmap(index, m, IsDark());
+        p.save();
+        p.setTransform(front_map, true);
+        p.drawPixmap(rect_src, pix, QRectF(pix.rect()));
+        if (selected) {
+            // Ring just outside the case, following its square-left, rounded-right outline.
+            const double grow = 4.0 * u / view.scale;
+            QPainterPath ring = CaseShape(w + 2 * grow, h + 2 * grow);
+            ring.translate(-grow, -grow);
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(LibraryStyleContext::Accent(palette()), std::max(2.5, 4.0 * u) / view.scale,
+                          Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
+            p.drawPath(ring);
+        }
+        p.restore();
+    }
+
+    // Stickers: Info on shows them on every case; the selected one always shows them.
+    if ((m_show_info || selected) && IsGame(index)) {
+        QFont f = font();
+        f.setWeight(QFont::Black);
+        f.setPixelSize(std::clamp(qRound(12.0 * u), 9, 16));
+        const double tag_h = f.pixelSize() * 1.75;
+        const QPointF top_right = front.at(1);
+        const QPointF bottom_right = front.at(2);
+        const double t = 0.17;
+        QPointF anchor = top_right + (bottom_right - top_right) * t + QPointF(10.0 * u, 0);
+        if (selected) {
+            anchor += QPointF(6.0 * u, -22.0 * u);
+        }
+        if (info.is_game) { // "New" when never played
+            DrawSticker(&p, anchor, info.play_time_text, f, QColor(0xff, 0xd3, 0x6b));
+            anchor.ry() += tag_h + 6.0 * u;
+        }
+        if (!info.update_version.isEmpty()) {
+            DrawSticker(&p, anchor, QStringLiteral("v") + info.update_version, f,
+                        QColor(0xff, 0xf3, 0xc9));
+        }
+    }
+}
+
+void BoxShelfStyle::DrawNameBubble(QPainter& p, const Metrics& m, const QRectF& base,
+                                   const QString& title, bool selected) {
+    if (title.isEmpty()) {
+        return;
+    }
+    QFont f = font();
+    f.setPixelSize(13);
+    f.setBold(true);
+    const QFontMetrics fm(f);
+    // Concept bubble: up to 190 px, or the case width + 20 px when every name shows, so
+    // neighbours never overlap.
+    const double max_w = std::min(m_show_names ? m.case_w + 20.0 : 190.0, m.cell_w - 8.0);
+    const QRect text_box = fm.boundingRect(QRect(0, 0, static_cast<int>(max_w - 24.0), 1000),
+                                           Qt::AlignHCenter | Qt::TextWordWrap, title);
+    const double text_h = std::min<double>(text_box.height(), fm.lineSpacing() * 2);
+    const double bw = text_box.width() + 24.0;
+    const double bh = text_h + 16.0;
+    const double arrow = 7.0;
+    // Bubble 22 px below the case, its arrow reaching up to 15 px.
+    Q_UNUSED(selected);
+    const double top = base.bottom() + 22.0 - arrow;
+    double left = base.center().x() - bw / 2;
+    left = std::clamp(left, 6.0, std::max(6.0, width() - 6.0 - bw));
+    const QRectF rect(left, top + arrow, bw, bh);
+
+    p.save();
+    p.setPen(Qt::NoPen);
+    for (int i = 1; i <= 4; ++i) {
+        p.setBrush(QColor(0, 0, 0, 18));
+        p.drawRoundedRect(rect.adjusted(-i, -i + 5, i, i + 5), 12 + i, 12 + i);
+    }
+    const QColor bubble(255, 255, 255, 235);
+    p.setBrush(bubble);
+    p.drawRoundedRect(rect, 12, 12);
+    const double cx = std::clamp(base.center().x(), rect.left() + 14.0, rect.right() - 14.0);
+    p.drawPolygon(QPolygonF{{cx - arrow, rect.top() + 0.75},
+                            {cx, rect.top() - arrow},
+                            {cx + arrow, rect.top() + 0.75}});
+    p.setFont(f);
+    p.setPen(QColor(0x16, 0x14, 0x1c));
+    p.setClipRect(rect.adjusted(8, 4, -8, -4));
+    p.drawText(rect.adjusted(12, 8, -12, -8), Qt::AlignCenter | Qt::TextWordWrap, title);
+    p.restore();
 }
 
 namespace {
