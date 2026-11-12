@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <cmath>
 #include <QAbstractItemModel>
-#include <QFileInfo>
 #include <QFont>
 #include <QFontMetrics>
 #include <QImage>
@@ -27,7 +26,6 @@
 
 #include "qt_common/config/uisettings.h"
 #include "qt_common/game_list/game_list_p.h"
-#include "qt_common/game_list/model.h"
 #include "yuzu/game/styles/box_shelf_style.h"
 
 namespace LibraryStyles {
@@ -59,32 +57,40 @@ bool IsGame(const QModelIndex& index) {
     return ItemType(index) == static_cast<int>(GameListItemType::Game);
 }
 
-QString TitleOf(const QModelIndex& index) {
-    if (IsGame(index)) {
-        const QString full = index.data(GameListItemPath::TitleRole).toString();
-        return full.isEmpty()
-                   ? index.data(Qt::DisplayRole).toString().section(QLatin1Char('\n'), 0, 0)
-                   : full;
-    }
-    QString title = index.data(Qt::DisplayRole).toString();
-    if (ItemType(index) == static_cast<int>(GameListItemType::CustomDir)) {
-        const QString name = QFileInfo(title).fileName();
-        if (!name.isEmpty()) {
-            title = name;
-        }
-    }
-    return title;
+bool IsFolderType(int type) {
+    return type == static_cast<int>(GameListItemType::CustomDir) ||
+           type == static_cast<int>(GameListItemType::SdmcDir) ||
+           type == static_cast<int>(GameListItemType::UserNandDir) ||
+           type == static_cast<int>(GameListItemType::SysNandDir);
 }
 
+QString TitleOf(const QModelIndex& index) {
+    const QString full = index.data(GameListItemPath::TitleRole).toString();
+    return full.isEmpty() ? index.data(Qt::DisplayRole).toString().section(QLatin1Char('
+'), 0, 0)
+                          : full;
+}
+
+/// Stable identity of a game, used as the cache key base.
 QString ItemKey(const QModelIndex& index) {
-    const int type = ItemType(index);
-    const QString id = IsGame(index) ? index.data(GameListItemPath::FullPathRole).toString()
-                                     : TitleOf(index);
-    return QStringLiteral("%1|%2").arg(type).arg(id);
+    return index.data(GameListItemPath::FullPathRole).toString() + QLatin1Char('|') +
+           QString::number(index.data(GameListItemPath::ProgramIdRole).toULongLong());
+}
+
+/// Reads "label: value" style tooltip line `line` and returns the value, or empty when the line has
+/// no label (for example "Never Played").
+QString TooltipValue(const QModelIndex& index, int line) {
+    const QStringList lines = index.data(Qt::ToolTipRole).toString().split(QLatin1Char('
+'));
+    if (line < 0 || line >= lines.size()) {
+        return {};
+    }
+    const qsizetype colon = lines.at(line).indexOf(QLatin1Char(':'));
+    return colon < 0 ? QString() : lines.at(line).mid(colon + 1).trimmed();
 }
 
 QPixmap CoverOf(const QModelIndex& index) {
-    if (!IsGame(index) || !index.data(GameListItemPath::HasIconRole).toBool()) {
+    if (!index.data(GameListItemPath::HasIconRole).toBool()) {
         return {};
     }
     QPixmap pixmap = index.data(GameListItemPath::CardIconRole).value<QPixmap>();
@@ -95,7 +101,7 @@ QPixmap CoverOf(const QModelIndex& index) {
 }
 
 QColor PlaceholderColor(const QString& title) {
-    const uint hue = qHash(title) % 360u;
+    const uint hue = static_cast<uint>(qHash(title) % 360u);
     return QColor::fromHsl(static_cast<int>(hue), 150, 104);
 }
 
@@ -116,29 +122,8 @@ QString Initials(const QString& title) {
     return result;
 }
 
-void DrawFolderGlyph(QPainter* p, const QRectF& r, const QColor& color) {
-    const double w = r.width() * 0.5;
-    const double h = w * 0.72;
-    const QRectF body(r.center().x() - w / 2, r.center().y() - h / 2 + h * 0.1, w, h);
-    p->setPen(Qt::NoPen);
-    p->setBrush(color);
-    p->drawRoundedRect(QRectF(body.left(), body.top() - h * 0.16, w * 0.42, h * 0.3), 3, 3);
-    p->drawRoundedRect(body, 4, 4);
-}
-
-void DrawPlusGlyph(QPainter* p, const QRectF& r, const QColor& color) {
-    const double d = r.width() * 0.34;
-    const QPointF c = r.center();
-    p->setPen(QPen(color, std::max(2.0, d * 0.16), Qt::SolidLine, Qt::RoundCap));
-    p->setBrush(Qt::NoBrush);
-    p->drawEllipse(c, d / 2, d / 2);
-    p->drawLine(QPointF(c.x() - d * 0.22, c.y()), QPointF(c.x() + d * 0.22, c.y()));
-    p->drawLine(QPointF(c.x(), c.y() - d * 0.22), QPointF(c.x(), c.y() + d * 0.22));
-}
-
 /// Fills `r` with the cover art (cropped to fill) or a generic placeholder.
-void DrawCover(QPainter* p, const QRectF& r, const QModelIndex& index, const QString& title,
-               bool dark) {
+void DrawCover(QPainter* p, const QRectF& r, const QModelIndex& index, const QString& title) {
     p->save();
     p->setClipRect(r, Qt::IntersectClip);
     const QPixmap cover = CoverOf(index);
@@ -152,17 +137,7 @@ void DrawCover(QPainter* p, const QRectF& r, const QModelIndex& index, const QSt
         return;
     }
 
-    const int type = ItemType(index);
-    if (type == static_cast<int>(GameListItemType::AddDir)) {
-        p->fillRect(r, dark ? QColor(44, 44, 48) : QColor(238, 234, 226));
-        DrawPlusGlyph(p, r, dark ? QColor(220, 220, 224) : QColor(80, 76, 70));
-    } else if (!IsGame(index)) {
-        QLinearGradient g(r.topLeft(), r.bottomRight());
-        g.setColorAt(0.0, dark ? QColor(70, 74, 84) : QColor(210, 214, 222));
-        g.setColorAt(1.0, dark ? QColor(42, 44, 52) : QColor(170, 176, 188));
-        p->fillRect(r, g);
-        DrawFolderGlyph(p, r, dark ? QColor(150, 156, 170) : QColor(96, 102, 118));
-    } else {
+    {
         const QColor base = PlaceholderColor(title);
         QLinearGradient g(r.topLeft(), r.bottomRight());
         g.setColorAt(0.0, base.lighter(130));
@@ -218,7 +193,9 @@ void BoxShelfStyle::SetModel(QAbstractItemModel* model) {
     }
     m_model = model;
     m_current = QPersistentModelIndex();
+    m_current_key.clear();
     m_scroll = 0.0;
+    m_gen.clear();
     if (model) {
         const auto schedule = [this] { ScheduleRebuild(); };
         connect(model, &QAbstractItemModel::modelReset, this, schedule);
@@ -226,13 +203,18 @@ void BoxShelfStyle::SetModel(QAbstractItemModel* model) {
         connect(model, &QAbstractItemModel::rowsRemoved, this, schedule);
         connect(model, &QAbstractItemModel::rowsMoved, this, schedule);
         connect(model, &QAbstractItemModel::layoutChanged, this, schedule);
-        connect(model, &QAbstractItemModel::dataChanged, this, schedule);
+        connect(model, &QAbstractItemModel::dataChanged, this,
+                [this](const QModelIndex& top_left, const QModelIndex& bottom_right) {
+                    InvalidateRange(top_left, bottom_right);
+                    update();
+                });
         connect(model, &QObject::destroyed, this, [this] {
-            m_rows.clear();
-            m_row_to_pos.clear();
+            m_entries.clear();
             m_current = QPersistentModelIndex();
+            m_current_key.clear();
             m_pixmaps.clear();
             m_colors.clear();
+            m_gen.clear();
             update();
         });
     }
@@ -250,21 +232,24 @@ void BoxShelfStyle::SetCurrentIndex(const QModelIndex& index) {
         return;
     }
     if (!index.isValid()) {
-        m_current = QPersistentModelIndex();
-        update();
+        if (m_current.isValid()) {
+            m_current = QPersistentModelIndex();
+            m_current_key.clear();
+            update();
+            NotifyCurrent();
+        }
         return;
     }
-    if (index.model() != m_model.data() || index.parent().isValid()) {
+    if (index.model() != m_model.data()) {
         return;
     }
-    const int row = index.row();
-    if (row < 0 || row >= static_cast<int>(m_row_to_pos.size()) ||
-        m_row_to_pos[static_cast<size_t>(row)] < 0) {
-        return;
+    const QPersistentModelIndex wanted(index.siblingAtColumn(0));
+    for (int i = 0; i < ItemCount(); ++i) {
+        if (m_entries[static_cast<size_t>(i)] == wanted) {
+            SetCurrentPos(i);
+            return;
+        }
     }
-    m_current = QPersistentModelIndex(m_model->index(row, 0));
-    EnsureVisible(m_row_to_pos[static_cast<size_t>(row)]);
-    update();
 }
 
 void BoxShelfStyle::SetShowNames(bool show) {
@@ -318,43 +303,88 @@ void BoxShelfStyle::EnsureRows() {
     }
 }
 
+void BoxShelfStyle::InvalidateRange(const QModelIndex& top_left, const QModelIndex& bottom_right) {
+    if (!m_model || !top_left.isValid() || !bottom_right.isValid() || top_left.column() > 0 ||
+        bottom_right.column() < 0) {
+        return;
+    }
+    const QModelIndex parent = top_left.parent();
+    for (int row = top_left.row(); row <= bottom_right.row(); ++row) {
+        const QModelIndex idx = m_model->index(row, 0, parent);
+        if (!idx.isValid() || !IsGame(idx)) {
+            continue;
+        }
+        const QString key = ItemKey(idx);
+        ++m_gen[key];
+        m_colors.remove(key);
+    }
+}
+
+void BoxShelfStyle::NotifyCurrent() {
+    if (m_notifying) {
+        return;
+    }
+    m_notifying = true;
+    emit CurrentChanged(QModelIndex(m_current));
+    m_notifying = false;
+}
+
 void BoxShelfStyle::RebuildRows() {
     m_rebuild_pending = false;
-    m_rows.clear();
-    m_row_to_pos.clear();
-    m_pixmaps.clear();
-    m_colors.clear();
+    m_entries.clear();
+    // Cached pixmaps stay valid: they are keyed by game identity, size and a per game generation.
 
     if (!m_model) {
         m_current = QPersistentModelIndex();
+        m_current_key.clear();
         return;
     }
-    const int count = m_model->rowCount();
-    m_row_to_pos.assign(static_cast<size_t>(std::max(0, count)), -1);
-    for (int i = 0; i < count; ++i) {
-        const QModelIndex idx = m_model->index(i, 0);
-        if (ItemType(idx) == static_cast<int>(GameListItemType::Favorites)) {
-            continue;
+
+    // Games are shown flat: top level games plus the games inside each folder row. Favorites and
+    // the "add folder" row are not shown.
+    const int top_rows = m_model->rowCount();
+    for (int r = 0; r < top_rows; ++r) {
+        const QModelIndex idx = m_model->index(r, 0);
+        const int type = ItemType(idx);
+        if (type == static_cast<int>(GameListItemType::Game)) {
+            m_entries.emplace_back(idx);
+        } else if (IsFolderType(type)) {
+            const int children = m_model->rowCount(idx);
+            for (int c = 0; c < children; ++c) {
+                const QModelIndex child = m_model->index(c, 0, idx);
+                if (IsGame(child)) {
+                    m_entries.emplace_back(child);
+                }
+            }
         }
-        m_row_to_pos[static_cast<size_t>(i)] = static_cast<int>(m_rows.size());
-        m_rows.push_back(i);
     }
     ClampScroll();
 
-    bool current_ok = false;
-    if (m_current.isValid()) {
-        const int row = m_current.row();
-        current_ok = !m_current.parent().isValid() && row >= 0 &&
-                     row < static_cast<int>(m_row_to_pos.size()) &&
-                     m_row_to_pos[static_cast<size_t>(row)] >= 0;
+    if (CurrentPos() >= 0) {
+        return;
     }
-    if (!current_ok) {
-        if (m_rows.empty()) {
-            m_current = QPersistentModelIndex();
-        } else {
-            m_current = QPersistentModelIndex(m_model->index(m_rows.front(), 0));
-            emit CurrentChanged(QModelIndex(m_current));
+    // The current game may have come back as a new index (model reset): find it by identity.
+    if (!m_current_key.isEmpty()) {
+        for (int i = 0; i < ItemCount(); ++i) {
+            if (ItemKey(IndexAtPos(i)) == m_current_key) {
+                m_current = m_entries[static_cast<size_t>(i)];
+                EnsureVisible(i);
+                return;
+            }
         }
+    }
+    if (m_entries.empty()) {
+        const bool had = m_current.isValid();
+        m_current = QPersistentModelIndex();
+        m_current_key.clear();
+        if (had) {
+            NotifyCurrent();
+        }
+    } else {
+        m_current = m_entries.front();
+        m_current_key = ItemKey(QModelIndex(m_current));
+        EnsureVisible(0);
+        NotifyCurrent();
     }
 }
 
@@ -390,21 +420,22 @@ BoxShelfStyle::Metrics BoxShelfStyle::ComputeMetrics() const {
 }
 
 QModelIndex BoxShelfStyle::IndexAtPos(int pos) const {
-    if (!m_model || pos < 0 || pos >= ItemCount()) {
+    if (pos < 0 || pos >= ItemCount()) {
         return {};
     }
-    return m_model->index(m_rows[static_cast<size_t>(pos)], 0);
+    return QModelIndex(m_entries[static_cast<size_t>(pos)]);
 }
 
 int BoxShelfStyle::CurrentPos() const {
-    if (!m_current.isValid() || m_current.parent().isValid()) {
+    if (!m_current.isValid()) {
         return -1;
     }
-    const int row = m_current.row();
-    if (row < 0 || row >= static_cast<int>(m_row_to_pos.size())) {
-        return -1;
+    for (int i = 0; i < ItemCount(); ++i) {
+        if (m_entries[static_cast<size_t>(i)] == m_current) {
+            return i;
+        }
     }
-    return m_row_to_pos[static_cast<size_t>(row)];
+    return -1;
 }
 
 QRectF BoxShelfStyle::ItemRect(const Metrics& m, int pos) const {
@@ -466,7 +497,7 @@ void BoxShelfStyle::EnsureVisible(int pos) {
     ClampScroll();
 }
 
-void BoxShelfStyle::MoveTo(int pos) {
+void BoxShelfStyle::SetCurrentPos(int pos) {
     const int count = ItemCount();
     if (count == 0) {
         return;
@@ -477,10 +508,11 @@ void BoxShelfStyle::MoveTo(int pos) {
         update();
         return;
     }
-    m_current = QPersistentModelIndex(IndexAtPos(pos));
+    m_current = m_entries[static_cast<size_t>(pos)];
+    m_current_key = ItemKey(QModelIndex(m_current));
     EnsureVisible(pos);
     update();
-    emit CurrentChanged(QModelIndex(m_current));
+    NotifyCurrent();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -488,6 +520,10 @@ void BoxShelfStyle::MoveTo(int pos) {
 // ---------------------------------------------------------------------------------------------
 
 void BoxShelfStyle::keyPressEvent(QKeyEvent* event) {
+    if (event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) {
+        QWidget::keyPressEvent(event);
+        return;
+    }
     EnsureRows();
     const int count = ItemCount();
     if (count == 0) {
@@ -505,37 +541,37 @@ void BoxShelfStyle::keyPressEvent(QKeyEvent* event) {
     switch (event->key()) {
     case Qt::Key_Left:
     case Qt::Key_A:
-        MoveTo(pos - 1);
+        SetCurrentPos(pos - 1);
         break;
     case Qt::Key_Right:
     case Qt::Key_D:
-        MoveTo(pos + 1);
+        SetCurrentPos(pos + 1);
         break;
     case Qt::Key_Up:
     case Qt::Key_W:
         if (pos - m.cols >= 0) {
-            MoveTo(pos - m.cols);
+            SetCurrentPos(pos - m.cols);
         }
         break;
     case Qt::Key_Down:
     case Qt::Key_S:
         if (pos + m.cols < count) {
-            MoveTo(pos + m.cols);
+            SetCurrentPos(pos + m.cols);
         } else if (pos / m.cols < last_row) {
-            MoveTo(count - 1);
+            SetCurrentPos(count - 1);
         }
         break;
     case Qt::Key_PageUp:
-        MoveTo(std::max(0, pos - m.cols * visible_rows));
+        SetCurrentPos(std::max(0, pos - m.cols * visible_rows));
         break;
     case Qt::Key_PageDown:
-        MoveTo(std::min(count - 1, pos + m.cols * visible_rows));
+        SetCurrentPos(std::min(count - 1, pos + m.cols * visible_rows));
         break;
     case Qt::Key_Home:
-        MoveTo(0);
+        SetCurrentPos(0);
         break;
     case Qt::Key_End:
-        MoveTo(count - 1);
+        SetCurrentPos(count - 1);
         break;
     case Qt::Key_Return:
     case Qt::Key_Enter:
@@ -556,7 +592,7 @@ void BoxShelfStyle::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton || event->button() == Qt::RightButton) {
         const int pos = HitTest(event->position());
         if (pos >= 0) {
-            MoveTo(pos);
+            SetCurrentPos(pos);
             if (event->button() == Qt::RightButton && m_current.isValid()) {
                 emit ContextMenuRequested(QModelIndex(m_current),
                                           event->globalPosition().toPoint());
@@ -573,7 +609,7 @@ void BoxShelfStyle::mouseDoubleClickEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
         const int pos = HitTest(event->position());
         if (pos >= 0) {
-            MoveTo(pos);
+            SetCurrentPos(pos);
             if (m_current.isValid()) {
                 emit LaunchRequested(QModelIndex(m_current));
             }
@@ -585,6 +621,11 @@ void BoxShelfStyle::mouseDoubleClickEvent(QMouseEvent* event) {
 }
 
 void BoxShelfStyle::wheelEvent(QWheelEvent* event) {
+    if (event->modifiers() & Qt::ControlModifier) {
+        event->ignore();
+        return;
+    }
+    // Touchpads report exact pixels; a notched wheel reports 120 units per step.
     double dy = 0.0;
     if (!event->pixelDelta().isNull()) {
         dy = event->pixelDelta().y();
@@ -793,13 +834,19 @@ QColor BoxShelfStyle::SpineColor(const QModelIndex& index) {
     return result;
 }
 
+QString BoxShelfStyle::PixmapKey(QChar kind, const QModelIndex& index, const Metrics& m, bool dark,
+                                 double dpr) const {
+    // Built by concatenation: a game path may contain "%1", which QString::arg would substitute.
+    const QString base = ItemKey(index);
+    return QString(kind) + QLatin1Char('|') + base + QLatin1Char('|') +
+           QString::number(m_gen.value(base)) + QLatin1Char('|') +
+           QString::number(qRound(m.case_w * 10)) + QLatin1Char('|') +
+           QString::number(dark ? 1 : 0) + QLatin1Char('|') + QString::number(dpr);
+}
+
 QPixmap BoxShelfStyle::CasePixmap(const QModelIndex& index, const Metrics& m, bool dark) {
     const double dpr = devicePixelRatioF();
-    const QString key = QStringLiteral("C|%1|%2|%3|%4")
-                            .arg(ItemKey(index))
-                            .arg(qRound(m.case_w * 10))
-                            .arg(dark ? 1 : 0)
-                            .arg(dpr);
+    const QString key = PixmapKey(QLatin1Char('C'), index, m, dark, dpr);
     if (const QPixmap* cached = m_pixmaps.object(key)) {
         return *cached;
     }
@@ -828,7 +875,7 @@ QPixmap BoxShelfStyle::CasePixmap(const QModelIndex& index, const Metrics& m, bo
     p.fillRect(QRectF(0, 0, spine_w, h), spine_g);
 
     const QRectF art(spine_w, 0, w - spine_w, h);
-    DrawCover(&p, art, index, TitleOf(index), dark);
+    DrawCover(&p, art, index, TitleOf(index));
 
     // Soft sheen over the art, and the crease where the spine meets the cover.
     QLinearGradient sheen(0, 0, w, h);
@@ -863,11 +910,7 @@ QPixmap BoxShelfStyle::CasePixmap(const QModelIndex& index, const Metrics& m, bo
 
 QPixmap BoxShelfStyle::SpinePixmap(const QModelIndex& index, const Metrics& m, bool dark) {
     const double dpr = devicePixelRatioF();
-    const QString key = QStringLiteral("S|%1|%2|%3|%4")
-                            .arg(ItemKey(index))
-                            .arg(qRound(m.case_w * 10))
-                            .arg(dark ? 1 : 0)
-                            .arg(dpr);
+    const QString key = PixmapKey(QLatin1Char('S'), index, m, dark, dpr);
     if (const QPixmap* cached = m_pixmaps.object(key)) {
         return *cached;
     }
@@ -897,7 +940,7 @@ QPixmap BoxShelfStyle::SpinePixmap(const QModelIndex& index, const Metrics& m, b
 
     // Small cover thumbnail at the top, title running down the spine.
     const QRectF thumb(3.0, 3.0, w - 6.0, w - 6.0);
-    DrawCover(&p, thumb, index, title, dark);
+    DrawCover(&p, thumb, index, title);
     p.setBrush(Qt::NoBrush);
     p.setPen(QPen(QColor(255, 255, 255, 70), 1.0));
     p.drawRect(thumb);
@@ -931,52 +974,59 @@ QPixmap BoxShelfStyle::SpinePixmap(const QModelIndex& index, const Metrics& m, b
     return pm;
 }
 
+/// Name bubble under the selected case: wraps to two lines, accent outline.
 void BoxShelfStyle::DrawBubble(QPainter& p, const Metrics& m, const QRectF& base,
-                               const QString& title, bool selected, bool dark) {
+                               const QString& title, bool dark) {
     if (title.isEmpty()) {
         return;
     }
     QFont f = font();
-    f.setBold(selected);
+    f.setBold(true);
     f.setPixelSize(std::clamp(static_cast<int>(m.case_w * 0.075), 11, 15));
     const QFontMetrics fm(f);
     const QColor accent = palette().highlight().color();
     const double y = base.bottom() + 4.0;
-    QRectF box;
-    if (selected) {
-        const double max_w = std::max(120.0, std::min(m.cell_w * 1.4, width() - 16.0));
-        const QRect text_bounds = fm.boundingRect(QRect(0, 0, static_cast<int>(max_w - 24.0), 1000),
-                                                  Qt::AlignCenter | Qt::TextWordWrap, title);
-        const double text_h = std::min<double>(text_bounds.height(), fm.lineSpacing() * 2);
-        const double bw = std::max(80.0, text_bounds.width() + 24.0);
-        double x = base.center().x() - bw / 2.0;
-        x = std::clamp(x, 4.0, std::max(4.0, width() - bw - 4.0));
-        box = QRectF(x, y, bw, text_h + 14.0);
-    } else {
-        const double bw = std::min(m.cell_w * 0.98, fm.horizontalAdvance(title) + 20.0);
-        box = QRectF(base.center().x() - bw / 2.0, y, bw, m.bubble_h);
-    }
+    const double max_w = std::max(120.0, std::min(m.cell_w * 1.4, width() - 16.0));
+    const QRect text_bounds = fm.boundingRect(QRect(0, 0, static_cast<int>(max_w - 24.0), 1000),
+                                              Qt::AlignCenter | Qt::TextWordWrap, title);
+    const double text_h = std::min<double>(text_bounds.height(), fm.lineSpacing() * 2);
+    const double bw = std::max(80.0, text_bounds.width() + 24.0);
+    double x = base.center().x() - bw / 2.0;
+    x = std::clamp(x, 4.0, std::max(4.0, width() - bw - 4.0));
+    const QRectF box(x, y, bw, text_h + 14.0);
 
     p.save();
     p.setPen(Qt::NoPen);
     p.setBrush(QColor(0, 0, 0, 55));
     p.drawRoundedRect(box.translated(0, 2), 11, 11);
     p.setBrush(dark ? QColor(34, 32, 34, 236) : QColor(255, 253, 248, 240));
-    if (selected) {
-        p.setPen(QPen(accent, 2.0));
-    } else {
-        p.setPen(QPen(QColor(0, 0, 0, 40), 1.0));
-    }
+    p.setPen(QPen(accent, 2.0));
     p.drawRoundedRect(box, 11, 11);
     p.setFont(f);
     p.setPen(dark ? QColor(240, 238, 234) : QColor(40, 34, 28));
-    if (selected) {
-        p.setClipRect(box.adjusted(6, 4, -6, -4));
-        p.drawText(box.adjusted(12, 7, -12, -7), Qt::AlignCenter | Qt::TextWordWrap, title);
-    } else {
-        p.drawText(box.adjusted(8, 0, -8, 0), Qt::AlignCenter,
-                   fm.elidedText(title, Qt::ElideRight, static_cast<int>(box.width() - 16.0)));
+    p.setClipRect(box.adjusted(6, 4, -6, -4));
+    p.drawText(box.adjusted(12, 7, -12, -7), Qt::AlignCenter | Qt::TextWordWrap, title);
+    p.restore();
+}
+
+/// Small plain title on the shelf front under an unselected case.
+void BoxShelfStyle::DrawPlainTitle(QPainter& p, const Metrics& m, const QRectF& base,
+                                   const QString& title) {
+    if (title.isEmpty()) {
+        return;
     }
+    QFont f = font();
+    f.setPixelSize(std::clamp(static_cast<int>(m.case_w * 0.065), 10, 13));
+    const QFontMetrics fm(f);
+    const double w = std::min(m.cell_w * 0.98, m.case_w * 1.12);
+    const QRectF box(base.center().x() - w / 2.0, base.bottom() + 3.0, w, m.bubble_h - 4.0);
+    const QString text = fm.elidedText(title, Qt::ElideRight, static_cast<int>(w));
+    p.save();
+    p.setFont(f);
+    p.setPen(QColor(20, 10, 2, 170));
+    p.drawText(box.translated(0, 1), Qt::AlignHCenter | Qt::AlignTop, text);
+    p.setPen(QColor(255, 244, 222));
+    p.drawText(box, Qt::AlignHCenter | Qt::AlignTop, text);
     p.restore();
 }
 
@@ -1050,30 +1100,27 @@ void BoxShelfStyle::DrawItem(QPainter& p, const Metrics& m, int pos, bool select
         p.restore();
     }
 
-    // Names: every case in front mode, only the selected one in spines mode.
-    if (m_show_names && (!m_spines || selected)) {
-        DrawBubble(p, m, base, TitleOf(index), selected, dark);
+    // Names: a bubble for the selected case, plain small titles for the others (front mode).
+    if (m_show_names) {
+        if (selected) {
+            DrawBubble(p, m, base, TitleOf(index), dark);
+        } else if (!m_spines) {
+            DrawPlainTitle(p, m, base, TitleOf(index));
+        }
     }
 
     // Play time and version tags, top right of the case.
     if (m_show_info && IsGame(index) && (!m_spines || selected)) {
+        // Play time and version are only exposed through the tooltip: "Play Time: X" (or "Never
+        // Played"), then "Version: Y".
         QStringList tags;
-        const QString play = index.sibling(index.row(), GameListModel::COLUMN_PLAY_TIME)
-                                 .data(Qt::DisplayRole)
-                                 .toString();
+        const QString play = TooltipValue(index, 0);
         if (!play.isEmpty()) {
             tags << play;
         }
-        const QStringList tip = index.data(Qt::ToolTipRole).toString().split(QLatin1Char('\n'));
-        if (tip.size() > 1) {
-            QString version = tip.at(1);
-            const qsizetype colon = version.indexOf(QLatin1Char(':'));
-            if (colon >= 0) {
-                version = version.mid(colon + 1).trimmed();
-            }
-            if (!version.isEmpty()) {
-                tags << QStringLiteral("v%1").arg(version);
-            }
+        const QString version = TooltipValue(index, 1);
+        if (!version.isEmpty()) {
+            tags << QStringLiteral("v") + version;
         }
         QFont f = font();
         f.setBold(true);

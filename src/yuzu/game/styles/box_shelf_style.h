@@ -5,6 +5,7 @@
 
 #include <vector>
 #include <QCache>
+#include <QChar>
 #include <QColor>
 #include <QHash>
 #include <QPersistentModelIndex>
@@ -64,7 +65,7 @@ private:
 
     Metrics ComputeMetrics() const;
     int ItemCount() const {
-        return static_cast<int>(m_rows.size());
+        return static_cast<int>(m_entries.size());
     }
     int CurrentPos() const;
     QModelIndex IndexAtPos(int pos) const;
@@ -73,7 +74,9 @@ private:
     double MaxScroll(const Metrics& m) const;
     void ClampScroll();
     void EnsureVisible(int pos);
-    void MoveTo(int pos);
+    void SetCurrentPos(int pos);
+    void NotifyCurrent();
+    void InvalidateRange(const QModelIndex& top_left, const QModelIndex& bottom_right);
 
     void ScheduleRebuild();
     void EnsureRows();
@@ -84,8 +87,11 @@ private:
     void DrawPlank(QPainter& p, const Metrics& m, int row, bool dark);
     void DrawItem(QPainter& p, const Metrics& m, int pos, bool selected, bool dark);
     void DrawBubble(QPainter& p, const Metrics& m, const QRectF& base, const QString& title,
-                    bool selected, bool dark);
+                    bool dark);
+    void DrawPlainTitle(QPainter& p, const Metrics& m, const QRectF& base, const QString& title);
 
+    QString PixmapKey(QChar kind, const QModelIndex& index, const Metrics& m, bool dark,
+                      double dpr) const;
     QPixmap CasePixmap(const QModelIndex& index, const Metrics& m, bool dark);
     QPixmap SpinePixmap(const QModelIndex& index, const Metrics& m, bool dark);
     QColor SpineColor(const QModelIndex& index);
@@ -93,9 +99,10 @@ private:
 
     QPointer<QAbstractItemModel> m_model;
     QPersistentModelIndex m_current;
-    std::vector<int> m_rows;       // model row for every shown position
-    std::vector<int> m_row_to_pos; // position for every model row, -1 when hidden
+    QString m_current_key; // identity of the current game, to find it again after a model reset
+    std::vector<QPersistentModelIndex> m_entries; // shown games: top level and inside folders
     bool m_rebuild_pending = false;
+    bool m_notifying = false;
 
     bool m_show_names = true;
     bool m_show_info = true;
@@ -104,6 +111,7 @@ private:
 
     QCache<QString, QPixmap> m_pixmaps;
     QHash<QString, QColor> m_colors;
+    QHash<QString, int> m_gen; // bumped when a game's data changes, part of the pixmap cache key
     QHash<QString, QPixmap> m_wood;
 };
 
