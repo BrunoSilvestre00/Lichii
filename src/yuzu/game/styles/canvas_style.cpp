@@ -8,6 +8,7 @@
 
 #include <QAbstractItemModel>
 #include <QColor>
+#include <QContextMenuEvent>
 #include <QEvent>
 #include <QFont>
 #include <QFontMetrics>
@@ -179,7 +180,10 @@ void CanvasStyle::SetCurrentIndex(const QModelIndex& index) {
         SelectRow(-1);
         return;
     }
-    const QPersistentModelIndex wanted{index};
+    if (rebuild_pending) {
+        Rebuild();
+    }
+    const QPersistentModelIndex wanted{index.sibling(index.row(), 0)};
     for (size_t i = 0; i < entries.size(); ++i) {
         if (entries[i] == wanted) {
             SelectRow(static_cast<int>(i));
@@ -265,7 +269,7 @@ CanvasStyle::Layout CanvasStyle::ComputeLayout() const {
     Layout l;
     l.gap = 18;
     const int target =
-        std::max(96, static_cast<int>(UISettings::values.game_cover_size.GetValue()));
+        std::max(96, static_cast<int>(UISettings::values.game_cover_size.GetValue()) * 7 / 4);
     const int avail = std::max(1, width() - 2 * SidePadding);
     l.columns = std::max(1, (avail + l.gap) / (target + l.gap));
     int tile = (avail - l.gap * (l.columns - 1)) / l.columns;
@@ -370,6 +374,11 @@ void CanvasStyle::changeEvent(QEvent* event) {
     }
 }
 
+void CanvasStyle::contextMenuEvent(QContextMenuEvent* event) {
+    // Right click is handled on press; keep the event from reaching a parent menu.
+    event->accept();
+}
+
 void CanvasStyle::wheelEvent(QWheelEvent* event) {
     int delta = 0;
     if (!event->pixelDelta().isNull()) {
@@ -383,7 +392,8 @@ void CanvasStyle::wheelEvent(QWheelEvent* event) {
 
 void CanvasStyle::keyPressEvent(QKeyEvent* event) {
     const int count = static_cast<int>(entries.size());
-    if (count == 0) {
+    if (count == 0 ||
+        (event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
         LibraryStyleView::keyPressEvent(event);
         return;
     }
@@ -465,6 +475,50 @@ void CanvasStyle::mouseDoubleClickEvent(QMouseEvent* event) {
     LibraryStyleView::mouseDoubleClickEvent(event);
 }
 
+void CanvasStyle::PaintBackground(QPainter& painter, bool dark) {
+    const QPalette pal = palette();
+    const qreal ratio = devicePixelRatioF();
+    const QRgb window = pal.window().color().rgb();
+    if (background.isNull() || background_size != size() || background_ratio != ratio ||
+        background_window != window || background_dark != dark) {
+        const int w = width();
+        const int h = height();
+        QPixmap pixmap(QSize(std::max(1, static_cast<int>(w * ratio)),
+                             std::max(1, static_cast<int>(h * ratio))));
+        pixmap.setDevicePixelRatio(ratio);
+        QPainter p(&pixmap);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        // Day or night background and arcs follow the palette.
+        const QColor bg = dark ? pal.window().color().darker(135) : QColor(246, 233, 212);
+        p.fillRect(QRect(0, 0, w, h), bg);
+        const QColor warm[] = {dark ? QColor(92, 62, 58) : QColor(244, 203, 144),
+                               dark ? QColor(98, 70, 54) : QColor(235, 164, 143),
+                               dark ? QColor(70, 78, 62) : QColor(236, 178, 128)};
+        const QColor cool[] = {dark ? QColor(56, 86, 88) : QColor(183, 216, 202),
+                               dark ? QColor(60, 70, 96) : QColor(138, 185, 172),
+                               dark ? QColor(76, 62, 92) : QColor(222, 171, 160)};
+        const int band = std::max(w, h) / 17;
+        p.setBrush(Qt::NoBrush);
+        for (int i = 0; i < 6; ++i) {
+            p.setPen(QPen(warm[i % 3], band, Qt::SolidLine, Qt::FlatCap));
+            const qreal r = h * 0.30 + i * band * 2.0;
+            p.drawEllipse(QPointF(w * 0.08, h * 1.18), r, r);
+        }
+        for (int i = 0; i < 5; ++i) {
+            p.setPen(QPen(cool[i % 3], band, Qt::SolidLine, Qt::FlatCap));
+            const qreal r = h * 0.45 + i * band * 2.0;
+            p.drawEllipse(QPointF(w * 1.02, h * 1.12), r, r);
+        }
+        p.end();
+        background = pixmap;
+        background_size = size();
+        background_ratio = ratio;
+        background_window = window;
+        background_dark = dark;
+    }
+    painter.drawPixmap(0, 0, background);
+}
+
 void CanvasStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
@@ -476,28 +530,7 @@ void CanvasStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
     const int w = width();
     const int h = height();
 
-    // Day or night background and arcs follow the palette.
-    const QColor bg = dark ? pal.window().color().darker(135) : QColor(246, 233, 212);
-    p.fillRect(rect(), bg);
-
-    const QColor warm[] = {dark ? QColor(92, 62, 58) : QColor(244, 203, 144),
-                           dark ? QColor(98, 70, 54) : QColor(235, 164, 143),
-                           dark ? QColor(70, 78, 62) : QColor(236, 178, 128)};
-    const QColor cool[] = {dark ? QColor(56, 86, 88) : QColor(183, 216, 202),
-                           dark ? QColor(60, 70, 96) : QColor(138, 185, 172),
-                           dark ? QColor(76, 62, 92) : QColor(222, 171, 160)};
-    const int band = std::max(w, h) / 17;
-    p.setBrush(Qt::NoBrush);
-    for (int i = 0; i < 6; ++i) {
-        p.setPen(QPen(warm[i % 3], band, Qt::SolidLine, Qt::FlatCap));
-        const qreal r = h * 0.30 + i * band * 2.0;
-        p.drawEllipse(QPointF(w * 0.08, h * 1.18), r, r);
-    }
-    for (int i = 0; i < 5; ++i) {
-        p.setPen(QPen(cool[i % 3], band, Qt::SolidLine, Qt::FlatCap));
-        const qreal r = h * 0.45 + i * band * 2.0;
-        p.drawEllipse(QPointF(w * 1.02, h * 1.12), r, r);
-    }
+    PaintBackground(p, dark);
     p.setPen(Qt::NoPen);
 
     // Tiles: only the visible rows are painted.
@@ -548,8 +581,10 @@ void CanvasStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
                                     scaled.height());
                 p.drawPixmap(target, art, QRectF(art.rect()));
             } else {
-                const uint seed = static_cast<uint>(
-                    qHash(index.data(GameListItemPath::ProgramIdRole).toULongLong()));
+                const qulonglong program_id =
+                    index.data(GameListItemPath::ProgramIdRole).toULongLong();
+                const uint seed = program_id != 0 ? static_cast<uint>(qHash(program_id))
+                                                  : static_cast<uint>(qHash(title));
                 DrawPlaceholder(&p, rectf, title, seed, dark);
             }
 

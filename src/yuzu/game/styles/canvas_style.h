@@ -3,15 +3,16 @@
 
 #pragma once
 
+#include <QAbstractItemModel>
+#include <QColor>
 #include <QPersistentModelIndex>
+#include <QPixmap>
 #include <QPointer>
 #include <QRect>
 #include <QString>
 #include <vector>
 
 #include "yuzu/game/styles/library_style_view.h"
-
-class QAbstractItemModel;
 
 namespace LibraryStyles {
 
@@ -37,6 +38,7 @@ protected:
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     void changeEvent(QEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
     struct Layout {
@@ -47,6 +49,7 @@ private:
         int top = 28;
     };
 
+    void PaintBackground(QPainter& painter, bool dark);
     void ScheduleRebuild();
     void Rebuild();
     void UpdateLayout();
@@ -68,6 +71,13 @@ private:
     int scroll = 0;
     bool show_names = true;
     bool show_info = false;
+
+    // Background arcs are rendered once per size, pixel ratio and palette, not on every paint.
+    QPixmap background;
+    QSize background_size;
+    qreal background_ratio = 0;
+    QRgb background_window = 0;
+    bool background_dark = false;
 };
 
 } // namespace LibraryStyles
