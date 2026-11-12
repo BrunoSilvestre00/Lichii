@@ -5,8 +5,11 @@
 
 #pragma once
 
+#include <vector>
+
 #include <QCache>
 #include <QModelIndex>
+#include <QPersistentModelIndex>
 #include <QPixmap>
 #include <QPointer>
 #include <QString>
@@ -60,11 +63,16 @@ private:
     QString TitleAt(int row) const;
     void MoveTo(int row);
     void AnimateToCurrent(bool animate);
-    void ModelChanged(bool notify);
+    void ScheduleRebuild();
+    void Rebuild();
+    QModelIndex IndexAt(int row) const;
     QPixmap CoverPixmap(int row, int side);
     void DrawPlaceholder(QPainter& painter, const QRectF& rect, const QString& title);
 
     QPointer<QAbstractItemModel> m_model;
+    /// Shown games: top level games and the games inside folder rows.
+    std::vector<QPersistentModelIndex> m_entries;
+    bool m_rebuild_pending = false;
     int m_current = -1;
     double m_offset = 0.0; // in cover steps
     bool m_show_names = true;

@@ -28,12 +28,36 @@
 
 #include "qt_common/game_list/game_list_p.h"
 #include "yuzu/game/styles/home_row_style.h"
+#include "yuzu/game/styles/style_helpers.h"
 
 namespace LibraryStyles {
 
 namespace {
 
 constexpr double kSelectedScale = 1.08;
+
+bool IsFolderType(GameListItemType type) {
+    return type == GameListItemType::CustomDir || type == GameListItemType::SdmcDir ||
+           type == GameListItemType::UserNandDir || type == GameListItemType::SysNandDir;
+}
+
+GameListItemType TypeOf(const QModelIndex& index) {
+    return index.data(GameListItem::TypeRole).value<GameListItemType>();
+}
+
+/// True when a dataChanged with these roles can change the cover art.
+bool ArtRolesChanged(const QList<int>& roles) {
+    if (roles.isEmpty()) {
+        return true;
+    }
+    for (const int role : roles) {
+        if (role == Qt::DecorationRole || role == GameListItemPath::CardIconRole ||
+            role == GameListItemPath::HasIconRole) {
+            return true;
+        }
+    }
+    return false;
+}
 constexpr int kAnimationMs = 180;
 
 LibraryStyleView* Make(QWidget* p) {
@@ -41,7 +65,7 @@ LibraryStyleView* Make(QWidget* p) {
 }
 
 [[maybe_unused]] const bool registered =
-    LibraryStyles::Register({"home_row", QT_TR_NOOP("Home Row"), &Make});
+    LibraryStyles::Register({"home_row", QT_TRANSLATE_NOOP("LibraryStyles", "Home Row"), &Make});
 
 } // namespace
 
@@ -71,43 +95,56 @@ void HomeRowStyle::SetModel(QAbstractItemModel* model) {
     }
     m_model = model;
     if (m_model) {
-        connect(model, &QAbstractItemModel::modelReset, this, [this] { ModelChanged(true); });
-        connect(model, &QAbstractItemModel::layoutChanged, this, [this] { ModelChanged(true); });
-        connect(model, &QAbstractItemModel::rowsInserted, this, [this] { ModelChanged(false); });
-        connect(model, &QAbstractItemModel::rowsRemoved, this, [this] { ModelChanged(false); });
-        connect(model, &QAbstractItemModel::rowsMoved, this, [this] { ModelChanged(false); });
-        connect(model, &QAbstractItemModel::dataChanged, this, [this] {
-            m_cache.clear();
-            update();
-        });
+        // Population adds rows one by one: rebuild once per event loop pass.
+        const auto schedule = [this] { ScheduleRebuild(); };
+        connect(model, &QAbstractItemModel::modelReset, this, schedule);
+        connect(model, &QAbstractItemModel::layoutChanged, this, schedule);
+        connect(model, &QAbstractItemModel::rowsInserted, this, schedule);
+        connect(model, &QAbstractItemModel::rowsRemoved, this, schedule);
+        connect(model, &QAbstractItemModel::rowsMoved, this, schedule);
+        connect(model, &QAbstractItemModel::dataChanged, this,
+                [this](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
+                    if (ArtRolesChanged(roles)) {
+                        m_cache.clear();
+                    }
+                    update();
+                });
     }
     m_cache.clear();
-    m_current = RowCount() > 0 ? 0 : -1;
-    AnimateToCurrent(false);
-    update();
-    if (m_current >= 0) {
-        emit CurrentChanged(CurrentIndex());
-    }
+    m_current = -1;
+    Rebuild();
 }
 
 QModelIndex HomeRowStyle::CurrentIndex() const {
-    if (!m_model || m_current < 0 || m_current >= RowCount()) {
+    return IndexAt(m_current);
+}
+
+QModelIndex HomeRowStyle::IndexAt(int row) const {
+    if (row < 0 || row >= RowCount()) {
         return {};
     }
-    return m_model->index(m_current, 0);
+    return QModelIndex(m_entries[static_cast<size_t>(row)]);
 }
 
 void HomeRowStyle::SetCurrentIndex(const QModelIndex& index) {
-    if (!m_model || !index.isValid() || index.model() != m_model.data() || index.parent().isValid()) {
+    if (m_rebuild_pending) {
+        Rebuild();
+    }
+    if (!index.isValid()) {
         return;
     }
-    if (index.row() == m_current) {
-        return;
+    const QPersistentModelIndex wanted(index.siblingAtColumn(0));
+    for (int row = 0; row < RowCount(); ++row) {
+        if (m_entries[static_cast<size_t>(row)] == wanted) {
+            if (row != m_current) {
+                m_current = row;
+                AnimateToCurrent(false);
+                update();
+                emit CurrentChanged(CurrentIndex());
+            }
+            return;
+        }
     }
-    m_current = index.row();
-    AnimateToCurrent(isVisible());
-    update();
-    emit CurrentChanged(CurrentIndex());
 }
 
 void HomeRowStyle::SetShowNames(bool show) {
@@ -121,7 +158,7 @@ void HomeRowStyle::SetShowInfo(bool show) {
 }
 
 int HomeRowStyle::RowCount() const {
-    return m_model ? m_model->rowCount() : 0;
+    return static_cast<int>(m_entries.size());
 }
 
 HomeRowStyle::Metrics HomeRowStyle::ComputeMetrics() const {
@@ -144,12 +181,7 @@ QRectF HomeRowStyle::CoverRect(int row, const Metrics& m) const {
 }
 
 QString HomeRowStyle::TitleAt(int row) const {
-    const QModelIndex index = m_model->index(row, 0);
-    QString title = index.data(GameListItemPath::TitleRole).toString();
-    if (title.isEmpty()) {
-        title = index.data(Qt::DisplayRole).toString();
-    }
-    return title;
+    return LibraryStyleContext::Title(IndexAt(row));
 }
 
 int HomeRowStyle::RowAt(const QPoint& pos) const {
@@ -194,26 +226,68 @@ void HomeRowStyle::AnimateToCurrent(bool animate) {
     m_animation->start();
 }
 
-void HomeRowStyle::ModelChanged(bool notify) {
-    m_cache.clear();
-    const int count = RowCount();
-    const int previous = m_current;
-    m_current = count == 0 ? -1 : std::clamp(m_current, 0, count - 1);
+void HomeRowStyle::ScheduleRebuild() {
+    if (m_rebuild_pending) {
+        return;
+    }
+    m_rebuild_pending = true;
+    QTimer::singleShot(0, this, [this] {
+        if (m_rebuild_pending) {
+            Rebuild();
+        }
+    });
+}
+
+void HomeRowStyle::Rebuild() {
+    m_rebuild_pending = false;
+    const QPersistentModelIndex previous(CurrentIndex());
+    m_entries.clear();
+    // Games are shown flat: top level games plus the games inside each folder row. Favorites and
+    // the "Add games folder" row are not covers.
+    if (m_model) {
+        const int top_rows = m_model->rowCount();
+        for (int r = 0; r < top_rows; ++r) {
+            const QModelIndex index = m_model->index(r, 0);
+            const GameListItemType type = TypeOf(index);
+            if (type == GameListItemType::Game) {
+                m_entries.emplace_back(index);
+            } else if (IsFolderType(type)) {
+                const int children = m_model->rowCount(index);
+                for (int c = 0; c < children; ++c) {
+                    const QModelIndex child = m_model->index(c, 0, index);
+                    if (TypeOf(child) == GameListItemType::Game) {
+                        m_entries.emplace_back(child);
+                    }
+                }
+            }
+        }
+    }
+    int row = -1;
+    if (previous.isValid()) {
+        for (int i = 0; i < RowCount(); ++i) {
+            if (m_entries[static_cast<size_t>(i)] == previous) {
+                row = i;
+                break;
+            }
+        }
+    }
+    if (row < 0 && RowCount() > 0) {
+        row = std::clamp(m_current, 0, RowCount() - 1);
+    }
+    m_current = row;
     AnimateToCurrent(false);
     update();
-    // Row inserts arrive one by one while the library loads, so only report a real change.
-    if (notify || m_current != previous) {
+    if (QPersistentModelIndex(CurrentIndex()) != previous) {
         emit CurrentChanged(CurrentIndex());
     }
 }
 
 QPixmap HomeRowStyle::CoverPixmap(int row, int side) {
-    const QModelIndex index = m_model->index(row, 0);
+    const QModelIndex index = IndexAt(row);
     const qreal dpr = devicePixelRatioF();
     const int target = std::max(1, static_cast<int>(std::ceil(side * kSelectedScale * dpr)));
-    const QString key = QStringLiteral("%1|%2|%3")
+    const QString key = QStringLiteral("%1|%2")
                             .arg(index.data(GameListItemPath::FullPathRole).toString())
-                            .arg(row)
                             .arg(target);
     if (const QPixmap* cached = m_cache.object(key)) {
         return *cached;
@@ -297,7 +371,7 @@ void HomeRowStyle::paintEvent(QPaintEvent* event) {
                          Qt::AlignTop | Qt::AlignRight, time);
     }
 
-    if (count == 0 || !m_model) {
+    if (count == 0) {
         QFont font = painter.font();
         font.setPixelSize(std::max(14, m.side / 8));
         painter.setFont(font);
@@ -328,7 +402,7 @@ void HomeRowStyle::paintEvent(QPaintEvent* event) {
     }
 
     if (m_current >= 0 && m_current < count) {
-        const QModelIndex index = m_model->index(m_current, 0);
+        const QModelIndex index = IndexAt(m_current);
         const QRectF cover = CoverRect(m_current, m);
         const double radius = cover.width() * 0.06;
 
@@ -353,28 +427,24 @@ void HomeRowStyle::paintEvent(QPaintEvent* event) {
         painter.setPen(QPen(accent, std::max(2.0, cover.width() * 0.018)));
         painter.drawRoundedRect(cover, radius, radius);
 
+        // Title and info centred under the row.
+        int text_y = static_cast<int>(cover.bottom()) + m.side / 10;
         if (m_show_names) {
             QFont font = painter.font();
             font.setPixelSize(std::max(15, m.side / 8));
             font.setBold(true);
             painter.setFont(font);
-            painter.setPen(accent);
+            painter.setPen(pal.color(QPalette::WindowText));
             const QFontMetrics fm(font);
-            const int left = std::max(static_cast<int>(width() * 0.04),
-                                      std::min(static_cast<int>(cover.left()),
-                                               static_cast<int>(width() * 0.5)));
-            const QRect text(left, static_cast<int>(cover.top()) - fm.height() - m.side / 14,
-                             std::max(1, width() - left - static_cast<int>(width() * 0.04)),
-                             fm.height());
-            painter.drawText(text, Qt::AlignLeft | Qt::AlignBottom,
+            const QRect text(static_cast<int>(width() * 0.06), text_y,
+                             static_cast<int>(width() * 0.88), fm.height());
+            painter.drawText(text, Qt::AlignHCenter | Qt::AlignVCenter,
                              fm.elidedText(title, Qt::ElideRight, text.width()));
+            text_y += fm.height() + 4;
         }
 
         if (m_show_info) {
-            // The item tooltip holds the play time and version lines.
-            const QString tip = index.data(Qt::ToolTipRole).toString();
-            const QString info = tip.split(QLatin1Char('\n'), Qt::SkipEmptyParts)
-                                     .join(QStringLiteral("   |   "));
+            const QString info = LibraryStyleContext::InfoLine(index);
             if (!info.isEmpty()) {
                 QFont font = painter.font();
                 font.setPixelSize(std::max(12, m.side / 11));
@@ -384,8 +454,7 @@ void HomeRowStyle::paintEvent(QPaintEvent* event) {
                 muted.setAlphaF(0.7);
                 painter.setPen(muted);
                 const QFontMetrics fm(font);
-                const QRect text(static_cast<int>(width() * 0.08),
-                                 static_cast<int>(cover.bottom()) + m.side / 10,
+                const QRect text(static_cast<int>(width() * 0.08), text_y,
                                  static_cast<int>(width() * 0.84), fm.height() + 4);
                 painter.drawText(text, Qt::AlignHCenter | Qt::AlignTop,
                                  fm.elidedText(info, Qt::ElideRight, text.width()));
@@ -438,7 +507,7 @@ void HomeRowStyle::mousePressEvent(QMouseEvent* event) {
     }
     MoveTo(row);
     if (event->button() == Qt::RightButton) {
-        emit ContextMenuRequested(m_model->index(row, 0), event->globalPosition().toPoint());
+        emit ContextMenuRequested(IndexAt(row), event->globalPosition().toPoint());
     }
     event->accept();
 }
@@ -454,7 +523,7 @@ void HomeRowStyle::mouseDoubleClickEvent(QMouseEvent* event) {
         return;
     }
     MoveTo(row);
-    emit LaunchRequested(m_model->index(row, 0));
+    emit LaunchRequested(IndexAt(row));
     event->accept();
 }
 
