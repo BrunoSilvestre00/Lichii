@@ -692,8 +692,9 @@ void GameList::OnPopulatingCompleted(const QStringList& watch_list) {
         if (!root_index.isValid() && !start_folder_opened) {
             start_folder_opened = true;
             for (const QString& recent : std::as_const(UISettings::values.recent_files)) {
+                // All hits: the Favorites row holds copies and comes first.
                 const QModelIndexList matches = item_model->match(
-                    item_model->index(0, 0), GameListItemPath::FullPathRole, recent, 1,
+                    item_model->index(0, 0), GameListItemPath::FullPathRole, recent, -1,
                     Qt::MatchExactly | Qt::MatchRecursive);
                 for (const QModelIndex& match : matches) {
                     if (match.parent().isValid() &&

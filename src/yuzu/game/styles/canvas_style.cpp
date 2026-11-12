@@ -673,12 +673,16 @@ void CanvasStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
             p.restore();
 
             if (selected) {
-                // S5: ring just outside the tile, concentric corners.
-                const qreal pen = 3.5;
+                // Concept ring: 5 px wide, 4 px away from the tile (CSS outline-offset), scaled
+                // down on small tiles; concentric corners.
+                const qreal k = std::min(1.0, layout.tile / 150.0);
+                const qreal pen = std::max(2.5, 5.0 * k);
+                const qreal gap = std::max(2.0, 4.0 * k);
+                const qreal grow = gap + pen / 2;
                 p.setBrush(Qt::NoBrush);
                 p.setPen(QPen(accent, pen));
-                p.drawRoundedRect(rectf.adjusted(-pen / 2, -pen / 2, pen / 2, pen / 2),
-                                  radius + pen / 2, radius + pen / 2);
+                p.drawRoundedRect(rectf.adjusted(-grow, -grow, grow, grow), radius + grow,
+                                  radius + grow);
             }
         }
     }

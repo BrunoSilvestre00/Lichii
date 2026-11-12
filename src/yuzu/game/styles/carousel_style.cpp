@@ -775,7 +775,8 @@ void CarouselStyle::PaintCover(QPainter& painter, const Metrics& m, int row, qre
         pen.setJoinStyle(Qt::RoundJoin);
         painter.setPen(pen);
         painter.setBrush(Qt::NoBrush);
-        const qreal grow = pen.widthF() / 2.0;
+        // 1 px over the cover's anti-aliased edge, so no background shows in the corners.
+        const qreal grow = pen.widthF() / 2.0 - 1.0;
         painter.drawRoundedRect(QRectF(-grow, -grow, side + 2 * grow, side + 2 * grow),
                                 side * kCoverRadius + grow, side * kCoverRadius + grow);
     }
