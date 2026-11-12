@@ -71,6 +71,33 @@ QPixmap SourceArt(const QModelIndex& index) {
     return art;
 }
 
+/// Splits `text` into at most `max_lines` lines of `width`, breaking between words only. The last
+/// line ends in "…" when text is left over, and a word wider than a line is elided rather than
+/// split.
+QStringList WrapWords(const QString& text, const QFontMetrics& fm, int width, int max_lines) {
+    QStringList lines;
+    const QStringList words = text.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    int next = 0;
+    while (next < words.size() && lines.size() < max_lines) {
+        if (lines.size() == max_lines - 1) {
+            lines.append(fm.elidedText(words.mid(next).join(QLatin1Char(' ')), Qt::ElideRight,
+                                       width));
+            break;
+        }
+        QString line = words[next++];
+        while (next < words.size()) {
+            const QString longer = line + QLatin1Char(' ') + words[next];
+            if (fm.horizontalAdvance(longer) > width) {
+                break;
+            }
+            line = longer;
+            ++next;
+        }
+        lines.append(fm.elidedText(line, Qt::ElideRight, width));
+    }
+    return lines;
+}
+
 } // namespace
 
 DualPaneStyle::DualPaneStyle(QWidget* parent)
@@ -279,7 +306,7 @@ void DualPaneStyle::ComputeLayout() {
     cols_ = std::max(1, (grid_area_.width() + gap_w) / (icon_px_ + gap_w));
     cell_w_ = std::max(1, grid_area_.width() / cols_);
     const QFontMetrics fm(font());
-    cell_h_ = icon_px_ + 14 + (show_names_ ? fm.height() + 4 : 0);
+    cell_h_ = icon_px_ + 14 + (show_names_ ? fm.lineSpacing() + fm.height() + 4 : 0);
 }
 
 QRect DualPaneStyle::CellRect(int row) const {
@@ -445,11 +472,9 @@ void DualPaneStyle::DrawPreview(QPainter& painter, const QModelIndex& index, qre
                 12, title_font.pixelSize() * text_area.width() / std::max(1, longest)));
         }
         const QFontMetrics tfm(title_font);
-        const int max_title_h = tfm.lineSpacing() * 3;
-        const int flags = Qt::TextWordWrap | Qt::AlignLeft | Qt::AlignTop;
-        QRect title_box =
-            tfm.boundingRect(QRect(0, 0, text_area.width(), max_title_h), flags, title);
-        title_box.setHeight(std::min(title_box.height(), max_title_h));
+        // At most two lines, then "…" (S4).
+        const QStringList title_lines = WrapWords(title, tfm, text_area.width(), 2);
+        const int title_h = static_cast<int>(title_lines.size()) * tfm.lineSpacing();
 
         QStringList info;
         if (show_info_) {
@@ -467,15 +492,18 @@ void DualPaneStyle::DrawPreview(QPainter& painter, const QModelIndex& index, qre
         const int info_h =
             info.isEmpty() ? 0 : static_cast<int>(info.size()) * ifm.lineSpacing() + 10;
 
-        const int total = title_box.height() + info_h;
+        const int total = title_h + info_h;
         int y = content.top() + std::max(0, (content.height() - total) / 2);
 
         painter.setFont(title_font);
         painter.setPen(pal.text().color());
         painter.setClipRect(text_area);
-        painter.drawText(QRect(text_area.left(), y, text_area.width(), title_box.height()),
-                         flags, title);
-        y += title_box.height() + 10;
+        for (const QString& line : title_lines) {
+            painter.drawText(QRect(text_area.left(), y, text_area.width(), tfm.lineSpacing()),
+                             Qt::AlignLeft | Qt::AlignVCenter, line);
+            y += tfm.lineSpacing();
+        }
+        y += 10;
 
         painter.setFont(info_font);
         QColor sub = pal.text().color();
@@ -527,12 +555,15 @@ void DualPaneStyle::DrawGrid(QPainter& painter) {
             painter.drawPixmap(tile.topLeft(), Art(index, icon_px_));
 
             if (show_names_) {
-                const QRect label(cell.left() + 2, tile.bottom() + 6, cell.width() - 4,
-                                  fm.height());
+                // Two lines, broken between words only (S4).
                 painter.setPen(pal.text().color());
                 painter.setFont(font());
-                painter.drawText(label, Qt::AlignHCenter | Qt::AlignVCenter,
-                                 fm.elidedText(TitleOf(index), Qt::ElideRight, label.width()));
+                int line_y = tile.bottom() + 6;
+                for (const QString& text : WrapWords(TitleOf(index), fm, cell.width() - 4, 2)) {
+                    painter.drawText(QRect(cell.left() + 2, line_y, cell.width() - 4, fm.height()),
+                                     Qt::AlignHCenter | Qt::AlignVCenter, text);
+                    line_y += fm.lineSpacing();
+                }
             }
 
             if (selected) {
