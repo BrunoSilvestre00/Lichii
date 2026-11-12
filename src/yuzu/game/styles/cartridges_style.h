@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <QAbstractItemModel>
 #include <QCache>
 #include <QColor>
 #include <QMetaObject>
@@ -14,9 +15,10 @@
 #include <QString>
 #include <QTransform>
 
+#include <vector>
+
 #include "yuzu/game/styles/library_style_view.h"
 
-class QAbstractItemModel;
 class QScrollBar;
 
 namespace LibraryStyles {
@@ -71,7 +73,9 @@ private:
     void UpdateScrollRange();
     void EnsureVisible(int row);
     void SetCurrentRow(int row, bool notify);
-    void OnModelChanged();
+    QModelIndex IndexAt(int row) const;
+    void ScheduleRebuild();
+    void Rebuild();
     void Launch(const QModelIndex& index);
 
     QPixmap CardPixmap(const QModelIndex& index, const Metrics& m, qreal dpr) const;
@@ -81,7 +85,11 @@ private:
 
     QPointer<QAbstractItemModel> model_;
     std::vector<QMetaObject::Connection> connections_;
+    std::vector<QPersistentModelIndex> entries_;
     QPersistentModelIndex current_;
+    int current_row_ = -1;
+    bool rebuild_pending_ = false;
+    double wheel_remainder_ = 0.0;
     QScrollBar* bar_ = nullptr;
     bool show_names_ = true;
     bool show_info_ = true;

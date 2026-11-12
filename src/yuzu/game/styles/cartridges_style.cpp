@@ -25,6 +25,7 @@
 #include <QResizeEvent>
 #include <QScrollBar>
 #include <QStringList>
+#include <QTimer>
 #include <QWheelEvent>
 
 #include "qt_common/game_list/game_list_p.h"
@@ -53,6 +54,19 @@ quint64 Hash64(quint64 x) {
     x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
     x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
     return x ^ (x >> 31);
+}
+
+bool IsGameType(GameListItemType type) {
+    return type == GameListItemType::Game;
+}
+
+bool IsFolderType(GameListItemType type) {
+    return type == GameListItemType::CustomDir || type == GameListItemType::SdmcDir ||
+           type == GameListItemType::UserNandDir || type == GameListItemType::SysNandDir;
+}
+
+GameListItemType TypeOf(const QModelIndex& index) {
+    return index.data(GameListItem::TypeRole).value<GameListItemType>();
 }
 
 bool IsDark(const QPalette& palette) {
@@ -320,29 +334,109 @@ void CartridgesStyle::SetModel(QAbstractItemModel* model) {
     connections_.clear();
     model_ = model;
     current_ = QPersistentModelIndex{};
+    current_row_ = -1;
+    entries_.clear();
     card_cache_.clear();
     if (model_) {
-        const auto changed = [this] { OnModelChanged(); };
-        connections_.push_back(connect(model_, &QAbstractItemModel::dataChanged, this, changed));
-        connections_.push_back(connect(model_, &QAbstractItemModel::rowsInserted, this, changed));
-        connections_.push_back(connect(model_, &QAbstractItemModel::rowsRemoved, this, changed));
-        connections_.push_back(connect(model_, &QAbstractItemModel::rowsMoved, this, changed));
-        connections_.push_back(connect(model_, &QAbstractItemModel::modelReset, this, changed));
-        connections_.push_back(connect(model_, &QAbstractItemModel::layoutChanged, this, changed));
+        // Structural changes rebuild the flat list (deferred, so a burst of inserts costs one
+        // rebuild). Data changes only repaint: the card cache key covers cover, title and tooltip.
+        const auto structural = [this] { ScheduleRebuild(); };
+        const auto repaint = [this] { update(); };
+        connections_.push_back(connect(model_, &QAbstractItemModel::dataChanged, this, repaint));
+        connections_.push_back(
+            connect(model_, &QAbstractItemModel::rowsInserted, this, structural));
+        connections_.push_back(connect(model_, &QAbstractItemModel::rowsRemoved, this, structural));
+        connections_.push_back(connect(model_, &QAbstractItemModel::rowsMoved, this, structural));
+        connections_.push_back(connect(model_, &QAbstractItemModel::modelReset, this, structural));
+        connections_.push_back(
+            connect(model_, &QAbstractItemModel::layoutChanged, this, structural));
     }
-    UpdateScrollRange();
-    update();
+    Rebuild();
 }
 
 QModelIndex CartridgesStyle::CurrentIndex() const {
     return current_.isValid() ? QModelIndex(current_) : QModelIndex{};
 }
 
-void CartridgesStyle::SetCurrentIndex(const QModelIndex& index) {
-    if (!model_ || !index.isValid() || index.model() != model_ || index.parent().isValid()) {
+QModelIndex CartridgesStyle::IndexAt(int row) const {
+    if (row < 0 || row >= static_cast<int>(entries_.size())) {
+        return {};
+    }
+    return QModelIndex(entries_[static_cast<size_t>(row)]);
+}
+
+void CartridgesStyle::ScheduleRebuild() {
+    if (rebuild_pending_) {
         return;
     }
-    SetCurrentRow(index.row(), false);
+    rebuild_pending_ = true;
+    QTimer::singleShot(0, this, [this] {
+        if (rebuild_pending_) {
+            Rebuild();
+        }
+    });
+}
+
+void CartridgesStyle::Rebuild() {
+    rebuild_pending_ = false;
+    const QPersistentModelIndex previous = current_;
+    entries_.clear();
+    if (model_) {
+        // Games are shown flat: top level games plus the games inside each folder row.
+        // Favorites and "add folder" rows are not cards.
+        const int top_rows = model_->rowCount();
+        for (int r = 0; r < top_rows; ++r) {
+            const QModelIndex idx = model_->index(r, 0);
+            const GameListItemType type = TypeOf(idx);
+            if (IsGameType(type)) {
+                entries_.emplace_back(idx);
+            } else if (IsFolderType(type)) {
+                const int children = model_->rowCount(idx);
+                for (int c = 0; c < children; ++c) {
+                    const QModelIndex child = model_->index(c, 0, idx);
+                    if (IsGameType(TypeOf(child))) {
+                        entries_.emplace_back(child);
+                    }
+                }
+            }
+        }
+    }
+
+    int new_row = -1;
+    if (previous.isValid()) {
+        for (size_t i = 0; i < entries_.size(); ++i) {
+            if (entries_[i] == previous) {
+                new_row = static_cast<int>(i);
+                break;
+            }
+        }
+    }
+    if (new_row < 0 && !entries_.empty() && current_row_ >= 0) {
+        new_row = std::clamp(current_row_, 0, static_cast<int>(entries_.size()) - 1);
+    }
+    const QModelIndex before = previous;
+    current_row_ = new_row;
+    current_ = new_row >= 0 ? entries_[static_cast<size_t>(new_row)] : QPersistentModelIndex{};
+    UpdateScrollRange();
+    if (IndexAt(new_row) != before) {
+        emit CurrentChanged(IndexAt(new_row));
+    }
+    update();
+}
+
+void CartridgesStyle::SetCurrentIndex(const QModelIndex& index) {
+    if (!model_ || !index.isValid() || index.model() != model_) {
+        return;
+    }
+    if (rebuild_pending_) {
+        Rebuild();
+    }
+    for (size_t i = 0; i < entries_.size(); ++i) {
+        if (entries_[i] == index) {
+            SetCurrentRow(static_cast<int>(i), false);
+            return;
+        }
+    }
 }
 
 void CartridgesStyle::SetShowNames(bool show) {
@@ -363,7 +457,7 @@ QString CartridgesStyle::CycleOption() {
 }
 
 int CartridgesStyle::RowCount() const {
-    return model_ ? model_->rowCount() : 0;
+    return static_cast<int>(entries_.size());
 }
 
 CartridgesStyle::Metrics CartridgesStyle::ComputeMetrics() const {
@@ -387,8 +481,8 @@ CartridgesStyle::Placement CartridgesStyle::Place(int row, const Metrics& m, boo
     const int r = row / m.cols;
     place.center = QPointF(m.margin_x + (col + 0.5) * m.cell_w,
                            m.margin_top + r * m.cell_h + m.card_h / 2 + 6.0);
-    if (scattered_ && model_) {
-        const QModelIndex index = model_->index(row, 0);
+    if (scattered_) {
+        const QModelIndex index = IndexAt(row);
         quint64 key = index.data(GameListItemPath::ProgramIdRole).toULongLong();
         if (key == 0) {
             key = qHash(index.data(Qt::DisplayRole).toString());
@@ -420,8 +514,8 @@ int CartridgesStyle::RowAt(const QPoint& pos) const {
         const QTransform inverse = Place(row, m, selected).transform.inverted(&ok);
         return ok && QRectF(0, 0, m.card_w, m.card_h).contains(inverse.map(content));
     };
-    if (current_.isValid() && hits(current_.row(), true)) {
-        return current_.row();
+    if (current_row_ >= 0 && hits(current_row_, true)) {
+        return current_row_;
     }
     const int col0 = static_cast<int>(std::floor((content.x() - m.margin_x) / m.cell_w));
     const int row0 = static_cast<int>(std::floor((content.y() - m.margin_top) / m.cell_h));
@@ -477,19 +571,18 @@ void CartridgesStyle::SetCurrentRow(int row, bool notify) {
     if (!model_ || row < 0 || row >= RowCount()) {
         return;
     }
-    const QModelIndex index = model_->index(row, 0);
-    const bool changed = !current_.isValid() || current_.row() != row;
+    const QModelIndex index = IndexAt(row);
+    if (!index.isValid()) {
+        return;
+    }
+    const bool changed = current_row_ != row;
     current_ = QPersistentModelIndex(index);
+    current_row_ = row;
     EnsureVisible(row);
     update();
     if (changed && notify) {
         emit CurrentChanged(index);
     }
-}
-
-void CartridgesStyle::OnModelChanged() {
-    UpdateScrollRange();
-    update();
 }
 
 void CartridgesStyle::Launch(const QModelIndex& index) {
@@ -564,8 +657,8 @@ const QPixmap& CartridgesStyle::WoodTile(qreal dpr) const {
 }
 
 QPixmap CartridgesStyle::CardPixmap(const QModelIndex& index, const Metrics& m, qreal dpr) const {
-    const auto type = index.data(GameListItem::TypeRole).value<GameListItemType>();
-    const bool is_game = type == GameListItemType::Game;
+    const auto type = TypeOf(index);
+    const bool is_game = IsGameType(type);
     const QPalette pal = palette();
 
     QPixmap cover;
@@ -606,7 +699,7 @@ QPixmap CartridgesStyle::CardPixmap(const QModelIndex& index, const Metrics& m, 
     data.cover = cover;
     data.title = title;
     data.body = body;
-    data.header_text = is_game ? tr("GAME") : tr("FOLDER");
+    data.header_text = tr("GAME");
     if (is_game) {
         data.id_text = QStringLiteral("%1")
                            .arg(static_cast<qulonglong>(program_id), 16, 16, QLatin1Char('0'))
@@ -702,11 +795,11 @@ void CartridgesStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
         std::max(0, static_cast<int>(std::floor((scroll - m.margin_top) / m.cell_h)) - 1);
     const int last_row = std::min(
         m.rows - 1, static_cast<int>(std::floor((scroll + height() - m.margin_top) / m.cell_h)) + 1);
-    const int selected = current_.isValid() ? current_.row() : -1;
+    const int selected = current_row_;
 
     painter.translate(0, -scroll);
     const auto draw_card = [&](int row, bool is_selected) {
-        const QModelIndex index = model_->index(row, 0);
+        const QModelIndex index = IndexAt(row);
         if (!index.isValid()) {
             return;
         }
@@ -748,7 +841,7 @@ void CartridgesStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
     if (selected >= 0 && selected < n) {
         draw_card(selected, true);
         if (show_names_) {
-            DrawNameBubble(painter, model_->index(selected, 0), m, Place(selected, m, true));
+            DrawNameBubble(painter, IndexAt(selected), m, Place(selected, m, true));
         }
     }
 }
@@ -776,7 +869,7 @@ void CartridgesStyle::mouseDoubleClickEvent(QMouseEvent* event) {
         const int row = RowAt(event->position().toPoint());
         if (row >= 0) {
             SetCurrentRow(row, true);
-            Launch(model_->index(row, 0));
+            Launch(IndexAt(row));
         }
         event->accept();
         return;
@@ -792,7 +885,7 @@ void CartridgesStyle::keyPressEvent(QKeyEvent* event) {
         return;
     }
     const Metrics m = ComputeMetrics();
-    const int row = current_.isValid() ? current_.row() : -1;
+    const int row = current_row_;
     int target = row;
     switch (event->key()) {
     case Qt::Key_Left:
@@ -830,7 +923,7 @@ void CartridgesStyle::keyPressEvent(QKeyEvent* event) {
     case Qt::Key_Return:
     case Qt::Key_Enter:
         if (row >= 0) {
-            Launch(model_->index(row, 0));
+            Launch(IndexAt(row));
             event->accept();
         } else {
             event->ignore();
@@ -851,7 +944,10 @@ void CartridgesStyle::wheelEvent(QWheelEvent* event) {
     if (!event->pixelDelta().isNull()) {
         delta = event->pixelDelta().y();
     } else {
-        delta = static_cast<int>(event->angleDelta().y() / 120.0 * ComputeMetrics().cell_h * 0.5);
+        // Accumulate so small touchpad / high resolution wheel steps are not truncated to zero.
+        wheel_remainder_ += event->angleDelta().y() / 120.0 * ComputeMetrics().cell_h * 0.5;
+        delta = static_cast<int>(wheel_remainder_);
+        wheel_remainder_ -= delta;
     }
     if (delta != 0) {
         bar_->setValue(bar_->value() - delta);
@@ -863,7 +959,7 @@ void CartridgesStyle::contextMenuEvent(QContextMenuEvent* event) {
     int row = -1;
     QPoint global = event->globalPos();
     if (event->reason() == QContextMenuEvent::Keyboard) {
-        row = current_.isValid() ? current_.row() : -1;
+        row = current_row_;
         if (row >= 0) {
             const QPointF c = Place(row, ComputeMetrics(), true).center;
             global = mapToGlobal(
@@ -876,7 +972,7 @@ void CartridgesStyle::contextMenuEvent(QContextMenuEvent* event) {
         return;
     }
     SetCurrentRow(row, true);
-    emit ContextMenuRequested(model_->index(row, 0), global);
+    emit ContextMenuRequested(IndexAt(row), global);
     event->accept();
 }
 
