@@ -38,9 +38,11 @@ inline bool FilterMatches(const QString& filter, const QStandardItem* item) {
     if (filter.isEmpty())
         return true;
 
+    // Compiled once: this runs for every game on every search keystroke, in several views.
+    static const QRegularExpression non_letters(QStringLiteral("[^a-z\\s]"));
     auto const sluggify = [](const QString& s) {
         QString o(s.normalized(QString::NormalizationForm_D).toLower());
-        return o.replace(QRegularExpression(QStringLiteral("[^a-z\\s]")), QStringLiteral(""));
+        return o.replace(non_letters, QString{});
     };
 
     const auto norm_filter = sluggify(filter);
