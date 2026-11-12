@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
+#include <vector>
 
 #include <QAbstractItemModel>
 #include <QContextMenuEvent>
@@ -26,6 +28,7 @@
 #include <QScrollBar>
 #include <QStringList>
 #include <QTimer>
+#include <QTransform>
 #include <QWheelEvent>
 
 #include "qt_common/config/uisettings.h"
@@ -46,6 +49,8 @@ constexpr qreal RingWidth = 3.0;
 constexpr qreal BubbleGap = 14.0;
 constexpr qreal BubbleArrow = 7.0;
 constexpr int BubbleFontPx = 13;
+/// P3: the stickers lean 8 degrees on the cart.
+constexpr qreal StickerTilt = 8.0;
 
 /// Bubbles shrink with small carts so names never take more room than the carts themselves.
 qreal BubbleScale(qreal card_w) {
@@ -203,6 +208,40 @@ QPixmap RenderCard(const CardData& d, qreal w, qreal h, qreal dpr) {
                             {ax + arrow_w / 2, arrow_top},
                             {ax, arrow_top + arrow_h}});
 
+    // Stickers: play time (yellow) and version (paler) under it, one tilt, poking out on the
+    // right. Placed here so the label title can keep clear of them; drawn last, on top.
+    QFont tag_font = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
+    tag_font.setWeight(QFont::Black);
+    tag_font.setPixelSize(std::max(7, static_cast<int>(w * 0.085)));
+    const QFontMetricsF tag_metrics(tag_font);
+    const qreal tag_h = tag_font.pixelSize() * 1.75;
+    struct Sticker {
+        QString text;
+        QColor fill;
+        QRectF rect;
+    };
+    std::vector<Sticker> stickers;
+    QRectF sticker_bounds;
+    {
+        qreal tag_y = h * 0.17;
+        for (const auto& [text, fill] : {std::pair{d.play_time, QColor(0xff, 0xd3, 0x6b)},
+                                         std::pair{d.version, QColor(0xff, 0xf3, 0xc9)}}) {
+            if (text.isEmpty()) {
+                continue;
+            }
+            const qreal tw = tag_metrics.horizontalAdvance(text) + tag_font.pixelSize() * 1.4;
+            const QRectF rect(w + w * 0.07 - tw, tag_y, tw, tag_h);
+            stickers.push_back({text, fill, rect});
+            QTransform tilt;
+            tilt.translate(rect.center().x(), rect.center().y());
+            tilt.rotate(StickerTilt);
+            tilt.translate(-rect.center().x(), -rect.center().y());
+            // The shadow sits 12 % lower.
+            sticker_bounds |= tilt.mapRect(rect.adjusted(0, 0, 0, rect.height() * 0.12));
+            tag_y += tag_h + w * 0.035;
+        }
+    }
+
     QPainterPath label_path;
     label_path.addRoundedRect(label, label_r, label_r);
     p.save();
@@ -250,10 +289,20 @@ QPixmap RenderCard(const CardData& d, qreal w, qreal h, qreal dpr) {
         QFont font = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
         font.setBold(true);
         font.setPixelSize(std::max(7, static_cast<int>(lw * 0.1)));
-        p.setFont(font);
-        p.setPen(QColor(0xed, 0xed, 0xee));
-        p.drawText(art.adjusted(lw * 0.08, lw * 0.08, -lw * 0.08, -lw * 0.08),
-                   Qt::AlignCenter | Qt::TextWordWrap, d.title);
+        // The title printed on the label (S4: two lines, word wrap only), kept clear of the
+        // stickers: below them, or beside them when there is no room below.
+        QRectF text_box = art.adjusted(lw * 0.08, lw * 0.08, -lw * 0.08, -lw * 0.08);
+        const QRectF keep_clear = sticker_bounds.adjusted(-lw * 0.03, -lw * 0.03, 0, lw * 0.03);
+        if (!keep_clear.isEmpty() && keep_clear.intersects(text_box)) {
+            const qreal line = QFontMetricsF(font).lineSpacing();
+            if (text_box.bottom() - keep_clear.bottom() >= line * 2) {
+                text_box.setTop(keep_clear.bottom());
+            } else {
+                text_box.setRight(std::max(text_box.left() + line, keep_clear.left()));
+            }
+        }
+        LibraryStyleContext::PaintName(&p, text_box.toRect(), d.title, QColor(0xed, 0xed, 0xee),
+                                       font, Qt::AlignCenter, 2, 0);
     }
 
     // Id strip.
@@ -269,29 +318,15 @@ QPixmap RenderCard(const CardData& d, qreal w, qreal h, qreal dpr) {
     }
     p.restore();
 
-    // Stickers: play time (yellow) and version (paler) under it, one tilt, poking out on the right.
-    QFont tag_font = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
-    tag_font.setWeight(QFont::Black);
-    tag_font.setPixelSize(std::max(7, static_cast<int>(w * 0.085)));
-    const QFontMetricsF tag_metrics(tag_font);
-    const qreal tag_h = tag_font.pixelSize() * 1.75;
-    qreal tag_y = h * 0.17;
-    const auto sticker = [&](const QString& text, const QColor& fill) {
-        if (text.isEmpty()) {
-            return;
-        }
-        const qreal tw = tag_metrics.horizontalAdvance(text) + tag_font.pixelSize() * 1.4;
-        const QRectF rect(w + w * 0.07 - tw, tag_y, tw, tag_h);
+    // The stickers, tilted with the cart (they are drawn in its own coordinates).
+    for (const Sticker& sticker : stickers) {
         p.save();
-        p.translate(rect.center());
-        p.rotate(8.0);
-        p.translate(-rect.center());
-        DrawSticker(p, rect, text, fill, tag_font);
+        p.translate(sticker.rect.center());
+        p.rotate(StickerTilt);
+        p.translate(-sticker.rect.center());
+        DrawSticker(p, sticker.rect, sticker.text, sticker.fill, tag_font);
         p.restore();
-        tag_y += tag_h + w * 0.035;
-    };
-    sticker(d.play_time, QColor(0xff, 0xd3, 0x6b));
-    sticker(d.version, QColor(0xff, 0xf3, 0xc9));
+    }
 
     p.end();
     return pixmap;
