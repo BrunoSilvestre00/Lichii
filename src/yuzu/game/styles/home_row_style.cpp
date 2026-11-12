@@ -197,7 +197,8 @@ HomeRowStyle::Metrics HomeRowStyle::ComputeMetrics() const {
     // Tiles are the featured size (1.6x the icon size), shrunk only to fit the window.
     const int by_height = static_cast<int>(height() * 0.42);
     const int by_width = static_cast<int>(width() / 2.4);
-    m.side = std::max(64, std::min({LibraryStyleContext::FeaturedArtSize(), by_height, by_width}));
+    // Floor at the smallest icon option (32 px), so every size step still counts.
+    m.side = std::max(32, std::min({LibraryStyleContext::FeaturedArtSize(), by_height, by_width}));
     m.step = static_cast<int>(m.side * 1.14);
     m.center_y = static_cast<int>(height() * 0.5);
     return m;

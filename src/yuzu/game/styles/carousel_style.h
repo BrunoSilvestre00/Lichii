@@ -72,6 +72,7 @@ private:
     void EnsureBuilt();
     void SelectRow(int row, bool animate = true);
     void MoveBy(int delta);
+    void MoveSteps(int step, bool animate);
     void Launch(int row);
     int HitRow(const QPoint& point) const;
 
@@ -98,8 +99,11 @@ private:
     QPointer<QAbstractItemModel> model_;
     std::vector<QPersistentModelIndex> items_;
     int current_ = 0;
+    /// Unwrapped: the ring keeps counting past the last game; current_ is target_position_
+    /// wrapped into the game list.
     qreal position_ = 0.0;
     qreal start_position_ = 0.0;
+    qreal target_position_ = 0.0;
     qreal progress_ = 1.0;
     int previous_row_ = -1;
 

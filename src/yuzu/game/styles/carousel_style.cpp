@@ -120,7 +120,8 @@ RestingTilt RestingTiltFor(bool right, qreal side) {
     const qreal w = side * scale;
     const qreal far_h = w * (1.0 - 2.0 * 0.09);
     QPolygonF quad;
-    if (right) {
+    // Same turn as PaintCover: the inner edge (towards the selection) is the shorter one.
+    if (!right) {
         quad << QPointF(0, 0) << QPointF(w, (w - far_h) / 2) << QPointF(w, (w + far_h) / 2)
              << QPointF(0, w);
     } else {
@@ -155,7 +156,7 @@ CarouselStyle::CarouselStyle(QWidget* parent) : LibraryStyleView(parent) {
     animation_->setEndValue(1.0);
     connect(animation_, &QVariantAnimation::valueChanged, this, [this](const QVariant& value) {
         progress_ = value.toReal();
-        position_ = start_position_ + (static_cast<qreal>(current_) - start_position_) * progress_;
+        position_ = start_position_ + (target_position_ - start_position_) * progress_;
         update();
     });
 
@@ -181,6 +182,7 @@ void CarouselStyle::SetModel(QAbstractItemModel* model) {
     items_.clear();
     current_ = 0;
     position_ = 0.0;
+    target_position_ = 0.0;
     progress_ = 1.0;
     previous_row_ = -1;
     animation_->stop();
@@ -311,6 +313,7 @@ void CarouselStyle::Rebuild() {
     current_ = new_current;
     animation_->stop();
     position_ = current_;
+    target_position_ = current_;
     progress_ = 1.0;
     previous_row_ = -1;
     cover_cache_.clear();
@@ -330,19 +333,36 @@ void CarouselStyle::SelectRow(int row, bool animate) {
     if (items_.empty()) {
         return;
     }
-    row = std::clamp(row, 0, static_cast<int>(items_.size()) - 1);
+    const int count = static_cast<int>(items_.size());
+    row = ((row % count) + count) % count;
     if (row == current_) {
+        return;
+    }
+    // The ring: go the short way round, so the last game sits next to the first.
+    int step = row - current_;
+    if (step > count / 2) {
+        step -= count;
+    } else if (step < -count / 2) {
+        step += count;
+    }
+    MoveSteps(step, animate);
+}
+
+void CarouselStyle::MoveSteps(int step, bool animate) {
+    const int count = static_cast<int>(items_.size());
+    if (count == 0 || step == 0) {
         return;
     }
     previous_row_ = current_;
     start_position_ = position_;
-    current_ = row;
+    target_position_ = std::round(target_position_) + step;
+    current_ = ((static_cast<int>(target_position_) % count) + count) % count;
     animation_->stop();
     if (animate) {
         progress_ = 0.0;
         animation_->start();
     } else {
-        position_ = current_;
+        position_ = target_position_;
         progress_ = 1.0;
         previous_row_ = -1;
     }
@@ -351,7 +371,8 @@ void CarouselStyle::SelectRow(int row, bool animate) {
 }
 
 void CarouselStyle::MoveBy(int delta) {
-    SelectRow(current_ + delta);
+    // Steps around the ring: past the last game comes the first again.
+    MoveSteps(delta, true);
 }
 
 void CarouselStyle::Launch(int row) {
@@ -377,7 +398,8 @@ CarouselStyle::Metrics CarouselStyle::ComputeMetrics() const {
     const qreal w = width();
     const qreal h = height();
     // The centre cover is the featured size (1.6x the icon size), shrunk only to fit the window.
-    m.side = std::max(96.0, std::min<qreal>({static_cast<qreal>(LibraryStyleContext::FeaturedArtSize()),
+    // Floor at the smallest icon option (32 px), so every size step still counts.
+    m.side = std::max(32.0, std::min<qreal>({static_cast<qreal>(LibraryStyleContext::FeaturedArtSize()),
                                              w * 0.45, h * 0.46}));
     m.title_px = std::clamp(m.side * 0.1, 15.0, 32.0);
     m.info_px = std::clamp(m.title_px * 0.5, 11.0, 15.0);
@@ -707,7 +729,9 @@ void CarouselStyle::PaintCover(QPainter& painter, const Metrics& m, int row, qre
     const qreal far_h = h * (1.0 - 2.0 * tilt);
 
     QPolygonF quad;
-    if (sign > 0 || a < 1e-6) {
+    // Like the concept: side covers turn their inner edge (towards the selection) away, so that
+    // edge is the shorter one and the outer edge the taller one.
+    if (sign < 0 || a < 1e-6) {
         quad << QPointF(x - w / 2, m.center_y - h / 2) << QPointF(x + w / 2, m.center_y - far_h / 2)
              << QPointF(x + w / 2, m.center_y + far_h / 2) << QPointF(x - w / 2, m.center_y + h / 2);
     } else {
@@ -858,20 +882,24 @@ void CarouselStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
 
     const Metrics m = ComputeMetrics();
     const int count = static_cast<int>(items_.size());
-    const int lo = std::max(0, static_cast<int>(std::floor(position_)) - kVisibleRadius);
-    const int hi = std::min(count - 1, static_cast<int>(std::ceil(position_)) + kVisibleRadius);
+    // The covers form a ring: slot k (unwrapped) shows game k mod count. With few games the
+    // radius shrinks so no game shows twice.
+    const int radius = std::min(kVisibleRadius, (count - 1) / 2);
+    const int lo = static_cast<int>(std::floor(position_)) - radius;
+    const int hi = static_cast<int>(std::ceil(position_)) + radius;
 
     std::vector<int> order;
     order.reserve(static_cast<size_t>(std::max(0, hi - lo + 1)));
-    for (int row = lo; row <= hi; ++row) {
-        order.push_back(row);
+    for (int slot = lo; slot <= hi; ++slot) {
+        order.push_back(slot);
     }
     // Far covers first so the nearer ones overlap them.
     std::stable_sort(order.begin(), order.end(), [this](int l, int r) {
         return std::abs(l - position_) > std::abs(r - position_);
     });
-    for (const int row : order) {
-        PaintCover(painter, m, row, row - position_);
+    for (const int slot : order) {
+        const int row = ((slot % count) + count) % count;
+        PaintCover(painter, m, row, slot - position_);
     }
 
     PaintTexts(painter, m);
