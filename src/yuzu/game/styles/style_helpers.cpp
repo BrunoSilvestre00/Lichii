@@ -754,11 +754,14 @@ void LibraryStyleContext::SetFamilyWithFallbacks(QFont& font, const QString& fam
     if (!family.isEmpty()) {
         families << family;
     }
-    families << QStringLiteral("Yu Gothic UI") << QStringLiteral("Microsoft YaHei UI")
-             << QStringLiteral("Microsoft JhengHei UI") << QStringLiteral("Malgun Gothic")
+    // Japanese fonts first: Chinese ones lack the Japanese kanji forms of many titles.
+    families << QStringLiteral("Yu Gothic UI") << QStringLiteral("Yu Gothic")
+             << QStringLiteral("Meiryo UI") << QStringLiteral("Meiryo")
+             << QStringLiteral("MS UI Gothic") << QStringLiteral("MS Gothic")
              << QStringLiteral("Noto Sans CJK JP") << QStringLiteral("Noto Sans JP")
-             << QStringLiteral("Hiragino Sans") << QStringLiteral("PingFang SC")
-             << QFont().family();
+             << QStringLiteral("Hiragino Sans") << QStringLiteral("Microsoft YaHei UI")
+             << QStringLiteral("Microsoft JhengHei UI") << QStringLiteral("Malgun Gothic")
+             << QStringLiteral("PingFang SC") << QFont().family();
     font.setFamilies(families);
 }
 
