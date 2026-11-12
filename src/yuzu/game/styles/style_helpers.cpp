@@ -749,6 +749,19 @@ void LibraryStyleContext::PaintInfoLines(QPainter* painter, const QRect& rect,
     painter->restore();
 }
 
+void LibraryStyleContext::SetFamilyWithFallbacks(QFont& font, const QString& family) {
+    QStringList families;
+    if (!family.isEmpty()) {
+        families << family;
+    }
+    families << QStringLiteral("Yu Gothic UI") << QStringLiteral("Microsoft YaHei UI")
+             << QStringLiteral("Microsoft JhengHei UI") << QStringLiteral("Malgun Gothic")
+             << QStringLiteral("Noto Sans CJK JP") << QStringLiteral("Noto Sans JP")
+             << QStringLiteral("Hiragino Sans") << QStringLiteral("PingFang SC")
+             << QFont().family();
+    font.setFamilies(families);
+}
+
 void LibraryStyleContext::PaintInfoPanel(QPainter* painter, const QRect& rect,
                                          const QModelIndex& index, const QPalette& palette,
                                          const QFont& font) {

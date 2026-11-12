@@ -149,6 +149,10 @@ public:
     static void PaintInfoLines(QPainter* painter, const QRect& rect, const QStringList& lines,
                                const QColor& color, const QFont& font, Qt::Alignment alignment);
 
+    /// `family` first, then system fonts with CJK glyphs, so titles in Japanese, Chinese or
+    /// Korean never show as boxes with a theme font that has only Latin glyphs.
+    static void SetFamilyWithFallbacks(QFont& font, const QString& family);
+
     /// Rounded panel with the title on top and the info line under it.
     static void PaintInfoPanel(QPainter* painter, const QRect& rect, const QModelIndex& index,
                                const QPalette& palette, const QFont& font);
