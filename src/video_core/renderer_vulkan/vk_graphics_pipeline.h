@@ -428,7 +428,8 @@ private:
     DescriptorBufferRing& descriptor_buffer_ring;
     DrawTemplates& draw_templates;
     const u64 template_owner;
-    u32 template_misses{}; ///< Draws in a row no template was found for
+    VideoCommon::DrawTemplateRecorder template_recorder;
+    u64 last_template_context{}; ///< Hash of the last kept template's context (verify, profile)
 
     bool (*configure_func)(GraphicsPipeline*, bool){};
 

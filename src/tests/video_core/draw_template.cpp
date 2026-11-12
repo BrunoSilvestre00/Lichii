@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstring>
+#include <span>
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
@@ -36,6 +37,30 @@ Template* Find(Table& table, const DrawTemplateContext& context, const std::vect
 Template& Insert(Table& table, const DrawTemplateContext& context,
                  const std::vector<u32>& handles) {
     return table.Insert(context, handles, VideoCommon::HashDrawTemplate(context, handles));
+}
+
+/// One draw as GraphicsPipeline::ConfigureImpl runs it: look up, check, note, then keep when the
+/// template was not used. With verify, a found template is resolved in full and kept again.
+/// Returns whether a valid template was found.
+bool Draw(Table& table, VideoCommon::DrawTemplateRecorder& recorder,
+          const DrawTemplateContext& context, std::span<const u32> handles, bool verify) {
+    constexpr u64 host_serial = 3;
+    constexpr u64 scale_epoch = 1;
+    const u64 hash = VideoCommon::HashDrawTemplate(context, handles);
+    Template* found = table.Find(context, handles, hash);
+    if (found && found->Check(host_serial, scale_epoch, [](VideoCommon::ImageViewId) {
+            return 0U;
+        }) != DrawTemplateCheck::Hit) {
+        Table::Erase(*found);
+        found = nullptr;
+    }
+    const bool keep = recorder.Note(found != nullptr);
+    if (keep && (!found || verify)) {
+        Template& kept = table.Insert(context, handles, hash);
+        kept.host_serial = host_serial;
+        kept.scale_epoch = scale_epoch;
+    }
+    return found != nullptr;
 }
 } // namespace
 
@@ -142,4 +167,30 @@ TEST_CASE("Draw template: a rejected template is gone for the next lookup", "[vi
     CHECK(Find(table, context, handles) == nullptr);
     CHECK(&Insert(table, context, handles) == kept);
     CHECK(Find(table, context, handles) == kept);
+}
+
+TEST_CASE("Draw template: every draw of a repeating frame finds its template from the third frame",
+          "[video_core]") {
+    constexpr u32 draws_per_frame = 200;
+    for (const bool verify : {false, true}) {
+        Table table{2048};
+        VideoCommon::DrawTemplateRecorder recorder;
+        const u64 owner = table.NewOwner();
+        std::vector<u32> found_per_frame;
+        for (u32 frame = 0; frame < 3; ++frame) {
+            u32 found = 0;
+            for (u32 draw = 0; draw < draws_per_frame; ++draw) {
+                // The context and handle words are read again for every draw, as each frame does.
+                const DrawTemplateContext context = Context(owner);
+                const std::array<u32, 2> handles{0x100000 | draw, 0x200000 | (draw * 7)};
+                found += Draw(table, recorder, context, handles, verify) ? 1 : 0;
+            }
+            found_per_frame.push_back(found);
+        }
+        INFO("verify " << verify);
+        CHECK(found_per_frame[0] == 0);
+        // The first 16 misses in a row and one in 16 after them are kept.
+        CHECK(found_per_frame[1] == 16 + (draws_per_frame - 16) / 16);
+        CHECK(found_per_frame[2] == draws_per_frame);
+    }
 }

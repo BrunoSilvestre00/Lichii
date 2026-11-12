@@ -11,6 +11,7 @@
 #include <cstring>
 #include <iostream>
 #include <span>
+#include <unordered_set>
 #include <vector>
 
 #include <boost/container/small_vector.hpp>
@@ -381,11 +382,15 @@ const bool draw_template_verify = [] {
 // Draw templates on the drawing thread, logged every 10 s with EDEN_NX2_GPU_PROFILE or the
 // verify env.
 struct DrawTemplateStats {
-    u64 hits{};
+    u64 memo_hits{}; ///< Memo-eligible draws the texture memo resolved, before any lookup
+    u64 hits{};      ///< Templates found and valid; with verify, these are resolved in full
     u64 misses{};
     u64 kept{};
     u64 not_kept{}; ///< Changing sampler variants, too many textures or descriptors not keepable
     std::array<u64, static_cast<size_t>(VideoCommon::DrawTemplateCheck::Count)> rejected{};
+    /// Misses against the pipeline's last template: none yet, other tables or sampler binding,
+    /// other handle words; and misses whose key was kept before (evicted or rejected since)
+    std::array<u64, 4> miss_kinds{};
     u64 prepare_deleted{};
     u64 verified{};
     std::array<u64, 4> mismatches{}; ///< Views, samplers, descriptors, rescaling words
@@ -393,6 +398,9 @@ struct DrawTemplateStats {
     u64 total_mismatched_draws{};
     std::chrono::steady_clock::time_point next_report{};
 } draw_template_stats;
+
+/// Every key a template was kept for, for DrawTemplateStats::miss_kinds (verify or profile only).
+std::unordered_set<u64> kept_template_keys;
 
 void ReportDrawTemplates() {
     DrawTemplateStats& stats = draw_template_stats;
@@ -410,12 +418,14 @@ void ReportDrawTemplates() {
             return stats.rejected[static_cast<size_t>(check)];
         };
         LOG_INFO(Render_Vulkan,
-                 "Draw templates in 10 s: {} hits, {} misses, {} kept, {} not keepable; rejected: "
-                 "{} host memory, {} scale, {} view deleted, {} descriptor bytes, {} prepare "
-                 "deleted images",
-                 stats.hits, stats.misses, stats.kept, stats.not_kept, rejected(Check::HostMemory),
-                 rejected(Check::Scale), rejected(Check::ViewDeleted), rejected(Check::Descriptors),
-                 stats.prepare_deleted);
+                 "Draw templates in 10 s: {} texture memo hits, {} hits, {} misses ({} first of "
+                 "their pipeline, {} other tables, {} other handle words, {} kept before), {} "
+                 "kept, {} not keepable; rejected: {} host memory, {} scale, {} view deleted, {} "
+                 "descriptor bytes, {} prepare deleted images",
+                 stats.memo_hits, stats.hits, stats.misses, stats.miss_kinds[0],
+                 stats.miss_kinds[1], stats.miss_kinds[2], stats.miss_kinds[3], stats.kept,
+                 stats.not_kept, rejected(Check::HostMemory), rejected(Check::Scale),
+                 rejected(Check::ViewDeleted), rejected(Check::Descriptors), stats.prepare_deleted);
         if (draw_template_verify) {
             LOG_INFO(Render_Vulkan,
                      "Draw template verify in 10 s: {} checked, {} mismatched: {} views, {} "
@@ -958,6 +968,7 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
     boost::container::small_vector<u32, 32> template_handles;
     u64 template_hash{};
     bool template_hit{};
+    bool keep_template{};
     if (use_template) {
         Profile::Scope scope{Profile::Zone::ReadHandles};
         for (const VideoCommon::TextureHandleRead& read : handle_reads) {
@@ -992,12 +1003,19 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
                 samplers.clear();
             }
         }
-        if (template_hit) {
+        keep_template = template_recorder.Note(draw_template != nullptr);
+        if (draw_template) {
             ++draw_template_stats.hits;
-            template_misses = 0;
-        } else if (!draw_template) {
+        } else {
             ++draw_template_stats.misses;
-            ++template_misses;
+            if (draw_template_verify || Profile::Enabled()) {
+                const u64 context_hash = VideoCommon::HashDrawTemplate(template_context, {});
+                const size_t kind = last_template_context == 0              ? 0
+                                    : last_template_context != context_hash ? 1
+                                                                            : 2;
+                ++draw_template_stats.miss_kinds[kind];
+                draw_template_stats.miss_kinds[3] += kept_template_keys.contains(template_hash);
+            }
         }
     }
     if (resolve_in_full && !template_hit) {
@@ -1032,6 +1050,7 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
         } else {
             texture_memo.misses = 0;
             Count(g_memo_hits);
+            ++draw_template_stats.memo_hits;
         }
         if (memo_hit && verify_memo) {
             // Bindings alone miss what the paths do to the images (#904 prepared the null one).
@@ -1249,9 +1268,7 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
     }
     if (template_hit) {
         rescaling.Assign(draw_template->rescaling);
-    } else if (use_template &&
-               (draw_template != nullptr || template_misses <= 16 || (template_misses & 15) == 0)) {
-        // A pipeline whose draws never repeat keeps one template in 16.
+    } else if (keep_template) {
         KeepDrawTemplate(draw_template, template_context, template_handles, template_hash,
                          handle_reads, std::span(views.data(), views.size()),
                          std::span(samplers.data(), samplers.size()), template_ranges, rescaling);
@@ -1508,6 +1525,13 @@ void GraphicsPipeline::KeepDrawTemplate(DrawTemplate* verified,
     kept.host_serial = gpu_memory->HostPointerSerial();
     kept.scale_epoch = texture_cache.ScaleEpoch();
     ++stats.kept;
+    if (draw_template_verify || VideoCommon::Nx2Profile::Enabled()) {
+        last_template_context = VideoCommon::HashDrawTemplate(context, {});
+        if (kept_template_keys.size() >= (size_t{1} << 22)) {
+            kept_template_keys.clear();
+        }
+        kept_template_keys.insert(hash);
+    }
 }
 
 void GraphicsPipeline::KeepImageDescriptors(size_t stage, size_t first_entry) {

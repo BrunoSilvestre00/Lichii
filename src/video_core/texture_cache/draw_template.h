@@ -115,6 +115,20 @@ struct DrawTemplate {
     }
 };
 
+/// Which of a pipeline's draws keep a template: every one while its templates are found, and one
+/// in 16 once 16 draws in a row found none, so a pipeline whose draws never repeat stops paying.
+class DrawTemplateRecorder {
+public:
+    /// Notes whether a draw's lookup found a valid template; returns whether to keep its own.
+    [[nodiscard]] bool Note(bool found) noexcept {
+        misses = found ? 0 : misses + 1;
+        return misses <= 16 || (misses & 15) == 0;
+    }
+
+private:
+    u32 misses{};
+};
+
 /// Every pipeline's draw templates in a fixed number of slots, WAYS per set; a new template
 /// replaces the set's least recently used one.
 template <typename Template>
