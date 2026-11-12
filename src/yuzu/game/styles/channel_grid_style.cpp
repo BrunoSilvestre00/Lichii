@@ -565,12 +565,12 @@ void ChannelGridStyle::PaintTile(QPainter& p, const Layout& l, int row, bool sel
         QFont f = font();
         f.setPixelSize(std::clamp(l.tile_w / 22, 11, 16));
         f.setBold(selected);
-        p.setFont(f);
-        p.setPen(pal.windowText().color());
-        const QRectF text(tile.left(), tile.bottom() + 6, tile.width(), NameHeight - 6);
-        p.drawText(text, Qt::AlignHCenter | Qt::AlignTop,
-                   QFontMetrics(f).elidedText(TitleOf(index), Qt::ElideRight,
-                                              int(tile.width()) - 8));
+        // One line (S4); the selected tile's long name glides with Scroll Long Names.
+        const QRectF text(tile.left() + 4, tile.bottom() + 6, tile.width() - 8, NameHeight - 6);
+        LibraryStyleContext::PaintTitle(&p, text.toAlignedRect(), TitleOf(index),
+                                        pal.windowText().color(), f,
+                                        Qt::AlignHCenter | Qt::AlignTop, 1,
+                                        selected ? this : nullptr, 4);
     }
 }
 
@@ -656,7 +656,7 @@ void ChannelGridStyle::PaintDock(QPainter& p, const Layout& l) {
             p.setPen(QPen(outline, 2.0));
             p.drawRoundedRect(card, 14, 14);
 
-            const QString meta = LibraryStyleContext::InfoLine(index);
+            const GameInfo game = LibraryStyleContext::Info(index);
             QFont tf = font();
             tf.setBold(true);
             tf.setPixelSize(std::clamp(card_h * 20 / 100, 11, 18));
@@ -666,18 +666,21 @@ void ChannelGridStyle::PaintDock(QPainter& p, const Layout& l) {
             const int meta_h = QFontMetrics(mf).height();
             QRectF title_rect = inner;
             title_rect.setBottom(inner.bottom() - meta_h - 2);
-            p.setFont(tf);
-            p.setPen(pal.windowText().color());
-            p.drawText(title_rect, Qt::AlignHCenter | Qt::AlignVCenter | Qt::TextWordWrap,
-                       QFontMetrics(tf).elidedText(TitleOf(index), Qt::ElideRight,
-                                                   int(title_rect.width()) * 2 - 24));
+            // Two lines at most (S4), gliding with Scroll Long Names.
+            LibraryStyleContext::PaintTitle(&p, title_rect.toAlignedRect(), TitleOf(index),
+                                            pal.windowText().color(), tf,
+                                            Qt::AlignHCenter | Qt::AlignVCenter, 2, this);
             QColor sub = pal.windowText().color();
             sub.setAlpha(165);
-            p.setFont(mf);
-            p.setPen(sub);
-            p.drawText(QRectF(inner.left(), inner.bottom() - meta_h, inner.width(), meta_h),
-                       Qt::AlignHCenter | Qt::AlignVCenter,
-                       meta);
+            // One line of fixed parts (S3), never cut inside a part.
+            const QStringList meta = LibraryStyleContext::InfoLines(
+                game, LibraryStyleContext::LayoutInfo(mf, static_cast<int>(inner.width()), 1),
+                mf);
+            LibraryStyleContext::PaintInfoLines(
+                &p,
+                QRectF(inner.left(), inner.bottom() - meta_h, inner.width(), meta_h)
+                    .toAlignedRect(),
+                meta, sub, mf, Qt::AlignHCenter | Qt::AlignVCenter);
         }
     }
 }
