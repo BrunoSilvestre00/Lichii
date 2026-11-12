@@ -117,6 +117,11 @@ GameInfo LibraryStyleContext::Info(const QModelIndex& index) {
             Column(index, GameListModel::COLUMN_ADD_ONS).data(Qt::DisplayRole).toString());
     }
     info.size_text = Column(index, GameListModel::COLUMN_SIZE).data(Qt::DisplayRole).toString();
+    // Unpacked folder games have no size yet ("Not scanned" in the list): keep it short here.
+    static const QRegularExpression has_digit{QStringLiteral("[0-9]")};
+    if (!info.size_text.isEmpty() && !info.size_text.contains(has_digit)) {
+        info.size_text = QStringLiteral("NaN GB");
+    }
 
     // Only the parts switched on under View > Game Info (the list view's columns).
     QStringList parts;
