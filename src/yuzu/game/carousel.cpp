@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <QTimer>
+
 #include "qt_common/config/uisettings.h"
 #include "qt_common/game_list/model.h"
 #include "yuzu/game/common.h"
@@ -11,6 +13,16 @@ GameCarousel::GameCarousel(QWidget* parent) : QListView{parent} {
     m_gameCard = new GameCard(this);
     setItemDelegate(m_gameCard);
     setObjectName(QStringLiteral("gameCarouselView"));
+
+    // View > Game Info > Scroll Long Names: repaint only the selected card while its name moves.
+    auto* name_scroll_timer = new QTimer(this);
+    name_scroll_timer->setInterval(33);
+    connect(name_scroll_timer, &QTimer::timeout, this, [this] {
+        if (Yuzu::ScrollLongNames() && currentIndex().isValid() && isVisible()) {
+            viewport()->update(visualRect(currentIndex()));
+        }
+    });
+    name_scroll_timer->start();
 
     setViewMode(QListView::IconMode);
     setMovement(QListView::Static);
@@ -67,12 +79,15 @@ void GameCarousel::UpdateIconSize() {
     // Same card shape as the grid: square artwork with the title band under it.
     const int widthMargin = Yuzu::CardWidthMargin;
     const int heightMargin =
-        GameCard::HeightMargin(static_cast<int>(display_icon_size), show_game_name,
+        GameCard::HeightMargin(static_cast<int>(Yuzu::CardWidthBase()), show_game_name,
                                Yuzu::ShowAnyGameInfo());
 
-    const int min_item_width = display_icon_size + widthMargin;
+    const int min_item_width = static_cast<int>(Yuzu::CardWidthBase()) + widthMargin;
     const int min_item_height = display_icon_size + heightMargin;
-    const int grid_height = std::max(min_item_height, viewport()->height());
+    // GameCard::getCardRect keeps the card cardMargin inside the cell top and bottom; without
+    // that room the card got shorter than its content and squashed the art.
+    const int grid_height =
+        std::max(min_item_height + GameCard::cardMargin, viewport()->height());
 
     QSize content_size(min_item_width, min_item_height);
     QSize grid_size(min_item_width, grid_height);

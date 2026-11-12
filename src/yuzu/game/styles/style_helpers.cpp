@@ -422,7 +422,7 @@ void LibraryStyleContext::PaintSelection(QPainter* painter, const QRect& rect,
 
 void LibraryStyleContext::PaintName(QPainter* painter, const QRect& rect, const QString& text,
                                     const QColor& color, const QFont& font,
-                                    Qt::Alignment alignment, int max_lines) {
+                                    Qt::Alignment alignment, int max_lines, int max_overflow) {
     if (rect.isEmpty() || text.isEmpty()) {
         return;
     }
@@ -431,6 +431,15 @@ void LibraryStyleContext::PaintName(QPainter* painter, const QRect& rect, const 
     painter->setPen(color);
     const QFontMetrics metrics(font);
     const int lines = std::max(1, std::min(max_lines, rect.height() / metrics.lineSpacing()));
+
+    // A last letter is narrower than "...": draw the whole text when it overflows by less.
+    const int ellipsis = metrics.horizontalAdvance(QChar(0x2026));
+    const int slack = std::max(0, max_overflow < 0 ? ellipsis : std::min(max_overflow, ellipsis));
+    const auto fit = [&](const QString& part) {
+        return metrics.horizontalAdvance(part) <= rect.width() + slack
+                   ? part
+                   : metrics.elidedText(part, Qt::ElideRight, rect.width());
+    };
 
     QTextLayout layout(text, font);
     layout.beginLayout();
@@ -442,16 +451,19 @@ void LibraryStyleContext::PaintName(QPainter* painter, const QRect& rect, const 
         }
         line.setLineWidth(rect.width());
         if (i == lines - 1) {
-            out.append(metrics.elidedText(text.mid(line.textStart()), Qt::ElideRight,
-                                          rect.width()));
+            out.append(fit(text.mid(line.textStart()).trimmed()));
         } else {
-            out.append(text.mid(line.textStart(), line.textLength()).trimmed());
+            // A single word wider than the box can't wrap: cut it, or draw it whole when only
+            // a sliver sticks out.
+            out.append(fit(text.mid(line.textStart(), line.textLength()).trimmed()));
         }
     }
     layout.endLayout();
 
     const QString joined = out.join(QLatin1Char('\n'));
-    painter->drawText(rect, alignment.toInt(), joined);
+    // Room for the allowed overflow, on both sides when centred.
+    const int left = (alignment & Qt::AlignHCenter) ? slack : 0;
+    painter->drawText(rect.adjusted(-left, 0, slack, 0), alignment.toInt(), joined);
     painter->restore();
 }
 

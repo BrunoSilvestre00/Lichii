@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <array>
 #include <QPalette>
 #include <QPixmap>
 #include <QString>
@@ -41,7 +42,11 @@ public:
         int pad = 12;          ///< side padding, smaller on small cards
         int title_px = 14;
         int meta_px = 11;
-        int meta_lines = 1;    ///< 2 when the line is split at its separator dot
+        int meta_lines = 1;    ///< info lines: the parts packed at this card width
+        /// Fixed line of each part (play time, version, size, type; -1 when off), the same on
+        /// every card of the view so a part never moves between cards.
+        std::array<int, 4> line_of{-1, -1, -1, -1};
+        bool short_play = false; ///< "4.4 h" instead of "4.4 h played" on every card
         int height = 0;        ///< 0: no text block at all
     };
     /// `art` is the artwork side; names/info follow View > Show Game Name / Show Info.

@@ -234,6 +234,9 @@ struct Values {
     Setting<u8> row_1_text_id{linkage, 3, "row_1_text_id", Category::UiGameList};
     Setting<u8> row_2_text_id{linkage, 2, "row_2_text_id", Category::UiGameList};
     Setting<Settings::GameListMode> game_list_mode{linkage, Settings::GameListMode::GridView, "game_list_mode", Category::UiGameList};
+    /// Long game names on the cards: two lines cut with "...", or one line where the selected
+    /// card's name scrolls (View > Game Info > Scroll Long Names).
+    Setting<Settings::GameNameOverflow> game_name_overflow{linkage, Settings::GameNameOverflow::Ellipsis, "game_name_overflow", Category::UiGameList};
     Setting<u8> game_library_style{linkage, static_cast<u8>(GameLibraryStyle::Modern),
                                    "game_library_style", Category::UiGameList};
     Setting<bool> has_selected_game_library_style{linkage, false,

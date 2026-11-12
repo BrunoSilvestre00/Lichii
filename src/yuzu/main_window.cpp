@@ -1772,6 +1772,14 @@ void MainWindow::ConnectMenuEvents() {
     // The name is one of the parts too: first entry, then the info parts.
     ui->menu_View->removeAction(ui->action_Show_Game_Name);
     game_info_menu->addAction(ui->action_Show_Game_Name);
+    action_scroll_long_names = game_info_menu->addAction(QString{});
+    action_scroll_long_names->setCheckable(true);
+    action_scroll_long_names->setChecked(Yuzu::ScrollLongNames());
+    connect(action_scroll_long_names, &QAction::toggled, this, [this](bool checked) {
+        UISettings::values.game_name_overflow = checked ? Settings::GameNameOverflow::Scroll
+                                                        : Settings::GameNameOverflow::Ellipsis;
+        game_list->UpdateIconSizes();
+    });
     game_info_menu->addSeparator();
     for (auto* setting : {&UISettings::values.show_play_time, &UISettings::values.show_add_ons,
                           &UISettings::values.show_size, &UISettings::values.show_types}) {
@@ -1781,6 +1789,7 @@ void MainWindow::ConnectMenuEvents() {
         connect(action, &QAction::toggled, this, [this, setting](bool checked) {
             setting->SetValue(checked);
             UISettings::values.show_library_info = Yuzu::ShowAnyGameInfo();
+            CheckIconSize();
             game_list->UpdateIconSizes();
         });
         game_info_actions.append(action);
@@ -4084,6 +4093,7 @@ void MainWindow::RetranslateLibraryStyleActions() {
         action_next_library_style->setText(tr("Next Style"));
         action_show_library_info->setText(tr("Game Info"));
         ui->action_Show_Game_Name->setText(tr("Name"));
+        action_scroll_long_names->setText(tr("Scroll Long Names"));
         const QString names[] = {tr("Play Time"), tr("Version"), tr("Size"), tr("File Type")};
         for (int i = 0; i < game_info_actions.size() && i < 4; ++i) {
             game_info_actions[i]->setText(names[i]);
@@ -4094,11 +4104,11 @@ void MainWindow::RetranslateLibraryStyleActions() {
 void MainWindow::CheckIconSize() {
     auto& setting = UISettings::CurrentGameIconSize();
 
-    // When in grid/carousel view mode, with text off
-    // there is no point in having icons turned off
+    // In the grid/carousel views, cards without art need some text: the name or any Game Info
+    // part. (Without either, the cards still fall back to the name.)
     const bool icons_required =
         UISettings::values.game_list_mode.GetValue() != Settings::GameListMode::TreeView &&
-        !UISettings::values.show_game_name.GetValue();
+        !UISettings::values.show_game_name.GetValue() && !Yuzu::ShowAnyGameInfo();
     if (icons_required && setting.GetValue() == 0) {
         setting.SetValue(setting.GetDefault());
     }

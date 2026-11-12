@@ -98,9 +98,12 @@ public:
     static void PaintSelection(QPainter* painter, const QRect& rect, const QPalette& palette,
                                int radius, int width = 3);
     /// Text elided to `max_lines` lines inside `rect`.
+    /// Title in up to `max_lines` lines. A line that is too wide ends in "...", unless the
+    /// full text is no wider than the "..." would be: then it is drawn whole, running up to
+    /// `max_overflow` px past the box (default: the width of "...").
     static void PaintName(QPainter* painter, const QRect& rect, const QString& text,
                           const QColor& color, const QFont& font, Qt::Alignment alignment,
-                          int max_lines = 2);
+                          int max_lines = 2, int max_overflow = -1);
     /// Rounded panel with the title on top and the info line under it.
     static void PaintInfoPanel(QPainter* painter, const QRect& rect, const QModelIndex& index,
                                const QPalette& palette, const QFont& font);

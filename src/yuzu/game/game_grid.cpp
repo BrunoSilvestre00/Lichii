@@ -6,6 +6,8 @@
 #include <QScroller>
 #include <QScrollerProperties>
 
+#include <QTimer>
+
 #include "qt_common/config/uisettings.h"
 #include "qt_common/game_list/model.h"
 #include "yuzu/game/common.h"
@@ -16,6 +18,16 @@ GameGrid::GameGrid(QWidget* parent) : QListView{parent} {
     m_gameCard = new GameCard(this);
     setItemDelegate(m_gameCard);
     setObjectName(QStringLiteral("gameGridView"));
+
+    // View > Game Info > Scroll Long Names: repaint only the selected card while its name moves.
+    auto* name_scroll_timer = new QTimer(this);
+    name_scroll_timer->setInterval(33);
+    connect(name_scroll_timer, &QTimer::timeout, this, [this] {
+        if (Yuzu::ScrollLongNames() && currentIndex().isValid() && isVisible()) {
+            viewport()->update(visualRect(currentIndex()));
+        }
+    });
+    name_scroll_timer->start();
 
     setViewMode(QListView::ListMode);
     setResizeMode(QListView::Fixed);
@@ -93,12 +105,12 @@ void GameGrid::UpdateIconSize() {
     // Square artwork, see GameCard::HeightMargin.
     const int widthMargin = Yuzu::CardWidthMargin;
     const int heightMargin =
-        GameCard::HeightMargin(static_cast<int>(display_icon_size), show_game_name,
+        GameCard::HeightMargin(static_cast<int>(Yuzu::CardWidthBase()), show_game_name,
                                Yuzu::ShowAnyGameInfo());
 
     const int view_width = viewport()->width();
 
-    const int min_item_width = display_icon_size + widthMargin;
+    const int min_item_width = static_cast<int>(Yuzu::CardWidthBase()) + widthMargin;
 
     // Leave the same 16 pixels free that the column count assumes: cells filling the viewport
     // to the pixel make the list view wrap one column early.
