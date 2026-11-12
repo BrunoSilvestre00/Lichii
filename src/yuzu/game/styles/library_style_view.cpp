@@ -69,7 +69,8 @@ const StyleInfo* Find(const std::string& id) {
 }
 
 QString DisplayName(const StyleInfo& info) {
-    // QT_TR_NOOP and QT_TRANSLATE_NOOP("LibraryStyles", ...) both leave the source text in place.
+    // Registered with QT_TRANSLATE_NOOP("LibraryStyles", ...); an untranslated name falls back to
+    // the source text.
     const QString translated = QCoreApplication::translate("LibraryStyles", info.display_name);
     return translated.isEmpty() ? QString::fromUtf8(info.display_name) : translated;
 }

@@ -41,8 +41,8 @@ LibraryStyleView* Make(QWidget* parent) {
 
 } // namespace
 
-[[maybe_unused]] static const bool registered =
-    LibraryStyles::Register({"dense_grid", QT_TR_NOOP("Dense grid"), &Make});
+[[maybe_unused]] static const bool registered = LibraryStyles::Register(
+    {"dense_grid", QT_TRANSLATE_NOOP("LibraryStyles", "Dense grid"), &Make});
 
 DenseGridStyle::DenseGridStyle(QWidget* parent) : LibraryStyleView{parent} {
     setFocusPolicy(Qt::StrongFocus);
