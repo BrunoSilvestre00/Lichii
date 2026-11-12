@@ -7,6 +7,7 @@
 
 #include <QAbstractItemModel>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QFileInfo>
 #include <QFontMetrics>
 #include <QHash>
@@ -25,6 +26,7 @@
 #include "qt_common/config/uisettings.h"
 #include "qt_common/game_list/game_list_p.h"
 #include "qt_common/game_list/model.h"
+#include "yuzu/game/common.h"
 #include "yuzu/game/styles/library_style_view.h"
 #include "yuzu/game/styles/style_helpers.h"
 
@@ -417,6 +419,122 @@ void LibraryStyleContext::PaintSelection(QPainter* painter, const QRect& rect,
     const qreal grow = width / 2.0 + 1.0;
     painter->drawRoundedRect(QRectF(rect).adjusted(-grow, -grow, grow, grow), radius + grow,
                              radius + grow);
+    painter->restore();
+}
+
+LibraryStyleContext::InfoLayout LibraryStyleContext::LayoutInfo(const QFontMetrics& metrics,
+                                                                 int width) {
+    InfoLayout layout;
+    const bool on[4] = {UISettings::values.show_play_time.GetValue(),
+                        UISettings::values.show_add_ons.GetValue(),
+                        UISettings::values.show_size.GetValue(),
+                        UISettings::values.show_types.GetValue()};
+    // Worst-case samples, so real values fit the lines picked here.
+    const QString samples[4] = {Tr("%1 played").arg(QStringLiteral("88.8 h")),
+                                QStringLiteral("v8.88.8"), QStringLiteral("88.8 GB"),
+                                QStringLiteral("NSP")};
+    const QString dot = QStringLiteral(" \u00B7 ");
+    const auto pack = [&](const QString& play, std::array<int, 4>* line_of) {
+        int line = 0;
+        int widest = 0;
+        QString current;
+        bool any = false;
+        for (int kind = 0; kind < 4; ++kind) {
+            if (!on[kind]) {
+                continue;
+            }
+            any = true;
+            const QString part = kind == 0 ? play : samples[kind];
+            const QString joined = current.isEmpty() ? part : current + dot + part;
+            if (!current.isEmpty() && metrics.horizontalAdvance(joined) > width) {
+                ++line;
+                current = part;
+            } else {
+                current = joined;
+            }
+            widest = std::max(widest, metrics.horizontalAdvance(current));
+            (*line_of)[static_cast<size_t>(kind)] = line;
+        }
+        return std::pair<int, bool>{any ? line + 1 : 0, widest <= width};
+    };
+    std::array<int, 4> long_lines{-1, -1, -1, -1};
+    std::array<int, 4> short_lines{-1, -1, -1, -1};
+    const auto [long_count, long_fits] = pack(samples[0], &long_lines);
+    const auto [short_count, short_fits] = pack(QStringLiteral("88.8 h"), &short_lines);
+    layout.short_play = on[0] && !(long_fits && long_count <= short_count);
+    layout.lines = layout.short_play ? short_count : long_count;
+    layout.line_of = layout.short_play ? short_lines : long_lines;
+    return layout;
+}
+
+QStringList LibraryStyleContext::InfoLines(const QModelIndex& index, const InfoLayout& layout) {
+    const GameInfo game = Info(index);
+    if (!game.is_game || layout.lines <= 0) {
+        return {};
+    }
+    const QString parts[4] = {
+        layout.short_play || game.play_time_seconds == 0 ? game.play_time_text
+                                                         : Tr("%1 played").arg(game.play_time_text),
+        game.update_version.isEmpty() ? Tr("Base") : QStringLiteral("v") + game.update_version,
+        game.size_text.isEmpty() ? QStringLiteral("NaN GB") : game.size_text,
+        game.file_type,
+    };
+    std::vector<QStringList> line_parts(static_cast<size_t>(layout.lines));
+    for (int kind = 0; kind < 4; ++kind) {
+        const int line = layout.line_of[static_cast<size_t>(kind)];
+        if (line >= 0 && line < layout.lines && !parts[kind].isEmpty()) {
+            line_parts[static_cast<size_t>(line)] << parts[kind];
+        }
+    }
+    QStringList lines;
+    for (const QStringList& parts_of_line : line_parts) {
+        lines << parts_of_line.join(QStringLiteral(" \u00B7 "));
+    }
+    return lines;
+}
+
+int LibraryStyleContext::TitleLines(int max_lines) {
+    return Yuzu::ScrollLongNames() ? 1 : max_lines;
+}
+
+void LibraryStyleContext::PaintTitle(QPainter* painter, const QRect& rect, const QString& text,
+                                     const QColor& color, const QFont& font,
+                                     Qt::Alignment alignment, int max_lines, int max_overflow,
+                                     bool selected) {
+    if (!Yuzu::ScrollLongNames()) {
+        PaintName(painter, rect, text, color, font, alignment, max_lines, max_overflow);
+        return;
+    }
+    const QFontMetrics fm(font);
+    const int slack =
+        std::max(0, max_overflow < 0 ? fm.horizontalAdvance(QChar(0x2026))
+                                     : std::min(max_overflow, fm.horizontalAdvance(QChar(0x2026))));
+    const int extra = fm.horizontalAdvance(text) - rect.width();
+    const QRect line(rect.left(), rect.top(), rect.width(), std::min(rect.height(), fm.lineSpacing()));
+    if (!selected || extra <= slack) {
+        PaintName(painter, line, text, color, font, alignment, 1, max_overflow);
+        return;
+    }
+    // Wait, glide to the end at 40 px/s, wait, glide back.
+    constexpr qint64 pause = 1200;
+    constexpr qint64 ms_per_px = 25;
+    const qint64 travel = extra * ms_per_px;
+    const qint64 t = QDateTime::currentMSecsSinceEpoch() % (2 * (pause + travel));
+    qint64 x = 0;
+    if (t >= pause && t < pause + travel) {
+        x = (t - pause) / ms_per_px;
+    } else if (t >= pause + travel && t < 2 * pause + travel) {
+        x = extra;
+    } else if (t >= 2 * pause + travel) {
+        x = extra - (t - 2 * pause - travel) / ms_per_px;
+    }
+    painter->save();
+    painter->setClipRect(line);
+    painter->setFont(font);
+    painter->setPen(color);
+    painter->drawText(QRect(line.left() - static_cast<int>(x), line.top(),
+                            fm.horizontalAdvance(text) + 2, line.height()),
+                      Qt::AlignLeft | (alignment & Qt::AlignVertical_Mask), text);
     painter->restore();
 }
 

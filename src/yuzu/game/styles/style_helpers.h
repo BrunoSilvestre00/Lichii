@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <array>
+
 #include <QColor>
 #include <QFont>
 #include <QModelIndex>
@@ -97,7 +99,23 @@ public:
     /// Accent ring around `rect` (drawn just outside it), the selection mark of every style.
     static void PaintSelection(QPainter* painter, const QRect& rect, const QPalette& palette,
                                int radius, int width = 3);
-    /// Text elided to `max_lines` lines inside `rect`.
+    /// Where each Game Info part goes (play time, version, size, type; -1 when off), decided
+    /// once per view from the text width so a part never moves between items.
+    struct InfoLayout {
+        int lines = 0;
+        std::array<int, 4> line_of{-1, -1, -1, -1};
+        bool short_play = false; ///< "4.4 h" instead of "4.4 h played" for the whole view
+    };
+    static InfoLayout LayoutInfo(const QFontMetrics& metrics, int width);
+    /// The Game Info lines of one game for `layout`; "Base" / "NaN GB" keep missing parts.
+    static QStringList InfoLines(const QModelIndex& index, const InfoLayout& layout);
+    /// Title in up to `max_lines` lines, or with View > Game Info > Scroll Long Names one line
+    /// whose text glides back and forth when `selected` (repaint it on a ~30 ms timer).
+    static void PaintTitle(QPainter* painter, const QRect& rect, const QString& text,
+                           const QColor& color, const QFont& font, Qt::Alignment alignment,
+                           int max_lines, int max_overflow, bool selected);
+    /// Lines a title takes: 1 with Scroll Long Names, otherwise `max_lines`.
+    static int TitleLines(int max_lines);
     /// Title in up to `max_lines` lines. A line that is too wide ends in "...", unless the
     /// full text is no wider than the "..." would be: then it is drawn whole, running up to
     /// `max_overflow` px past the box (default: the width of "...").

@@ -25,6 +25,7 @@
 
 #include "qt_common/config/uisettings.h"
 #include "qt_common/game_list/game_list_p.h"
+#include "yuzu/game/common.h"
 #include "yuzu/game/styles/canvas_style.h"
 #include "yuzu/game/styles/style_helpers.h"
 
@@ -53,39 +54,6 @@ bool IsFolderType(GameListItemType type) {
 
 GameListItemType TypeOf(const QModelIndex& index) {
     return index.data(GameListItem::TypeRole).value<GameListItemType>();
-}
-
-struct CanvasInfo {
-    QString title;
-    /// "1.9 h played · v1.3.0"
-    QString line;
-};
-
-CanvasInfo ReadInfo(const QModelIndex& index) {
-    const LibraryStyles::GameInfo shared = LibraryStyleContext::Info(index);
-    return {shared.title, shared.info_line};
-}
-
-// Greedy two line wrap: the first line breaks at the last space that fits, the rest is elided.
-void TwoLines(const QString& text, const QFontMetrics& fm, int width, QString* first,
-              QString* second) {
-    *first = text;
-    second->clear();
-    if (fm.horizontalAdvance(text) <= width) {
-        return;
-    }
-    int fit = 0;
-    for (int i = 1; i <= text.size(); ++i) {
-        if (fm.horizontalAdvance(text.left(i)) > width) {
-            break;
-        }
-        fit = i;
-    }
-    fit = std::max(fit, 1);
-    const int space = text.lastIndexOf(QLatin1Char(' '), fit - 1);
-    const int cut = space > 0 ? space : fit;
-    *first = text.left(cut).trimmed();
-    *second = fm.elidedText(text.mid(cut).trimmed(), Qt::ElideRight, width);
 }
 
 QColor HueColor(uint seed, int saturation, int lightness) {
@@ -129,6 +97,16 @@ CanvasStyle::CanvasStyle(QWidget* parent) : LibraryStyleView(parent) {
     setObjectName(QStringLiteral("canvasLibraryStyle"));
     setFocusPolicy(Qt::StrongFocus);
     setAutoFillBackground(false);
+
+    // View > Game Info > Scroll Long Names: repaint the selected tile while its name moves.
+    auto* name_scroll_timer = new QTimer(this);
+    name_scroll_timer->setInterval(33);
+    connect(name_scroll_timer, &QTimer::timeout, this, [this] {
+        if (Yuzu::ScrollLongNames() && show_names && current >= 0 && isVisible()) {
+            update(TileRect(current).translated(0, -scroll).adjusted(-24, -24, 24, 24));
+        }
+    });
+    name_scroll_timer->start();
 }
 
 CanvasStyle::~CanvasStyle() = default;
@@ -256,7 +234,7 @@ CanvasStyle::Layout CanvasStyle::ComputeLayout() const {
     const int target = LibraryStyleContext::ArtSize();
     const int avail = std::max(1, width() - 2 * SidePadding);
     l.columns = std::max(1, (avail + l.gap) / (target + l.gap));
-    const int tile = std::clamp(target, 64, std::max(64, avail));
+    const int tile = std::min(target, avail);
     l.tile = tile;
     const int grid_width = l.columns * tile + (l.columns - 1) * l.gap;
     l.margin = std::max(SidePadding, (width() - grid_width) / 2);
@@ -616,32 +594,56 @@ void CanvasStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
             }
             p.setPen(Qt::NoPen);
 
-            p.drawPixmap(rect.topLeft(), TileArt(index, layout.tile, radius, dark));
+            // The art fills the (lifted) tile, so art, clip and ring always line up.
+            {
+                const QPixmap art = TileArt(index, layout.tile, radius, dark);
+                p.drawPixmap(rectf, art, QRectF(QPointF(0, 0), QSizeF(art.size())));
+            }
             p.save();
             if (selected && (show_names || show_info)) {
                 QPainterPath clip;
                 clip.addRoundedRect(rectf, radius, radius);
                 p.setClipPath(clip);
-                const CanvasInfo info = ReadInfo(index);
-                const int pad = std::max(8, layout.tile / 18);
+                // Text and padding follow the tile size (the same for every tile of the view):
+                // 7 px on the smallest tiles, up to 20 px.
+                const int pad = std::clamp(layout.tile / 18, 3, 12);
                 QFont title_font = font();
                 title_font.setFamilies({QStringLiteral("Nunito"), title_font.family()});
                 title_font.setWeight(QFont::Black);
-                title_font.setPixelSize(std::clamp(layout.tile / 12, 11, 20));
+                title_font.setPixelSize(std::clamp(4 + layout.tile / 16, 7, 20));
                 QFont sub_font = title_font;
                 sub_font.setWeight(QFont::ExtraBold);
-                sub_font.setPixelSize(std::clamp(layout.tile / 15, 9, 16));
+                sub_font.setPixelSize(std::max(6, title_font.pixelSize() - 2));
                 const QFontMetrics tfm(title_font);
                 const QFontMetrics sfm(sub_font);
                 const int text_w = rect.width() - 2 * pad;
-                QString line1;
-                QString line2;
+                // Same title and Game Info rules as the cards (style_helpers).
+                const QString title = LibraryStyleContext::Info(index).title;
+                QStringList info_lines =
+                    show_info ? LibraryStyleContext::InfoLines(
+                                    index, LibraryStyleContext::LayoutInfo(sfm, text_w))
+                              : QStringList{};
+                int title_lines = 0;
                 if (show_names) {
-                    TwoLines(info.title, tfm, text_w, &line1, &line2);
+                    title_lines = tfm.horizontalAdvance(title) <= text_w
+                                      ? 1
+                                      : LibraryStyleContext::TitleLines(2);
                 }
-                const int lines = !show_names ? 0 : line2.isEmpty() ? 1 : 2;
-                const int sub_h = show_info ? sfm.lineSpacing() : 0;
-                const int text_h = lines * tfm.lineSpacing() + sub_h + 4;
+                // Never taller than the tile: the title drops to one line first, then the info
+                // keeps the lines that fit.
+                const int room = rect.height() - 2 * pad - 4;
+                const auto needed = [&] {
+                    return title_lines * tfm.lineSpacing() +
+                           static_cast<int>(info_lines.size()) * sfm.lineSpacing();
+                };
+                if (needed() > room && title_lines > 1) {
+                    title_lines = 1;
+                }
+                while (needed() > room && !info_lines.isEmpty()) {
+                    info_lines.removeLast();
+                }
+                const int info_h = static_cast<int>(info_lines.size()) * sfm.lineSpacing();
+                const int text_h = title_lines * tfm.lineSpacing() + info_h + 4;
                 const int grad_h = text_h + pad * 3;
                 const QRectF grad_rect(rectf.left(), rectf.bottom() - grad_h, rectf.width(),
                                        grad_h);
@@ -651,32 +653,32 @@ void CanvasStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
                 g.setColorAt(1.0, QColor(0, 0, 0, 225));
                 p.fillRect(grad_rect, g);
 
-                p.setPen(Qt::white);
+                int y = rect.bottom() - pad - text_h + 4;
+                if (title_lines > 0) {
+                    LibraryStyleContext::PaintTitle(
+                        &p, QRect(rect.left() + pad, y, text_w, title_lines * tfm.lineSpacing()),
+                        title, Qt::white, title_font, Qt::AlignHCenter | Qt::AlignTop,
+                        title_lines, pad - 2, true);
+                    y += title_lines * tfm.lineSpacing();
+                }
                 p.setFont(sub_font);
-                const int sub_y = rect.bottom() - pad - sub_h;
-                if (show_info) {
-                    p.drawText(QRect(rect.left() + pad, sub_y, text_w, sfm.lineSpacing()),
+                p.setPen(Qt::white);
+                for (const QString& line : info_lines) {
+                    p.drawText(QRect(rect.left() + pad, y, text_w, sfm.lineSpacing()),
                                Qt::AlignHCenter | Qt::AlignVCenter,
-                               sfm.elidedText(info.line, Qt::ElideRight, text_w));
-                }
-                p.setFont(title_font);
-                int y = sub_y - 2 - lines * tfm.lineSpacing();
-                if (show_names) {
-                    p.drawText(QRect(rect.left() + pad, y, text_w, tfm.lineSpacing()),
-                               Qt::AlignHCenter | Qt::AlignVCenter, line1);
-                }
-                if (!line2.isEmpty()) {
-                    y += tfm.lineSpacing();
-                    p.drawText(QRect(rect.left() + pad, y, text_w, tfm.lineSpacing()),
-                               Qt::AlignHCenter | Qt::AlignVCenter, line2);
+                               sfm.elidedText(line, Qt::ElideRight, text_w));
+                    y += sfm.lineSpacing();
                 }
             }
             p.restore();
 
             if (selected) {
+                // S5: ring just outside the tile, concentric corners.
+                const qreal pen = 3.5;
                 p.setBrush(Qt::NoBrush);
-                p.setPen(QPen(accent, 3.5));
-                p.drawRoundedRect(rectf.adjusted(-6, -6, 6, 6), radius + 6, radius + 6);
+                p.setPen(QPen(accent, pen));
+                p.drawRoundedRect(rectf.adjusted(-pen / 2, -pen / 2, pen / 2, pen / 2),
+                                  radius + pen / 2, radius + pen / 2);
             }
         }
     }
