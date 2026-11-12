@@ -20,7 +20,6 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPalette>
-#include <QRadialGradient>
 #include <QResizeEvent>
 #include <QStringList>
 #include <QTimer>
@@ -30,6 +29,7 @@
 #include "qt_common/game_list/game_list_p.h"
 #include "qt_common/game_list/model.h"
 #include "yuzu/game/styles/channel_grid_style.h"
+#include "yuzu/game/styles/style_helpers.h"
 
 namespace LibraryStyles {
 
@@ -46,10 +46,6 @@ int ItemType(const QModelIndex& index) {
     return index.data(GameListItem::TypeRole).toInt();
 }
 
-bool IsAddFolder(const QModelIndex& index) {
-    return ItemType(index) == static_cast<int>(GameListItemType::AddDir);
-}
-
 bool IsFolder(const QModelIndex& index) {
     const int type = ItemType(index);
     return type == static_cast<int>(GameListItemType::CustomDir) ||
@@ -63,37 +59,22 @@ bool IsGame(const QModelIndex& index) {
 }
 
 QString TitleOf(const QModelIndex& index) {
-    if (IsAddFolder(index)) {
-        return QObject::tr("Add games folder");
-    }
-    if (!IsGame(index)) {
-        return index.data(Qt::DisplayRole).toString();
-    }
-    const QString full = index.data(GameListItemPath::TitleRole).toString();
-    return full.isEmpty() ? index.data(Qt::DisplayRole).toString().section(QLatin1Char('\n'), 0, 0)
-                          : full;
+    return LibraryStyleContext::Title(index);
 }
 
-QString VersionOf(const QModelIndex& index) {
-    // The tooltip is "Play Time...\nVersion: x.y.z"; keep what follows the last colon.
-    const QString tip = index.data(Qt::ToolTipRole).toString();
-    const QString last = tip.section(QLatin1Char('\n'), -1);
-    const qsizetype colon = last.lastIndexOf(QLatin1Char(':'));
-    return colon < 0 ? QString{} : last.mid(colon + 1).trimmed();
-}
-
-QString PlayedOf(const QModelIndex& index) {
-    const QModelIndex cell = index.sibling(index.row(), GameListModel::COLUMN_PLAY_TIME);
-    if (!cell.isValid()) {
-        // The model passed in has no play time column: the tooltip carries the readable text.
-        const QString line = index.data(Qt::ToolTipRole).toString().section(QLatin1Char('\n'), 0, 0);
-        return line.isEmpty() ? QObject::tr("Never played") : line;
+/// True when a dataChanged with these roles can change the cover art or the title.
+bool ArtRolesChanged(const QList<int>& roles) {
+    if (roles.isEmpty()) {
+        return true;
     }
-    const qulonglong seconds = cell.data(GameListItemPlayTime::PlayTimeRole).toULongLong();
-    if (seconds == 0) {
-        return QObject::tr("Never played");
+    for (const int role : roles) {
+        if (role == Qt::DecorationRole || role == Qt::DisplayRole ||
+            role == GameListItemPath::CardIconRole || role == GameListItemPath::HasIconRole ||
+            role == GameListItemPath::TitleRole) {
+            return true;
+        }
     }
-    return QObject::tr("%1 h played").arg(QLocale().toString(seconds / 3600.0, 'f', 1));
+    return false;
 }
 
 } // namespace
@@ -133,10 +114,14 @@ void ChannelGridStyle::SetModel(QAbstractItemModel* new_model) {
         connect(model, &QAbstractItemModel::rowsInserted, this, rebuild);
         connect(model, &QAbstractItemModel::rowsRemoved, this, rebuild);
         connect(model, &QAbstractItemModel::rowsMoved, this, rebuild);
-        connect(model, &QAbstractItemModel::dataChanged, this, [this] {
-            cover_cache.clear();
-            update();
-        });
+        // Play time updates leave the art alone: only icon or title changes drop the cache.
+        connect(model, &QAbstractItemModel::dataChanged, this,
+                [this](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
+                    if (ArtRolesChanged(roles)) {
+                        cover_cache.clear();
+                    }
+                    update();
+                });
     }
     Rebuild();
 }
@@ -181,7 +166,6 @@ void ChannelGridStyle::Rebuild() {
         // Never set, or the row went away: stay near the last known position.
         current = entries[static_cast<size_t>(std::clamp(current_hint, 0, count - 1))];
     }
-    cover_cache.clear();
     ClampScroll();
     if (QModelIndex{current} != before) {
         emit CurrentChanged(QModelIndex{current});
@@ -244,7 +228,9 @@ ChannelGridStyle::Layout ChannelGridStyle::ComputeLayout() const {
     l.row_h = l.tile_h + Gap + (show_names ? NameHeight : 0);
     l.top = l.margin;
     l.dock_h = std::clamp(h / 5, 110, 200);
-    l.curve = l.dock_h * 14 / 100;
+    l.dock_h = std::clamp(h / 6, 84, 150);
+    l.curve = 12; // space kept above the dock
+
     l.dock_top = h - l.dock_h;
     l.view_h = std::max(1, l.dock_top);
     return l;
@@ -430,34 +416,67 @@ void ChannelGridStyle::wheelEvent(QWheelEvent* event) {
     event->accept();
 }
 
-QPixmap ChannelGridStyle::CoverFor(const QModelIndex& index, const QSize& size, qreal dpr) {
-    if (!IsGame(index) || !index.data(GameListItemPath::HasIconRole).toBool()) {
-        return {};
-    }
-    const QString key = QStringLiteral("%1|%2|%3x%4")
+QPixmap ChannelGridStyle::CoverFor(const QModelIndex& index, const QSize& size, qreal radius,
+                                   qreal dpr) {
+    const QPalette pal = palette();
+    const QColor accent = pal.highlight().color();
+    const QString key = QStringLiteral("%1|%2|%3x%4|%5|%6|%7")
                             .arg(index.data(GameListItemPath::FullPathRole).toString())
                             .arg(index.data(GameListItemPath::ProgramIdRole).toULongLong())
                             .arg(size.width())
-                            .arg(size.height());
+                            .arg(size.height())
+                            .arg(radius)
+                            .arg(dpr)
+                            .arg(accent.rgba());
     if (const QPixmap* cached = cover_cache.object(key)) {
         return *cached;
     }
-    QPixmap source = index.data(GameListItemPath::CardIconRole).value<QPixmap>();
-    if (source.isNull()) {
-        source = index.data(Qt::DecorationRole).value<QPixmap>();
-    }
-    if (source.isNull()) {
-        return {};
-    }
-    // Crop to fill: scale so both sides cover the target, then cut the centre.
     const QSize device(std::max(1, int(std::lround(size.width() * dpr))),
                        std::max(1, int(std::lround(size.height() * dpr))));
-    const QPixmap scaled =
-        source.scaled(device, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
-    QPixmap out = scaled.copy(QRect((scaled.width() - device.width()) / 2,
-                                    (scaled.height() - device.height()) / 2, device.width(),
-                                    device.height()));
+    QPixmap out(device);
     out.setDevicePixelRatio(dpr);
+    out.fill(Qt::transparent);
+    QPainter p(&out);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    const QRectF rect(QPointF(0, 0), QSizeF(size));
+    QPainterPath clip;
+    clip.addRoundedRect(rect, radius, radius);
+    p.setClipPath(clip);
+
+    QPixmap source;
+    if (IsGame(index) && index.data(GameListItemPath::HasIconRole).toBool()) {
+        source = index.data(GameListItemPath::CardIconRole).value<QPixmap>();
+        if (source.isNull()) {
+            source = index.data(Qt::DecorationRole).value<QPixmap>();
+        }
+    }
+    if (!source.isNull()) {
+        // Crop to fill: scale so both sides cover the target, then cut the centre.
+        const QPixmap scaled =
+            source.scaled(device, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+        p.drawPixmap(rect, scaled,
+                     QRectF((scaled.width() - device.width()) / 2.0,
+                            (scaled.height() - device.height()) / 2.0, device.width(),
+                            device.height()));
+    } else {
+        // Default art: a gradient from the palette with the initial of the title.
+        const bool dark = IsDark(pal);
+        QLinearGradient bg(rect.topLeft(), rect.bottomRight());
+        bg.setColorAt(0.0, accent.lighter(dark ? 115 : 135));
+        bg.setColorAt(1.0, accent.darker(dark ? 170 : 125));
+        p.fillRect(rect, bg);
+        const QString title = TitleOf(index);
+        QFont f = font();
+        f.setBold(true);
+        f.setPixelSize(std::max(12, int(rect.height() * 0.42)));
+        p.setFont(f);
+        QColor ink = pal.highlightedText().color();
+        ink.setAlpha(210);
+        p.setPen(ink);
+        p.drawText(rect, Qt::AlignCenter, title.isEmpty() ? QString{} : title.left(1).toUpper());
+    }
+    p.end();
     const int cost = std::max(1, device.width() * device.height() * 4 / 1024);
     cover_cache.insert(key, new QPixmap(out), cost);
     return out;
@@ -473,10 +492,8 @@ void ChannelGridStyle::PaintTile(QPainter& p, const Layout& l, int row, bool sel
 
     // Soft drop shadow.
     p.setPen(Qt::NoPen);
-    for (int i = 3; i >= 1; --i) {
-        p.setBrush(QColor(0, 0, 0, dark ? 28 : 14));
-        p.drawRoundedRect(tile.adjusted(-i, -i, i, i).translated(0, 3 + i), radius + i, radius + i);
-    }
+    p.setBrush(QColor(0, 0, 0, dark ? 60 : 32));
+    p.drawRoundedRect(tile.adjusted(-2, -2, 2, 2).translated(0, 5), radius + 2, radius + 2);
 
     // Glow for the selected tile.
     if (selected) {
@@ -503,34 +520,8 @@ void ChannelGridStyle::PaintTile(QPainter& p, const Layout& l, int row, bool sel
     const qreal bezel = std::max(3.0, tile.height() * 0.035);
     const QRectF art = tile.adjusted(bezel, bezel, -bezel, -bezel);
     const qreal art_radius = std::max(2.0, radius - bezel * 0.6);
-    QPainterPath clip;
-    clip.addRoundedRect(art, art_radius, art_radius);
-
-    p.save();
-    p.setClipPath(clip);
-    const QPixmap cover = CoverFor(index, art.size().toSize(), devicePixelRatioF());
-    if (!cover.isNull()) {
-        p.drawPixmap(art.topLeft(), cover);
-    } else {
-        // Default art: a gradient from the palette with the initial of the title.
-        QLinearGradient bg(art.topLeft(), art.bottomRight());
-        bg.setColorAt(0.0, accent.lighter(dark ? 115 : 135));
-        bg.setColorAt(1.0, accent.darker(dark ? 170 : 125));
-        p.fillRect(art, bg);
-        const QString title = TitleOf(index);
-        const QString glyph = IsAddFolder(index)
-                                  ? QStringLiteral("+")
-                                  : (title.isEmpty() ? QString{} : title.left(1).toUpper());
-        QFont f = font();
-        f.setBold(true);
-        f.setPixelSize(std::max(12, int(art.height() * 0.42)));
-        p.setFont(f);
-        QColor ink = pal.highlightedText().color();
-        ink.setAlpha(210);
-        p.setPen(ink);
-        p.drawText(art, Qt::AlignCenter, glyph);
-    }
-    p.restore();
+    p.drawPixmap(art.topLeft(), CoverFor(index, art.size().toSize(), art_radius,
+                                         devicePixelRatioF()));
 
     // Inner bezel line around the art.
     QColor inner = Qt::black;
@@ -538,24 +529,6 @@ void ChannelGridStyle::PaintTile(QPainter& p, const Layout& l, int row, bool sel
     p.setPen(QPen(inner, 1.0));
     p.setBrush(Qt::NoBrush);
     p.drawRoundedRect(art, art_radius, art_radius);
-
-    // Glossy highlight over the upper part of the art.
-    p.save();
-    p.setClipPath(clip);
-    QPainterPath gloss;
-    gloss.moveTo(art.left(), art.top());
-    gloss.lineTo(art.right(), art.top());
-    gloss.lineTo(art.right(), art.top() + art.height() * 0.30);
-    gloss.quadTo(art.center().x(), art.top() + art.height() * 0.52, art.left(),
-                 art.top() + art.height() * 0.30);
-    gloss.closeSubpath();
-    QLinearGradient gl(art.topLeft(), QPointF(art.left(), art.top() + art.height() * 0.5));
-    gl.setColorAt(0.0, QColor(255, 255, 255, dark ? 50 : 78));
-    gl.setColorAt(1.0, QColor(255, 255, 255, 0));
-    p.setPen(Qt::NoPen);
-    p.setBrush(gl);
-    p.drawPath(gloss);
-    p.restore();
 
     if (selected) {
         p.setPen(QPen(accent, 3.0));
@@ -581,47 +554,24 @@ void ChannelGridStyle::PaintDock(QPainter& p, const Layout& l) {
     const bool dark = IsDark(pal);
     const int w = width();
     const int h = height();
-    const qreal top = l.dock_top;
+    const int top = l.dock_top;
+    const QRect dock(0, top, w, h - top);
 
-    QPainterPath dock;
-    dock.moveTo(0, top + l.curve);
-    dock.quadTo(w / 2.0, top - l.curve, w, top + l.curve);
-    dock.lineTo(w, h);
-    dock.lineTo(0, h);
-    dock.closeSubpath();
-
+    // Soft shade above the bar, then the bar with an accent line on top.
+    QLinearGradient shade(0, top - 14, 0, top);
+    shade.setColorAt(0.0, QColor(0, 0, 0, 0));
+    shade.setColorAt(1.0, QColor(0, 0, 0, dark ? 70 : 30));
+    p.fillRect(QRect(0, top - 14, w, 14), shade);
     const QColor base = pal.window().color();
-    QLinearGradient fill(0, top - l.curve, 0, h);
+    QLinearGradient fill(0, top, 0, h);
     fill.setColorAt(0.0, dark ? base.lighter(135) : base.lighter(104));
     fill.setColorAt(1.0, dark ? base.lighter(112) : base.darker(106));
-
-    // Shadow cast upward on the tiles.
-    p.setPen(Qt::NoPen);
-    for (int i = 4; i >= 1; --i) {
-        p.setBrush(QColor(0, 0, 0, dark ? 22 : 10));
-        p.save();
-        p.translate(0, -i * 2);
-        p.drawPath(dock);
-        p.restore();
-    }
-    p.setBrush(fill);
+    p.fillRect(dock, fill);
     QColor edge = pal.highlight().color();
-    edge.setAlpha(dark ? 110 : 90);
-    p.setPen(QPen(edge, 1.5));
-    p.drawPath(dock);
+    edge.setAlpha(dark ? 160 : 130);
+    p.fillRect(QRect(0, top, w, 2), edge);
 
-    // Faint horizontal lines on the dock.
-    QColor line = pal.text().color();
-    line.setAlpha(dark ? 14 : 10);
-    p.save();
-    p.setClipPath(dock);
-    p.setPen(QPen(line, 1.0));
-    for (int y = int(top) + 6; y < h; y += 6) {
-        p.drawLine(0, y, w, y);
-    }
-    p.restore();
-
-    const int mid_y = int(top) + l.curve + (l.dock_h - l.curve) / 2;
+    const int mid_y = top + l.dock_h / 2;
     const int margin = l.margin;
 
     // Centre: clock and date.
@@ -630,9 +580,9 @@ void ChannelGridStyle::PaintDock(QPainter& p, const Layout& l) {
     const QString date_text = locale.toString(QDate::currentDate(), QLocale::LongFormat);
     QFont clock_font = font();
     clock_font.setBold(true);
-    clock_font.setPixelSize(std::clamp(l.dock_h * 30 / 100, 20, 64));
+    clock_font.setPixelSize(std::clamp(l.dock_h * 30 / 100, 20, 48));
     QFont date_font = font();
-    date_font.setPixelSize(std::clamp(l.dock_h * 11 / 100, 11, 20));
+    date_font.setPixelSize(std::clamp(l.dock_h * 11 / 100, 11, 18));
     const int clock_h = QFontMetrics(clock_font).height();
     const int date_h = QFontMetrics(date_font).height();
     const int block_h = clock_h + date_h;
@@ -652,29 +602,16 @@ void ChannelGridStyle::PaintDock(QPainter& p, const Layout& l) {
 
     const int clock_half = QFontMetrics(clock_font).horizontalAdvance(time_text) / 2;
 
-    // Left: round app name button (branding only).
-    const int diameter = std::clamp(l.dock_h * 52 / 100, 48, 120);
-    const QRectF button(margin + 8, mid_y - diameter / 2.0, diameter, diameter);
-    if (button.right() < w / 2 - clock_half - 8) {
-        const QColor accent = pal.highlight().color();
-        QRadialGradient rg(button.center() - QPointF(diameter * 0.15, diameter * 0.2),
-                           diameter * 0.75);
-        rg.setColorAt(0.0, accent.lighter(130));
-        rg.setColorAt(1.0, accent.darker(dark ? 150 : 115));
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor(0, 0, 0, dark ? 40 : 22));
-        p.drawEllipse(button.translated(0, 3));
-        p.setBrush(rg);
-        QColor ring = pal.highlightedText().color();
-        ring.setAlpha(110);
-        p.setPen(QPen(ring, 1.5));
-        p.drawEllipse(button);
+    // Left: the number of games.
+    {
         QFont f = font();
-        f.setBold(true);
-        f.setPixelSize(std::clamp(diameter * 22 / 100, 10, 22));
+        f.setPixelSize(std::clamp(l.dock_h * 13 / 100, 11, 16));
         p.setFont(f);
-        p.setPen(pal.highlightedText().color());
-        p.drawText(button, Qt::AlignCenter, tr("Lichii"));
+        const QRect count_rect(margin + 8, top, std::max(0, w / 2 - clock_half - margin - 24),
+                               l.dock_h);
+        p.drawText(count_rect, Qt::AlignLeft | Qt::AlignVCenter,
+                   QFontMetrics(f).elidedText(tr("%n game(s)", nullptr, RowCount()),
+                                              Qt::ElideRight, count_rect.width()));
     }
 
     // Right: info card for the selected game.
@@ -694,11 +631,7 @@ void ChannelGridStyle::PaintDock(QPainter& p, const Layout& l) {
             p.setPen(QPen(outline, 2.0));
             p.drawRoundedRect(card, 14, 14);
 
-            QStringList meta{PlayedOf(index)};
-            const QString version = VersionOf(index);
-            if (!version.isEmpty()) {
-                meta << tr("v%1").arg(version);
-            }
+            const QString meta = LibraryStyleContext::InfoLine(index);
             QFont tf = font();
             tf.setBold(true);
             tf.setPixelSize(std::clamp(card_h * 20 / 100, 11, 18));
@@ -719,7 +652,7 @@ void ChannelGridStyle::PaintDock(QPainter& p, const Layout& l) {
             p.setPen(sub);
             p.drawText(QRectF(inner.left(), inner.bottom() - meta_h, inner.width(), meta_h),
                        Qt::AlignHCenter | Qt::AlignVCenter,
-                       meta.join(QStringLiteral(" · ")));
+                       meta);
         }
     }
 }
@@ -732,18 +665,24 @@ void ChannelGridStyle::paintEvent(QPaintEvent*) {
     const bool dark = IsDark(pal);
     const Layout l = ComputeLayout();
 
-    // Background: a gentle vertical gradient with faint horizontal lines.
+    // Background: a gentle vertical gradient, rendered once per size and palette.
     const QColor base = pal.window().color();
-    QLinearGradient bg(0, 0, 0, height());
-    bg.setColorAt(0.0, dark ? base.lighter(118) : base.lighter(105));
-    bg.setColorAt(1.0, dark ? base : base.darker(104));
-    p.fillRect(rect(), bg);
-    QColor line = pal.text().color();
-    line.setAlpha(dark ? 12 : 9);
-    p.setPen(QPen(line, 1.0));
-    for (int y = 3; y < l.dock_top + l.curve; y += 5) {
-        p.drawLine(0, y, width(), y);
+    const qreal dpr = devicePixelRatioF();
+    if (background.isNull() || background_size != size() || background_dpr != dpr ||
+        background_base != base.rgba()) {
+        background = QPixmap(QSize(std::max(1, static_cast<int>(std::ceil(width() * dpr))),
+                                   std::max(1, static_cast<int>(std::ceil(height() * dpr)))));
+        background.setDevicePixelRatio(dpr);
+        QPainter bp(&background);
+        QLinearGradient bg(0, 0, 0, height());
+        bg.setColorAt(0.0, dark ? base.lighter(118) : base.lighter(105));
+        bg.setColorAt(1.0, dark ? base : base.darker(104));
+        bp.fillRect(QRect(0, 0, width(), height()), bg);
+        background_size = size();
+        background_dpr = dpr;
+        background_base = base.rgba();
     }
+    p.drawPixmap(0, 0, background);
 
     // Only the rows in view are painted.
     const int count = RowCount();
@@ -785,7 +724,8 @@ LibraryStyleView* Make(QWidget* parent) {
 }
 
 [[maybe_unused]] const bool registered =
-    LibraryStyles::Register({"channel_grid", QT_TR_NOOP("Channels"), &Make});
+    LibraryStyles::Register(
+        {"channel_grid", QT_TRANSLATE_NOOP("LibraryStyles", "Channels"), &Make});
 
 } // namespace
 
