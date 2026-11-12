@@ -609,7 +609,11 @@ QPixmap CarouselStyle::Reflection(const QPixmap& cover) {
     }
     const QImage source = cover.toImage().convertToFormat(QImage::Format_ARGB32_Premultiplied);
     const int h = std::max(1, static_cast<int>(source.height() * 0.22));
+#if QT_VERSION >= QT_VERSION_CHECK(6, 9, 0)
     QImage part = source.copy(0, source.height() - h, source.width(), h).flipped(Qt::Vertical);
+#else
+    QImage part = source.copy(0, source.height() - h, source.width(), h).mirrored(false, true);
+#endif
     {
         // Strongest next to the cover (28 %), gone by 80 % of the way down.
         QPainter p(&part);
