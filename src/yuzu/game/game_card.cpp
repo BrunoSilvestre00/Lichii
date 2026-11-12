@@ -263,6 +263,10 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
             title = full.isEmpty()
                         ? index.data(Qt::DisplayRole).toString().section(QLatin1Char('\n'), 0, 0)
                         : full;
+            if (title.isEmpty()) {
+                // No metadata title: show the file name, like the library styles do.
+                title = PlaceholderTitle(index);
+            }
         }
 
         painter->setPen(titleColor);
