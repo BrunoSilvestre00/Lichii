@@ -71,26 +71,6 @@ bool ArtRolesChanged(const QList<int>& roles) {
 }
 constexpr int kAnimationMs = 180;
 
-/// The info line fitted to `width` (S3): whole parts dropped from the end, then "played"; never
-/// cut inside a part. Empty when not even the first part fits.
-QString FitInfo(const GameInfo& game, const QFontMetrics& fm, int width) {
-    if (game.info_line.isEmpty() || fm.horizontalAdvance(game.info_line) <= width) {
-        return game.info_line;
-    }
-    const QString separator = QStringLiteral(" · ");
-    QStringList parts = game.info_line.split(separator);
-    while (parts.size() > 1 && fm.horizontalAdvance(parts.join(separator)) > width) {
-        parts.removeLast();
-    }
-    const QString played =
-        QCoreApplication::translate("LibraryStyles", "%1 played").arg(game.play_time_text);
-    if (fm.horizontalAdvance(parts.join(separator)) > width && parts.first() == played) {
-        parts.first() = game.play_time_text;
-    }
-    const QString fitted = parts.join(separator);
-    return fm.horizontalAdvance(fitted) <= width ? fitted : QString{};
-}
-
 LibraryStyleView* Make(QWidget* p) {
     return new HomeRowStyle(p);
 }
@@ -537,8 +517,15 @@ void HomeRowStyle::paintEvent(QPaintEvent* event) {
             name.isEmpty() ? 0
                            : std::min(title_fm.horizontalAdvance(name) + 2, max_w / 3) +
                                  title_fm.height() / 2;
-        const QString info =
-            m_show_info ? FitInfo(game, info_fm, std::max(0, max_w - name_reserve)) : QString{};
+        // One line (S3): the parts of this game that fit, never cut inside a part.
+        const QStringList info_lines =
+            m_show_info ? LibraryStyleContext::InfoLines(
+                              game,
+                              LibraryStyleContext::LayoutInfo(
+                                  info_font, std::max(0, max_w - name_reserve), 1, &game),
+                              info_font)
+                        : QStringList{};
+        const QString info = info_lines.isEmpty() ? QString{} : info_lines.first();
         if (!name.isEmpty() || !info.isEmpty()) {
             const int gap = name.isEmpty() || info.isEmpty() ? 0 : title_fm.height() / 2;
             // Measured widths plus a pixel of slack: eliding to the exact advance can cut the
@@ -555,10 +542,13 @@ void HomeRowStyle::paintEvent(QPaintEvent* event) {
             const int baseline =
                 static_cast<int>(cover.top()) - m.side / 14 - title_fm.descent();
             if (!name.isEmpty()) {
-                painter.setFont(title_font);
-                painter.setPen(accent);
-                painter.drawText(QPoint(left, baseline),
-                                 title_fm.elidedText(name, Qt::ElideRight, name_w));
+                // S4 on one line; with Scroll Long Names a long name glides. It may only run
+                // into the gap before the info, never into the info itself.
+                LibraryStyleContext::PaintTitle(
+                    &painter,
+                    QRect(left, baseline - title_fm.ascent(), name_w, title_fm.height()), name,
+                    accent, title_font, Qt::AlignLeft | Qt::AlignTop, 1, this,
+                    info.isEmpty() ? -1 : std::max(0, gap / 2));
             }
             if (!info.isEmpty()) {
                 QColor muted = pal.color(QPalette::WindowText);
