@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <array>
+
 #include <QColor>
 #include <QFont>
 #include <QModelIndex>
@@ -11,6 +13,7 @@
 #include <QRect>
 #include <QSize>
 #include <QString>
+#include <QStringList>
 
 #include "common/common_types.h"
 
@@ -49,6 +52,19 @@ struct GameInfo {
     QString size_text;
     /// Program id as 16 upper-case hex digits.
     QString program_id_text;
+};
+
+/// S3 Game Info laid out for a view: each part switched on under View > Game Info keeps a fixed
+/// line, packed once for the width from worst-case samples, so play time, version, size and type
+/// sit in the same place on every item of the view.
+struct InfoLayout {
+    /// Line of each part (play time, version, size, file type); -1 when off or left out.
+    std::array<int, 4> line_of{-1, -1, -1, -1};
+    /// Number of lines, 0 for none.
+    int lines = 0;
+    /// "4.4 h" instead of "4.4 h played" on every item of the view.
+    bool short_play = false;
+    int width = 0;
 };
 
 /**
@@ -97,20 +113,50 @@ public:
     /// Accent ring around `rect` (drawn just outside it), the selection mark of every style.
     static void PaintSelection(QPainter* painter, const QRect& rect, const QPalette& palette,
                                int radius, int width = 3);
-    /// Text elided to `max_lines` lines inside `rect`.
-    /// Title in up to `max_lines` lines. A line that is too wide ends in "...", unless the
-    /// full text is no wider than the "..." would be: then it is drawn whole, running up to
-    /// `max_overflow` px past the box (default: the width of "...").
+    /// S4 lines of `text` for a box `width` px wide: up to `max_lines` lines, broken between
+    /// words only. A line that is too wide ends in "...", unless it overflows by less than the
+    /// "..." would take: then it stays whole, running up to `max_overflow` px past the box
+    /// (default: the width of "...").
+    static QStringList NameLines(const QString& text, const QFont& font, int width,
+                                 int max_lines = 2, int max_overflow = -1);
+    /// Title in up to `max_lines` lines inside `rect`, see NameLines.
     static void PaintName(QPainter* painter, const QRect& rect, const QString& text,
                           const QColor& color, const QFont& font, Qt::Alignment alignment,
                           int max_lines = 2, int max_overflow = -1);
+    /// Lines a title may take: `max_lines`, or 1 with View > Game Info > Scroll Long Names.
+    static int TitleLines(int max_lines = 2);
+    /// A title, the S4 way (PaintName with TitleLines). With Scroll Long Names on, `glide_in`
+    /// set (the selected item, painted straight onto that widget) and a name too long for its
+    /// line, the name glides to its end and back instead of being cut; only that line of the
+    /// widget repaints, and only while it moves.
+    static void PaintTitle(QPainter* painter, const QRect& rect, const QString& text,
+                           const QColor& color, const QFont& font, Qt::Alignment alignment,
+                           int max_lines = 2, const QWidget* glide_in = nullptr,
+                           int max_overflow = -1);
+
+    /// Fixed Game Info lines for items whose info gets `width` px in `font`, at most
+    /// `max_lines` lines. The short play time when the long one would need more lines or not
+    /// fit; parts that still do not fit in `max_lines` are left out, from the end, for the whole
+    /// view. `only`: lay out the parts of that one game instead of the worst case, for a spot
+    /// that only ever shows one game and whose width changes with it.
+    static InfoLayout LayoutInfo(const QFont& font, int width, int max_lines = 4,
+                                 const GameInfo* only = nullptr);
+    /// The Game Info lines of `game` in `layout`, "Base" and "NaN GB" for missing values. A line
+    /// that is still too wide drops "played", then whole parts from its end (S3).
+    static QStringList InfoLines(const GameInfo& game, const InfoLayout& layout,
+                                 const QFont& font);
+    /// `lines` one under the other in `rect`, aligned by `alignment`.
+    static void PaintInfoLines(QPainter* painter, const QRect& rect, const QStringList& lines,
+                               const QColor& color, const QFont& font, Qt::Alignment alignment);
+
     /// Rounded panel with the title on top and the info line under it.
     static void PaintInfoPanel(QPainter* painter, const QRect& rect, const QModelIndex& index,
                                const QPalette& palette, const QFont& font);
-    /// Dark gradient at the bottom of a cover with the title and info line on it, for styles that
-    /// show names on top of the art.
+    /// Dark gradient at the bottom of a cover with the title and info lines on it, for styles
+    /// that show names on top of the art. `glide_in`: see PaintTitle.
     static void PaintCoverCaption(QPainter* painter, const QRect& cover_rect,
-                                  const QModelIndex& index, const QFont& font, bool show_info);
+                                  const QModelIndex& index, const QFont& font, bool show_info,
+                                  const QWidget* glide_in = nullptr);
 };
 
 /// Minimal view used by the placeholder files until a style lands: a plain list of the titles under

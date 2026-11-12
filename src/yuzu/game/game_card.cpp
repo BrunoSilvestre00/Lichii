@@ -3,9 +3,8 @@
 
 #include <algorithm>
 #include <cmath>
-#include <vector>
 #include <QColor>
-#include <QDateTime>
+#include <QAbstractItemView>
 #include <QFileInfo>
 #include <QFont>
 #include <QGuiApplication>
@@ -141,36 +140,6 @@ QPixmap GameListFallbackIcon(int size, const QString& title, const QPalette& pal
     return pixmap;
 }
 
-namespace {
-
-/// Info parts packed into lines of at most `width`: as many parts per line as fit, a part
-/// that is too wide alone gets its own line (and is elided when drawn).
-QStringList PackInfo(const QStringList& parts, const QFontMetrics& fm, int width) {
-    const QString dot = QStringLiteral(" \u00B7 ");
-    QStringList lines;
-    QString line;
-    for (const QString& part : parts) {
-        const QString joined = line.isEmpty() ? part : line + dot + part;
-        if (line.isEmpty() || fm.horizontalAdvance(joined) <= width) {
-            line = joined;
-        } else {
-            lines << line;
-            line = part;
-        }
-    }
-    if (!line.isEmpty()) {
-        lines << line;
-    }
-    return lines;
-}
-
-bool Fits(const QStringList& lines, const QFontMetrics& fm, int width) {
-    return std::all_of(lines.begin(), lines.end(),
-                       [&](const QString& line) { return fm.horizontalAdvance(line) <= width; });
-}
-
-} // namespace
-
 GameCard::TextLayout GameCard::Layout(int art, bool names, bool info) {
     TextLayout t;
     // Without art the title is the card: always show it.
@@ -194,56 +163,11 @@ GameCard::TextLayout GameCard::Layout(int art, bool names, bool info) {
     // The card is the art plus 16 px wide (Yuzu::CardWidthMargin minus cardMargin); split the
     // line at its dot when a long one won't fit.
     const int text_w = art + Yuzu::CardWidthMargin - cardMargin - 2 * t.pad;
-    QStringList sample_parts;
-    if (UISettings::values.show_play_time.GetValue()) {
-        sample_parts << QStringLiteral("88.8 h played");
-    }
-    if (UISettings::values.show_add_ons.GetValue()) {
-        sample_parts << QStringLiteral("v8.88.8");
-    }
-    if (UISettings::values.show_size.GetValue()) {
-        sample_parts << QStringLiteral("88.8 GB");
-    }
-    if (UISettings::values.show_types.GetValue()) {
-        sample_parts << QStringLiteral("NSP");
-    }
-    // As many lines as the parts need at this width; the short play time ("88.8 h") when the
-    // long one would take more lines or not fit.
-    t.meta_lines = 0;
-    if (info) {
-        const QStringList full = PackInfo(sample_parts, mfm, text_w);
-        QStringList short_parts = sample_parts;
-        const bool play = UISettings::values.show_play_time.GetValue();
-        if (play) {
-            short_parts.first() = QStringLiteral("88.8 h");
-        }
-        const QStringList shorter = PackInfo(short_parts, mfm, text_w);
-        t.short_play = play && !(Fits(full, mfm, text_w) && full.size() <= shorter.size());
-        const QStringList& chosen = t.short_play ? short_parts : sample_parts;
-        // Assign each part a fixed line by packing the worst-case sample once for the view.
-        const bool on[4] = {play, UISettings::values.show_add_ons.GetValue(),
-                            UISettings::values.show_size.GetValue(),
-                            UISettings::values.show_types.GetValue()};
-        const QString dot = QStringLiteral(" \u00B7 ");
-        int line = 0;
-        QString current;
-        int sample = 0;
-        for (int kind = 0; kind < 4; ++kind) {
-            if (!on[kind]) {
-                continue;
-            }
-            const QString& part = chosen[sample++];
-            const QString joined = current.isEmpty() ? part : current + dot + part;
-            if (!current.isEmpty() && mfm.horizontalAdvance(joined) > text_w) {
-                ++line;
-                current = part;
-            } else {
-                current = joined;
-            }
-            t.line_of[kind] = line;
-        }
-        t.meta_lines = line + 1;
-    }
+    // Each part on a fixed line for the whole view, packed once for the card width (the same
+    // code as the library styles).
+    t.info = info ? LibraryStyles::LibraryStyleContext::LayoutInfo(meta_font, text_w)
+                  : LibraryStyles::InfoLayout{};
+    t.meta_lines = t.info.lines;
     // No bottom padding of its own: the card's inset under the text already gives the room.
     const int title_lines = Yuzu::ScrollLongNames() ? 1 : 2;
     t.height =
@@ -416,46 +340,15 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
             const QFontMetrics tfm(titleFont);
             const int line = tfm.lineSpacing();
             const int overflow = std::max(0, text.pad - 2);
-            if (Yuzu::ScrollLongNames()) {
-                // One line. The selected card's long name glides to its end and back
-                // (the views repaint the selected card on a timer); others are cut.
-                const QRect line_rect(textRect.left(), y, textRect.width(), line);
-                const int extra = tfm.horizontalAdvance(title) - line_rect.width();
-                if (selected && extra > overflow) {
-                    constexpr qint64 pause = 1200;
-                    constexpr qint64 ms_per_px = 25;
-                    const qint64 travel = extra * ms_per_px;
-                    const qint64 t =
-                        QDateTime::currentMSecsSinceEpoch() % (2 * (pause + travel));
-                    qint64 x = 0;
-                    if (t >= pause && t < pause + travel) {
-                        x = (t - pause) / ms_per_px;
-                    } else if (t >= pause + travel && t < 2 * pause + travel) {
-                        x = extra;
-                    } else if (t >= 2 * pause + travel) {
-                        x = extra - (t - 2 * pause - travel) / ms_per_px;
-                    }
-                    painter->save();
-                    painter->setClipRect(line_rect);
-                    painter->setFont(titleFont);
-                    painter->setPen(titleColor);
-                    painter->drawText(QRect(line_rect.left() - static_cast<int>(x), y,
-                                            tfm.horizontalAdvance(title) + 2, line),
-                                      Qt::AlignLeft | Qt::AlignTop, title);
-                    painter->restore();
-                } else {
-                    LibraryStyles::LibraryStyleContext::PaintName(
-                        painter, line_rect, title, titleColor, titleFont,
-                        Qt::AlignLeft | Qt::AlignTop, 1, overflow);
-                }
-                y += line + 3;
-            } else {
-                // Two lines at most, cut with "..."; never runs into the info line below.
-                LibraryStyles::LibraryStyleContext::PaintName(
-                    painter, QRect(textRect.left(), y, textRect.width(), line * 2), title,
-                    titleColor, titleFont, Qt::AlignLeft | Qt::AlignTop, 2, overflow);
-                y += line * 2 + 3;
-            }
+            // Two lines at most, cut with "..."; one with Scroll Long Names, where the selected
+            // card's long name glides to its end and back. Never runs into the info line below.
+            const int title_lines = LibraryStyles::LibraryStyleContext::TitleLines(2);
+            const auto* view = qobject_cast<const QAbstractItemView*>(option.widget);
+            LibraryStyles::LibraryStyleContext::PaintTitle(
+                painter, QRect(textRect.left(), y, textRect.width(), line * title_lines), title,
+                titleColor, titleFont, Qt::AlignLeft | Qt::AlignTop, title_lines,
+                selected && view != nullptr ? view->viewport() : nullptr, overflow);
+            y += line * title_lines + 3;
         }
 
         QStringList meta_parts;
@@ -474,30 +367,12 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
             const QFontMetrics mfm(metaFont);
             painter->setPen(subtitleColor);
             painter->setFont(metaFont);
-            // Every part on its fixed line (TextLayout::line_of), so play time, version, size
-            // and type sit in the same place on every card; placeholders keep the line_parts filled.
+            // Every part on its fixed line (TextLayout::info), so play time, version, size and
+            // type sit in the same place on every card; placeholders keep the lines filled.
             QStringList lines;
             const auto game = LibraryStyles::LibraryStyleContext::Info(index);
             if (show_info && game.is_game) {
-                const QString parts[4] = {
-                    text.short_play || game.play_time_seconds == 0
-                        ? game.play_time_text
-                        : tr("%1 played").arg(game.play_time_text),
-                    game.update_version.isEmpty() ? tr("Base")
-                                                  : QStringLiteral("v") + game.update_version,
-                    game.size_text.isEmpty() ? QStringLiteral("NaN GB") : game.size_text,
-                    game.file_type,
-                };
-                std::vector<QStringList> line_parts(static_cast<size_t>(std::max(1, text.meta_lines)));
-                for (int kind = 0; kind < 4; ++kind) {
-                    const int line = text.line_of[static_cast<size_t>(kind)];
-                    if (line >= 0 && line < static_cast<int>(line_parts.size()) && !parts[kind].isEmpty()) {
-                        line_parts[static_cast<size_t>(line)] << parts[kind];
-                    }
-                }
-                for (const QStringList& slot_parts : line_parts) {
-                    lines << slot_parts.join(QStringLiteral(" \u00B7 "));
-                }
+                lines = LibraryStyles::LibraryStyleContext::InfoLines(game, text.info, metaFont);
             } else {
                 lines << meta_parts.join(QStringLiteral(" \u00B7 "));
             }

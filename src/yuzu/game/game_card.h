@@ -3,11 +3,12 @@
 
 #pragma once
 
-#include <array>
 #include <QPalette>
 #include <QPixmap>
 #include <QString>
 #include <QStyledItemDelegate>
+
+#include "yuzu/game/styles/style_helpers.h"
 
 /// Art for a game without an icon: a gradient picked from the title, with its initials.
 QPixmap GameListFallbackIcon(int size, const QString& title, const QPalette& palette);
@@ -43,10 +44,9 @@ public:
         int title_px = 14;
         int meta_px = 11;
         int meta_lines = 1;    ///< info lines: the parts packed at this card width
-        /// Fixed line of each part (play time, version, size, type; -1 when off), the same on
-        /// every card of the view so a part never moves between cards.
-        std::array<int, 4> line_of{-1, -1, -1, -1};
-        bool short_play = false; ///< "4.4 h" instead of "4.4 h played" on every card
+        /// Fixed line of each part, the same on every card of the view so a part never moves
+        /// between cards (shared with the library styles).
+        LibraryStyles::InfoLayout info;
         int height = 0;        ///< 0: no text block at all
     };
     /// `art` is the artwork side; names/info follow View > Show Game Name / Show Info.
