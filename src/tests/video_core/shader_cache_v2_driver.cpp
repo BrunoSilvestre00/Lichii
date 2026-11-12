@@ -441,12 +441,15 @@ TEST_CASE("Shader cache v2 driver blobs: a session cap keeps what the session us
         REQUIRE(store.Counts().loaded == 40);
         for (u64 i = 10; i < 50; ++i) {
             REQUIRE(store.Find(RecordKind::GraphicsBinary, i).has_value());
+            // Find doesn't mark a blob used; without this the store compacts to its target here
+            store.Used(RecordKind::GraphicsBinary, i);
         }
     }
     // Past the session cap, the cap bounds it
     options.session_cap_bytes = record * 30;
     {
         V2::DriverBlobStore store{file, TestIdentity(), options};
+        REQUIRE(store.Counts().loaded == 40);
         for (u64 i = 10; i < 50; ++i) {
             store.Used(RecordKind::GraphicsBinary, i);
         }
