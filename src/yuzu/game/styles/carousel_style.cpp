@@ -10,6 +10,7 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QEasingCurve>
+#include <QEvent>
 #include <QFontMetrics>
 #include <QImage>
 #include <QKeyEvent>
@@ -28,6 +29,7 @@
 
 #include "qt_common/game_list/game_list_p.h"
 #include "yuzu/game/styles/carousel_style.h"
+#include "yuzu/game/styles/style_helpers.h"
 
 namespace LibraryStyles {
 
@@ -46,15 +48,26 @@ GameListItemType TypeOf(const QModelIndex& index) {
     return index.data(GameListItem::TypeRole).value<GameListItemType>();
 }
 
+/// True when a dataChanged with these roles can change the cover art or the title.
+bool ArtRolesChanged(const QList<int>& roles) {
+    if (roles.isEmpty()) {
+        return true;
+    }
+    for (const int role : roles) {
+        if (role == Qt::DecorationRole || role == Qt::DisplayRole ||
+            role == GameListItemPath::CardIconRole || role == GameListItemPath::HasIconRole ||
+            role == GameListItemPath::TitleRole) {
+            return true;
+        }
+    }
+    return false;
+}
+
+constexpr int kMaxTints = 64;
+
 constexpr int kAnimationMs = 180;
 constexpr int kMaxDots = 15;
 constexpr int kVisibleRadius = 4;
-
-QColor Lerp(const QColor& a, const QColor& b, qreal t) {
-    return QColor::fromRgbF(a.redF() + (b.redF() - a.redF()) * t,
-                            a.greenF() + (b.greenF() - a.greenF()) * t,
-                            a.blueF() + (b.blueF() - a.blueF()) * t);
-}
 
 QColor HashColor(const QString& text) {
     const size_t hash = static_cast<size_t>(qHash(text));
@@ -136,12 +149,18 @@ void CarouselStyle::SetModel(QAbstractItemModel* model) {
         connect(model_, &QAbstractItemModel::rowsInserted, this, schedule);
         connect(model_, &QAbstractItemModel::rowsRemoved, this, schedule);
         connect(model_, &QAbstractItemModel::rowsMoved, this, schedule);
-        // Data changes (icons loading in) only invalidate the cached art, not the row list.
-        connect(model_, &QAbstractItemModel::dataChanged, this, [this] {
-            cover_cache_.clear();
-            tint_cache_.clear();
-            update();
-        });
+        // Data changes (icons loading in) only invalidate the cached art, not the row list. Play
+        // time updates leave the art alone.
+        connect(model_, &QAbstractItemModel::dataChanged, this,
+                [this](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
+                    if (ArtRolesChanged(roles)) {
+                        cover_cache_.clear();
+                        tilted_cache_.clear();
+                        tint_cache_.clear();
+                        background_cache_.clear();
+                    }
+                    update();
+                });
         connect(model_, &QObject::destroyed, this, [this] {
             items_.clear();
             update();
@@ -253,7 +272,9 @@ void CarouselStyle::Rebuild() {
     progress_ = 1.0;
     previous_row_ = -1;
     cover_cache_.clear();
+    tilted_cache_.clear();
     tint_cache_.clear();
+    background_cache_.clear();
 }
 
 QModelIndex CarouselStyle::IndexAt(int row) const {
@@ -364,20 +385,19 @@ QString CarouselStyle::TitleFor(int row) const {
 }
 
 QString CarouselStyle::InfoFor(int row) const {
-    const QModelIndex index = IndexAt(row);
-    // The item tooltip already holds the play time and version lines.
-    QStringList parts =
-        index.data(Qt::ToolTipRole).toString().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
-    const qulonglong program_id = index.data(GameListItemPath::ProgramIdRole).toULongLong();
-    parts << tr("Program ID: %1")
-                 .arg(QString::number(program_id, 16).rightJustified(16, QLatin1Char('0')).toUpper());
-    return parts.join(QString(QChar(0x2022)).prepend(QStringLiteral("   ")).append(QStringLiteral("   ")));
+    const GameInfo info = LibraryStyleContext::Info(IndexAt(row));
+    const QString separator = QStringLiteral("   ") + QChar(0x00B7) + QStringLiteral("   ");
+    return info.info_line + separator + tr("Program ID: %1").arg(info.program_id_text);
 }
 
 const CarouselStyle::Tint& CarouselStyle::TintFor(int row) {
     const auto found = tint_cache_.constFind(row);
     if (found != tint_cache_.constEnd()) {
         return *found;
+    }
+    // One small entry per game, but never let the cache grow with the library.
+    if (tint_cache_.size() >= kMaxTints) {
+        tint_cache_.clear();
     }
     Tint tint;
     bool has_art = false;
@@ -396,6 +416,7 @@ QPixmap CarouselStyle::CoverPixmap(int row, int side) {
     const int px = std::max(1, static_cast<int>(std::ceil(side * dpr)));
     if (cover_cache_side_ != px) {
         cover_cache_.clear();
+        tilted_cache_.clear();
         cover_cache_side_ = px;
     }
     const auto found = cover_cache_.constFind(row);
@@ -447,46 +468,43 @@ QPixmap CarouselStyle::CoverPixmap(int row, int side) {
     return pixmap;
 }
 
-void CarouselStyle::PaintBackground(QPainter& painter) {
+QPixmap CarouselStyle::BackgroundFor(int row) {
+    const auto found = background_cache_.constFind(row);
+    if (found != background_cache_.constEnd()) {
+        return *found;
+    }
+    // A few entries are enough: the selection, the one it fades from and the next one.
+    if (background_cache_.size() >= 3) {
+        background_cache_.clear();
+    }
+    // Blur, wash and gradients have no fine detail: render at half the logical size and let the
+    // paint scale it up. A full resolution render cost tens of ms per selection at 200 %.
+    QPixmap pixmap(QSize(std::max(1, (width() + 1) / 2), std::max(1, (height() + 1) / 2)));
     const QPalette& pal = palette();
-    painter.fillRect(rect(), pal.color(QPalette::Window));
-    if (items_.empty()) {
-        return;
-    }
-
-    const int cur = std::clamp(current_, 0, static_cast<int>(items_.size()) - 1);
-    const Tint to = TintFor(cur);
-    QColor tint = to.color;
-    QPixmap from_blur;
-    if (progress_ < 1.0 && previous_row_ >= 0 && previous_row_ < static_cast<int>(items_.size())) {
-        const Tint from = TintFor(previous_row_);
-        tint = Lerp(from.color, to.color, progress_);
-        from_blur = from.blur;
-    }
-
+    const QRect area(0, 0, width(), height());
+    QPainter painter(&pixmap);
+    painter.scale(0.5, 0.5);
+    painter.fillRect(area, pal.color(QPalette::Window));
+    const Tint tint = TintFor(row);
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
-    if (!from_blur.isNull()) {
-        painter.setOpacity(0.5 * (1.0 - progress_));
-        painter.drawPixmap(rect(), from_blur);
+    if (!tint.blur.isNull()) {
+        painter.setOpacity(0.5);
+        painter.drawPixmap(area, tint.blur);
+        painter.setOpacity(1.0);
     }
-    if (!to.blur.isNull()) {
-        painter.setOpacity(0.5 * (from_blur.isNull() ? 1.0 : progress_));
-        painter.drawPixmap(rect(), to.blur);
-    }
-    painter.setOpacity(1.0);
 
     // Wash the blurred cover with its dominant colour, then fade into the palette at the bottom.
-    QColor wash = tint;
+    QColor wash = tint.color;
     wash.setAlpha(110);
-    painter.fillRect(rect(), wash);
+    painter.fillRect(area, wash);
 
     QRadialGradient glow(QPointF(width() * 0.4, height() * 0.4), std::max(width(), height()) * 0.6);
-    QColor glow_color = tint.lighter(150);
+    QColor glow_color = tint.color.lighter(150);
     glow_color.setAlpha(90);
     glow.setColorAt(0.0, glow_color);
     glow_color.setAlpha(0);
     glow.setColorAt(1.0, glow_color);
-    painter.fillRect(rect(), glow);
+    painter.fillRect(area, glow);
 
     QColor base = pal.color(QPalette::Window);
     QLinearGradient fade(0, 0, 0, height());
@@ -494,7 +512,74 @@ void CarouselStyle::PaintBackground(QPainter& painter) {
     fade.setColorAt(0.0, base);
     base.setAlpha(190);
     fade.setColorAt(1.0, base);
-    painter.fillRect(rect(), fade);
+    painter.fillRect(area, fade);
+    painter.end();
+    background_cache_.insert(row, pixmap);
+    return pixmap;
+}
+
+QPixmap CarouselStyle::TiltedPixmap(int row, bool right, qreal side) {
+    const qreal dpr = devicePixelRatioF();
+    const int px = std::max(1, static_cast<int>(std::ceil(side * dpr)));
+    if (tilted_side_ != px) {
+        tilted_cache_.clear();
+        tilted_side_ = px;
+    }
+    const qint64 key = static_cast<qint64>(row) * 2 + (right ? 1 : 0);
+    const auto found = tilted_cache_.constFind(key);
+    if (found != tilted_cache_.constEnd()) {
+        return *found;
+    }
+    if (tilted_cache_.size() > 24) {
+        tilted_cache_.clear();
+    }
+    // The shape of a neighbour at rest: 80 % of the selected size, 9 % tilt.
+    const qreal w = side * 0.8;
+    const qreal far_h = w * (1.0 - 2.0 * 0.09);
+    QPolygonF quad;
+    if (right) {
+        quad << QPointF(0, 0) << QPointF(w, (w - far_h) / 2) << QPointF(w, (w + far_h) / 2)
+             << QPointF(0, w);
+    } else {
+        quad << QPointF(0, (w - far_h) / 2) << QPointF(w, 0) << QPointF(w, w)
+             << QPointF(0, (w + far_h) / 2);
+    }
+    QPolygonF source;
+    source << QPointF(0, 0) << QPointF(side, 0) << QPointF(side, side) << QPointF(0, side);
+    QTransform transform;
+    QPixmap tilted(QSize(std::max(1, static_cast<int>(std::ceil(w * dpr))),
+                         std::max(1, static_cast<int>(std::ceil(w * dpr)))));
+    tilted.setDevicePixelRatio(dpr);
+    tilted.fill(Qt::transparent);
+    if (QTransform::quadToQuad(source, quad, transform)) {
+        const QPixmap cover = CoverPixmap(row, static_cast<int>(std::ceil(side)));
+        QPainter painter(&tilted);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        painter.setWorldTransform(transform);
+        painter.drawPixmap(QRectF(0, 0, side, side), cover, QRectF(cover.rect()));
+    }
+    tilted_cache_.insert(key, tilted);
+    return tilted;
+}
+
+void CarouselStyle::PaintBackground(QPainter& painter) {
+    const QPalette& pal = palette();
+    if (items_.empty()) {
+        painter.fillRect(rect(), pal.color(QPalette::Window));
+        return;
+    }
+    // The tinted background of each cover is built once, then cross faded while moving.
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
+    const int cur = std::clamp(current_, 0, static_cast<int>(items_.size()) - 1);
+    if (progress_ < 1.0 && previous_row_ >= 0 && previous_row_ < static_cast<int>(items_.size())) {
+        painter.drawPixmap(rect(), BackgroundFor(previous_row_));
+        painter.setOpacity(progress_);
+        painter.drawPixmap(rect(), BackgroundFor(cur));
+        painter.setOpacity(1.0);
+        return;
+    }
+    painter.drawPixmap(rect(), BackgroundFor(cur));
 }
 
 void CarouselStyle::PaintCover(QPainter& painter, const Metrics& m, int row, qreal d) {
@@ -549,6 +634,15 @@ void CarouselStyle::PaintCover(QPainter& painter, const Metrics& m, int row, qre
 
     painter.save();
     painter.setOpacity(opacity);
+
+    // Covers at rest beside the selection all have the same tilt: draw a cached, already tilted
+    // copy with a plain scale. Transforming every cover in perspective on every frame is slow.
+    if (!flat_ && a >= 1.0) {
+        const QPixmap tilted = TiltedPixmap(row, sign > 0, side);
+        painter.drawPixmap(quad.boundingRect(), tilted, QRectF(tilted.rect()));
+        painter.restore();
+        return;
+    }
 
     // Soft shadow under the covers that are close to the selection.
     if (a < 1.0) {
@@ -676,6 +770,18 @@ void CarouselStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
 void CarouselStyle::resizeEvent(QResizeEvent* event) {
     LibraryStyleView::resizeEvent(event);
     cover_cache_.clear();
+    tilted_cache_.clear();
+    background_cache_.clear();
+}
+
+void CarouselStyle::changeEvent(QEvent* event) {
+    LibraryStyleView::changeEvent(event);
+    if (event->type() == QEvent::PaletteChange || event->type() == QEvent::StyleChange) {
+        cover_cache_.clear();
+        tilted_cache_.clear();
+        background_cache_.clear();
+        update();
+    }
 }
 
 void CarouselStyle::keyPressEvent(QKeyEvent* event) {
@@ -806,7 +912,7 @@ LibraryStyleView* Make(QWidget* parent) {
 }
 
 [[maybe_unused]] const bool registered =
-    LibraryStyles::Register({"carousel", QT_TR_NOOP("Showcase"), &Make});
+    LibraryStyles::Register({"carousel", QT_TRANSLATE_NOOP("LibraryStyles", "Showcase"), &Make});
 
 } // namespace
 

@@ -40,6 +40,7 @@ public:
 protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
+    void changeEvent(QEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
@@ -79,6 +80,10 @@ private:
     QPixmap SourceArt(int row, bool* has_art) const;
     QPixmap CoverPixmap(int row, int side);
     const Tint& TintFor(int row);
+    /// The full tinted background for a selected cover, cached for the current size.
+    QPixmap BackgroundFor(int row);
+    /// A neighbour cover at rest, already tilted towards the selection, cached.
+    QPixmap TiltedPixmap(int row, bool right, qreal side);
     QString TitleFor(int row) const;
     QString InfoFor(int row) const;
 
@@ -107,6 +112,9 @@ private:
     QHash<int, QPixmap> cover_cache_;
     QHash<int, Tint> tint_cache_;
     int cover_cache_side_ = 0;
+    QHash<int, QPixmap> background_cache_;
+    QHash<qint64, QPixmap> tilted_cache_;
+    int tilted_side_ = 0;
 
     std::vector<Hit> hits_;
     int press_row_ = -1;
