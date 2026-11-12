@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Layout from the "Tinfoil" library concept by inxomnyaa.
+// Layout from a library concept by inxomnyaa.
 
 #include <algorithm>
 
@@ -11,6 +11,8 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
+
 #include <QScrollBar>
 #include <QStringList>
 #include <QTimer>
@@ -39,10 +41,45 @@ LibraryStyleView* Make(QWidget* parent) {
     return new DenseGridStyle(parent);
 }
 
+/// The rounded cover of `index` at `size` (device pixels), cached: building it scales the art,
+/// too much to repeat for every tile of every frame.
+QPixmap CachedCover(QCache<QString, QPixmap>& cache, const QModelIndex& index, const QSize& size,
+                    const QPalette& palette, int radius) {
+    const qint64 art = index.data(GameListItemPath::CardIconRole).value<QPixmap>().cacheKey();
+    const QString key = QStringLiteral("dense_cover:%1:%2:%3x%4:%5:%6")
+                            .arg(index.data(GameListItemPath::FullPathRole).toString())
+                            .arg(art)
+                            .arg(size.width())
+                            .arg(size.height())
+                            .arg(radius)
+                            .arg(palette.window().color().rgb());
+    if (const QPixmap* cached = cache.object(key)) {
+        return *cached;
+    }
+    QPixmap pixmap(size);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    QPainterPath clip;
+    clip.addRoundedRect(QRectF(pixmap.rect()), radius, radius);
+    painter.setClipPath(clip);
+    painter.drawPixmap(0, 0, LibraryStyleContext::Cover(index, size, palette));
+    painter.end();
+    cache.insert(key, new QPixmap(pixmap),
+                 std::max(1, static_cast<int>(qint64(size.width()) * size.height() * 4 / 1024)));
+    return pixmap;
+}
+
+QString TitleOf(const QModelIndex& index) {
+    const QString title = index.data(GameListItemPath::TitleRole).toString();
+    return title.isEmpty() ? LibraryStyleContext::Title(index) : title;
+}
+
 } // namespace
 
 [[maybe_unused]] static const bool registered =
-    LibraryStyles::Register({"dense_grid", QT_TR_NOOP("Dense grid"), &Make});
+    LibraryStyles::Register(
+        {"dense_grid", QT_TRANSLATE_NOOP("LibraryStyles", "Dense grid"), &Make});
 
 DenseGridStyle::DenseGridStyle(QWidget* parent) : LibraryStyleView{parent} {
     setFocusPolicy(Qt::StrongFocus);
@@ -61,7 +98,15 @@ void DenseGridStyle::SetModel(QAbstractItemModel* new_model) {
     if (model) {
         // Population adds rows one by one: rebuild once per event loop pass.
         const auto schedule = [this] {
-            QTimer::singleShot(0, this, &DenseGridStyle::Rebuild);
+            if (rebuild_pending) {
+                return;
+            }
+            rebuild_pending = true;
+            QTimer::singleShot(0, this, [this] {
+                if (rebuild_pending) {
+                    Rebuild();
+                }
+            });
         };
         connect(model, &QAbstractItemModel::modelReset, this, schedule);
         connect(model, &QAbstractItemModel::layoutChanged, this, schedule);
@@ -81,15 +126,16 @@ QModelIndex DenseGridStyle::CurrentIndex() const {
 }
 
 void DenseGridStyle::SetCurrentIndex(const QModelIndex& index) {
-    // A rebuild may still be queued after the model changed: try once more after running it.
-    for (int attempt = 0; attempt < 2; ++attempt) {
-        for (int i = 0; i < entries.size(); ++i) {
-            if (entries[i] == index) {
-                Select(i);
-                return;
-            }
-        }
+    // A rebuild may still be queued after the model changed: run it first.
+    if (rebuild_pending) {
         Rebuild();
+    }
+    const QPersistentModelIndex wanted{index.siblingAtColumn(0)};
+    for (int i = 0; i < entries.size(); ++i) {
+        if (entries[i] == wanted) {
+            Select(i);
+            return;
+        }
     }
 }
 
@@ -110,9 +156,11 @@ QString DenseGridStyle::CycleOption() {
 }
 
 void DenseGridStyle::Rebuild() {
+    rebuild_pending = false;
     const QPersistentModelIndex previous = CurrentIndex();
     entries.clear();
-    QPersistentModelIndex add_folder;
+    // Games are shown flat: top level games plus the games inside each folder row. Favorites and
+    // the "Add games folder" row are not tiles, like the other styles.
     if (model) {
         const auto add_games = [this](const QModelIndex& parent) {
             for (int row = 0; row < model->rowCount(parent); ++row) {
@@ -130,13 +178,8 @@ void DenseGridStyle::Rebuild() {
                 add_games(index);
             } else if (type == GameListItemType::Game) {
                 entries.append(index);
-            } else if (type == GameListItemType::AddDir) {
-                add_folder = index;
             }
         }
-    }
-    if (add_folder.isValid()) {
-        entries.append(add_folder);
     }
 
     current = -1;
@@ -199,14 +242,19 @@ int DenseGridStyle::PositionAt(const QPoint& point) const {
     if (!GridArea().contains(point)) {
         return -1;
     }
-    for (int i = 0; i < entries.size(); ++i) {
-        QRect cell = TileRect(i);
-        cell.setHeight(CellHeight());
-        if (cell.contains(point)) {
-            return i;
-        }
+    const int tile = TileSize();
+    const int x = point.x() - Margin;
+    const int y = point.y() + scrollbar->value() - Margin;
+    if (x < 0 || y < 0) {
+        return -1;
     }
-    return -1;
+    const int column = x / (tile + Gap);
+    const int row = y / (CellHeight() + Gap);
+    if (column >= columns || x % (tile + Gap) >= tile || y % (CellHeight() + Gap) >= CellHeight()) {
+        return -1;
+    }
+    const int position = row * columns + column;
+    return position < entries.size() ? position : -1;
 }
 
 void DenseGridStyle::Select(int position) {
@@ -253,14 +301,16 @@ void DenseGridStyle::paintEvent(QPaintEvent*) {
             continue;
         }
         const QModelIndex index = entries[i];
-        LibraryStyleContext::PaintCover(&painter, tile, index, pal, Radius);
+        const qreal ratio = devicePixelRatioF();
+        painter.drawPixmap(tile, CachedCover(cover_cache, index, tile.size() * ratio, pal,
+                                             static_cast<int>(Radius * ratio)));
         if (show_names && names_on_tiles) {
             LibraryStyleContext::PaintCoverCaption(&painter, tile, index, font(),
                                                    show_info && i == current);
         } else if (show_names) {
             const QRect name(tile.left(), tile.bottom() + 6, tile.width(),
                              metrics.lineSpacing() * 2);
-            LibraryStyleContext::PaintName(&painter, name, LibraryStyleContext::Title(index),
+            LibraryStyleContext::PaintName(&painter, name, TitleOf(index),
                                            pal.text().color(), font(),
                                            Qt::AlignHCenter | Qt::AlignTop);
         }

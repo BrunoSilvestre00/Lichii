@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <QCache>
 #include <QList>
 #include <QPersistentModelIndex>
 #include <QPointer>
@@ -40,8 +41,8 @@ protected:
     void wheelEvent(QWheelEvent* event) override;
 
 private:
-    /// Rebuilds the flat list of entries from the model: games of every folder, then the
-    /// "Add games folder" row. Favorites are skipped, their games are already in a folder.
+    /// Rebuilds the flat list of entries from the model: top level games and the games of every
+    /// folder. Favorites are skipped, their games are already in a folder.
     void Rebuild();
     void Relayout();
     void Select(int position);
@@ -56,10 +57,13 @@ private:
     QList<QPersistentModelIndex> entries;
     int current = -1;
     int columns = 1;
+    bool rebuild_pending = false;
     bool show_names = true;
     bool show_info = false;
     bool names_on_tiles = true;
     QScrollBar* scrollbar = nullptr;
+    /// Rounded covers by path, art and size; the cost is in KiB.
+    QCache<QString, QPixmap> cover_cache{48 * 1024};
 };
 
 } // namespace LibraryStyles
