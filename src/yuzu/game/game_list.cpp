@@ -399,10 +399,6 @@ void GameList::ResetViewMode() {
     ActivateStyle(LibraryStyles::Active());
 }
 
-bool GameList::IsStyleActive() const {
-    return style_view != nullptr;
-}
-
 void GameList::UpdateStyleToggles() {
     if (style_view == nullptr) {
         return;
@@ -799,12 +795,16 @@ void GameList::RefreshExternalContent() {
 
 void GameList::UpdateIconSizes() {
     UpdateStyleToggles();
+    // The cards read the icon size and the names setting when they paint, so a repaint is enough
+    // even when the cell size stays the same.
     switch (game_list_mode) {
     case Settings::GameListMode::GridView:
         grid_view->UpdateIconSize();
+        grid_view->viewport()->update();
         break;
     case Settings::GameListMode::CarouselView:
         carousel_view->UpdateIconSize();
+        carousel_view->viewport()->update();
         break;
     case Settings::GameListMode::TreeView:
         break;

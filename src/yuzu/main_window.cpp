@@ -1786,7 +1786,13 @@ void MainWindow::ConnectMenuEvents() {
                 CheckIconSize();
 
                 game_list->UpdateIconSizes();
-                game_list->RefreshGameDirectory();
+                // Only the list view stores icons at the chosen size; the grid, the carousel and
+                // the library styles scale the card art when they paint. A rescan here would also
+                // rebuild the content providers on this thread and lock the library until it ends.
+                if (UISettings::values.game_list_mode.GetValue() ==
+                    Settings::GameListMode::TreeView) {
+                    game_list->RefreshGameDirectory();
+                }
             }
         });
     }
@@ -4096,11 +4102,8 @@ void MainWindow::ToggleShowGameName() {
 
     CheckIconSize();
 
+    // The cards and the styles read the setting when they paint: no rescan needed.
     game_list->UpdateIconSizes();
-    // The styles repaint from UpdateIconSizes; only the item views need the list rebuilt.
-    if (!game_list->IsStyleActive()) {
-        game_list->RefreshGameDirectory();
-    }
 }
 
 void MainWindow::OnConfigure() {
