@@ -118,11 +118,20 @@ GameInfo LibraryStyleContext::Info(const QModelIndex& index) {
     }
     info.size_text = Column(index, GameListModel::COLUMN_SIZE).data(Qt::DisplayRole).toString();
 
+    // Only the parts switched on under View > Game Info (the list view's columns).
     QStringList parts;
-    parts.append(info.play_time_seconds == 0 ? info.play_time_text
-                                             : Tr("%1 played").arg(info.play_time_text));
-    if (!info.update_version.isEmpty()) {
+    if (UISettings::values.show_play_time.GetValue()) {
+        parts.append(info.play_time_seconds == 0 ? info.play_time_text
+                                                 : Tr("%1 played").arg(info.play_time_text));
+    }
+    if (UISettings::values.show_add_ons.GetValue() && !info.update_version.isEmpty()) {
         parts.append(QStringLiteral("v%1").arg(info.update_version));
+    }
+    if (UISettings::values.show_size.GetValue() && !info.size_text.isEmpty()) {
+        parts.append(info.size_text);
+    }
+    if (UISettings::values.show_types.GetValue() && !info.file_type.isEmpty()) {
+        parts.append(info.file_type);
     }
     info.info_line = parts.join(QStringLiteral(" · "));
     return info;

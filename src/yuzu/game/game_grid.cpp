@@ -94,7 +94,7 @@ void GameGrid::UpdateIconSize() {
     const int widthMargin = Yuzu::CardWidthMargin;
     const int heightMargin =
         GameCard::HeightMargin(static_cast<int>(display_icon_size), show_game_name,
-                               UISettings::values.show_library_info.GetValue());
+                               Yuzu::ShowAnyGameInfo());
 
     const int view_width = viewport()->width();
 

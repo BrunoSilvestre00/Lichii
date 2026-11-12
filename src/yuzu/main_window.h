@@ -629,6 +629,7 @@ private:
     QAction* action_next_library_style = nullptr;
     QAction* action_previous_library_style = nullptr;
     QAction* action_show_library_info = nullptr;
+    QList<QAction*> game_info_actions;
 
     // Debugger panes
     ControllerDialog* controller_dialog = nullptr;

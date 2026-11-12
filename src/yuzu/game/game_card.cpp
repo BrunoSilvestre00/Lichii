@@ -142,8 +142,8 @@ QPixmap GameListFallbackIcon(int size, const QString& title, const QPalette& pal
 GameCard::TextLayout GameCard::Layout(int art, bool names, bool info) {
     TextLayout t;
     t.names = names;
-    t.meta = names || info;
-    if (!t.meta) {
+    t.meta = info;
+    if (!names && !info) {
         return t;
     }
     const QFont base = QGuiApplication::font();
@@ -159,10 +159,23 @@ GameCard::TextLayout GameCard::Layout(int art, bool names, bool info) {
     const QFontMetrics mfm(meta_font);
     // The card is the art plus 2 px wide; split the line at its dot when a long one won't fit.
     const int text_w = art + 2 - 2 * t.pad;
-    const QString sample = info ? QStringLiteral("88.8 h played \u00B7 v8.88.8")
-                                : QStringLiteral("88.8 GB \u2022 NSP");
-    t.meta_lines = mfm.horizontalAdvance(sample) > text_w ? 2 : 1;
-    t.height = 6 + (names ? tfm.lineSpacing() * 2 + 3 : 0) + t.meta_lines * mfm.lineSpacing() + 6;
+    QStringList sample_parts;
+    if (UISettings::values.show_play_time.GetValue()) {
+        sample_parts << QStringLiteral("88.8 h played");
+    }
+    if (UISettings::values.show_add_ons.GetValue()) {
+        sample_parts << QStringLiteral("v8.88.8");
+    }
+    if (UISettings::values.show_size.GetValue()) {
+        sample_parts << QStringLiteral("88.8 GB");
+    }
+    if (UISettings::values.show_types.GetValue()) {
+        sample_parts << QStringLiteral("NSP");
+    }
+    const QString sample = sample_parts.join(QStringLiteral(" \u00B7 "));
+    t.meta_lines = !info ? 0 : mfm.horizontalAdvance(sample) > text_w ? 2 : 1;
+    // No bottom padding of its own: the card's inset under the text already gives the room.
+    t.height = 6 + (names ? tfm.lineSpacing() * 2 + 3 : 0) + t.meta_lines * mfm.lineSpacing();
     return t;
 }
 
@@ -237,7 +250,7 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
     const bool show_game_name = UISettings::values.show_game_name.GetValue() ||
                                 (folder_cards && (game_folder || add_folder));
     const int inset = cardMargin + 2;
-    const bool show_info = UISettings::values.show_library_info.GetValue();
+    const bool show_info = Yuzu::ShowAnyGameInfo();
     const TextLayout text = Layout(static_cast<int>(Yuzu::CardIconDisplaySize()),
                                    show_game_name, show_info);
     const int titleHeight = text.height;
@@ -336,21 +349,11 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
         } else if (game_folder) {
             meta_parts.append(tr("%n game(s)", "", index.model()->rowCount(index)));
         } else if (show_info) {
-            // Info on: play time and update version, "1.9 h played · v1.3.0".
+            // The parts switched on under View > Game Info.
             meta_parts.append(LibraryStyles::LibraryStyleContext::Info(index).info_line);
-        } else {
-            const QString size_text = index.sibling(index.row(), GameListModel::COLUMN_SIZE)
-                                          .data(Qt::DisplayRole)
-                                          .toString();
-            if (!size_text.isEmpty()) {
-                meta_parts.append(size_text);
-            }
-            const QString file_type = index.data(GameListItemPath::FileTypeRole).toString();
-            if (!file_type.isEmpty()) {
-                meta_parts.append(file_type);
-            }
         }
-        if (!meta_parts.isEmpty()) {
+        meta_parts.removeAll(QString{});
+        if (text.meta && !meta_parts.isEmpty()) {
             QFont metaFont = option.font;
             metaFont.setPixelSize(text.meta_px);
             const QFontMetrics mfm(metaFont);
@@ -372,9 +375,11 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
             }
             QStringList lines;
             if (text.meta_lines >= 2 && pieces.size() > 1) {
-                lines << pieces.first() << QStringList(pieces.mid(1)).join(QStringLiteral(" \u00B7 "));
+                const qsizetype half = (pieces.size() + 1) / 2;
+                lines << QStringList(pieces.mid(0, half)).join(QStringLiteral(" \u00B7 "))
+                      << QStringList(pieces.mid(half)).join(QStringLiteral(" \u00B7 "));
             } else {
-                lines << meta_parts.join(QStringLiteral(" \u2022 "));
+                lines << meta_parts.join(QStringLiteral(" \u00B7 "));
             }
             for (const QString& line : lines) {
                 painter->drawText(QRect(textRect.left(), y, textRect.width(), mfm.lineSpacing()),

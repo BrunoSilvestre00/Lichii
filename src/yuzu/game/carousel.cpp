@@ -68,7 +68,7 @@ void GameCarousel::UpdateIconSize() {
     const int widthMargin = Yuzu::CardWidthMargin;
     const int heightMargin =
         GameCard::HeightMargin(static_cast<int>(display_icon_size), show_game_name,
-                               UISettings::values.show_library_info.GetValue());
+                               Yuzu::ShowAnyGameInfo());
 
     const int min_item_width = display_icon_size + widthMargin;
     const int min_item_height = display_icon_size + heightMargin;

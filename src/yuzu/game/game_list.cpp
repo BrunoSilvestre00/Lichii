@@ -409,7 +409,7 @@ void GameList::UpdateStyleToggles() {
         return;
     }
     style_view->SetShowNames(UISettings::values.show_game_name.GetValue());
-    style_view->SetShowInfo(UISettings::values.show_library_info.GetValue());
+    style_view->SetShowInfo(Yuzu::ShowAnyGameInfo());
 }
 
 void GameList::ActivateStyle(const LibraryStyles::StyleInfo* info) {
@@ -872,6 +872,8 @@ void GameList::UpdateIconSizes() {
         carousel_view->viewport()->update();
         break;
     case Settings::GameListMode::TreeView:
+        // View > Game Info picks the columns here.
+        tree_view->UpdateColumnVisibility(item_model);
         break;
     }
 }

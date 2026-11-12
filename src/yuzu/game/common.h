@@ -22,6 +22,14 @@ inline u32 CardIconDisplaySize([[maybe_unused]] bool show_game_name = true) {
 /// artwork 10 pixels narrower than the card cell; GameCard::HeightMargin gives the height.
 constexpr int CardWidthMargin = 24;
 
+/// View > Game Info: any part (play time, version, size, file type) switched on. The same
+/// settings pick the list view's columns.
+inline bool ShowAnyGameInfo() {
+    return UISettings::values.show_play_time.GetValue() ||
+           UISettings::values.show_add_ons.GetValue() || UISettings::values.show_size.GetValue() ||
+           UISettings::values.show_types.GetValue();
+}
+
 inline bool ContainsAllWords(const QString& haystack, const QString& userinput) {
     const QStringList userinput_split = userinput.split(QLatin1Char{' '}, Qt::SkipEmptyParts);
     return std::all_of(userinput_split.begin(), userinput_split.end(), [&haystack](const QString& s) {

@@ -1250,10 +1250,10 @@ void BoxShelfStyle::DrawItem(QPainter& p, const Metrics& m, int pos, bool select
     if (m_show_info && IsGame(index) && (!m_spines || selected)) {
         const LibraryStyles::GameInfo info = LibraryStyleContext::Info(index);
         QStringList tags;
-        if (info.is_game) {
+        if (info.is_game && UISettings::values.show_play_time.GetValue()) {
             tags << info.play_time_text;
         }
-        if (!info.update_version.isEmpty()) {
+        if (UISettings::values.show_add_ons.GetValue() && !info.update_version.isEmpty()) {
             tags << QStringLiteral("v") + info.update_version;
         }
         QFont f = font();
@@ -1377,11 +1377,11 @@ void BoxShelfStyle::DrawFront(QPainter& p, const Metrics& m, int pos, bool selec
         if (selected) {
             anchor += QPointF(6.0 * u, -22.0 * u);
         }
-        if (info.is_game) { // "New" when never played
+        if (info.is_game && UISettings::values.show_play_time.GetValue()) { // "New" if unplayed
             DrawSticker(&p, anchor, info.play_time_text, f, QColor(0xff, 0xd3, 0x6b));
             anchor.ry() += tag_h + 6.0 * u;
         }
-        if (!info.update_version.isEmpty()) {
+        if (UISettings::values.show_add_ons.GetValue() && !info.update_version.isEmpty()) {
             DrawSticker(&p, anchor, QStringLiteral("v") + info.update_version, f,
                         QColor(0xff, 0xf3, 0xc9));
         }

@@ -44,6 +44,7 @@
 #include "set_play_time_dialog.h"
 #include "util/util.h"
 #include "yuzu/game/game_list.h"
+#include "yuzu/game/common.h"
 #include "yuzu/game/styles/library_style_registry.h"
 #include "yuzu/nup_dialogs.h"
 #include "yuzu/recommended_settings_dialog.h"
@@ -1764,11 +1765,22 @@ void MainWindow::ConnectMenuEvents() {
     action_next_library_style->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_BracketRight));
     connect(action_next_library_style, &QAction::triggered, this,
             [this] { CycleLibraryStyle(1); });
-    action_show_library_info = ui->menu_View->addAction(QString{});
-    action_show_library_info->setCheckable(true);
-    action_show_library_info->setChecked(UISettings::values.show_library_info.GetValue());
-    connect(action_show_library_info, &QAction::triggered, this,
-            &MainWindow::ToggleShowLibraryInfo);
+    // View > Game Info: one switch per part. They are the list view's column settings too, so
+    // the cards, the styles and the list columns always agree.
+    auto* game_info_menu = new QMenu(this);
+    action_show_library_info = ui->menu_View->addMenu(game_info_menu);
+    for (auto* setting : {&UISettings::values.show_play_time, &UISettings::values.show_add_ons,
+                          &UISettings::values.show_size, &UISettings::values.show_types}) {
+        QAction* action = game_info_menu->addAction(QString{});
+        action->setCheckable(true);
+        action->setChecked(setting->GetValue());
+        connect(action, &QAction::toggled, this, [this, setting](bool checked) {
+            setting->SetValue(checked);
+            UISettings::values.show_library_info = Yuzu::ShowAnyGameInfo();
+            game_list->UpdateIconSizes();
+        });
+        game_info_actions.append(action);
+    }
     RetranslateLibraryStyleActions();
 
     game_size_actions = new QActionGroup(this);
@@ -4039,11 +4051,11 @@ void MainWindow::CycleLibraryStyle(int step) {
 }
 
 void MainWindow::ToggleShowLibraryInfo() {
-    auto& setting = UISettings::values.show_library_info;
-    setting.SetValue(!setting.GetValue());
-    action_show_library_info->setChecked(setting.GetValue());
-    // Also repaints the Modern grid and Carousel cards, which show the info line too.
-    game_list->UpdateIconSizes();
+    // The styles' Info key: everything off when anything shows, otherwise everything on.
+    const bool turn_on = !Yuzu::ShowAnyGameInfo();
+    for (QAction* action : std::as_const(game_info_actions)) {
+        action->setChecked(turn_on);
+    }
 }
 
 void MainWindow::UpdateLibraryStyleActions() {
@@ -4055,13 +4067,7 @@ void MainWindow::UpdateLibraryStyleActions() {
         action->setChecked(active != nullptr &&
                            action->data().toString() == QString::fromUtf8(active->id));
     }
-    // The styles and the Modern grid / Carousel cards show the info (play time, version); the
-    // list view has its own columns.
-    if (action_show_library_info != nullptr) {
-        action_show_library_info->setEnabled(
-            active != nullptr ||
-            UISettings::values.game_list_mode.GetValue() != Settings::GameListMode::TreeView);
-    }
+    // Game Info applies to every view (in the list view it picks the columns).
 }
 
 void MainWindow::RetranslateLibraryStyleActions() {
@@ -4072,7 +4078,11 @@ void MainWindow::RetranslateLibraryStyleActions() {
     if (action_previous_library_style != nullptr) {
         action_previous_library_style->setText(tr("Previous Style"));
         action_next_library_style->setText(tr("Next Style"));
-        action_show_library_info->setText(tr("Show Info Panel"));
+        action_show_library_info->setText(tr("Game Info"));
+        const QString names[] = {tr("Play Time"), tr("Version"), tr("Size"), tr("File Type")};
+        for (int i = 0; i < game_info_actions.size() && i < 4; ++i) {
+            game_info_actions[i]->setText(names[i]);
+        }
     }
 }
 

@@ -28,6 +28,7 @@
 #include <QTimer>
 #include <QWheelEvent>
 
+#include "qt_common/config/uisettings.h"
 #include "qt_common/game_list/game_list_p.h"
 #include "yuzu/game/styles/cartridges_style.h"
 #include "yuzu/game/styles/style_helpers.h"
@@ -642,10 +643,10 @@ QPixmap CartridgesStyle::CardPixmap(const QModelIndex& index, const Metrics& m, 
         card_data.id_text = game.program_id_text;
         card_data.is_nx2 = game.is_nx2 || (program_id >> 56) == 0x04;
         if (info) {
-            if (game.is_game) { // "New" when never played
+            if (game.is_game && UISettings::values.show_play_time.GetValue()) { // "New" if unplayed
                 card_data.play_time = game.play_time_text;
             }
-            if (!game.update_version.isEmpty()) {
+            if (UISettings::values.show_add_ons.GetValue() && !game.update_version.isEmpty()) {
                 card_data.version = QStringLiteral("v") + game.update_version;
             }
         }
