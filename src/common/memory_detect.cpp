@@ -30,6 +30,19 @@
 
 namespace Common {
 
+#ifdef __MINGW32__
+namespace {
+// MinGW's psapi.h does not declare PROCESS_MEMORY_COUNTERS_EX2 (Windows 10 1809 and later):
+// the Windows SDK's layout, spelled out.
+struct PROCESS_MEMORY_COUNTERS_EX2 : PROCESS_MEMORY_COUNTERS_EX {
+    SIZE_T PrivateWorkingSetSize;
+    ULONG64 SharedCommitUsage;
+};
+static_assert(sizeof(PROCESS_MEMORY_COUNTERS_EX2) ==
+              sizeof(PROCESS_MEMORY_COUNTERS_EX) + sizeof(SIZE_T) + sizeof(ULONG64));
+} // Anonymous namespace
+#endif
+
 // Detects the RAM and Swapfile sizes
 static MemoryInfo Detect() {
     MemoryInfo mem_info{};
@@ -81,18 +94,13 @@ const MemoryInfo& GetMemInfo() {
 ProcessMemoryUsage GetProcessMemoryUsage() {
     ProcessMemoryUsage usage{};
 #ifdef _WIN32
-    // PROCESS_MEMORY_COUNTERS_EX2, spelled out: MinGW's psapi.h does not declare it.
-    struct {
-        PROCESS_MEMORY_COUNTERS_EX ex;
-        SIZE_T PrivateWorkingSetSize;
-        ULONG64 SharedCommitUsage;
-    } counters{};
-    counters.ex.cb = sizeof(counters);
+    PROCESS_MEMORY_COUNTERS_EX2 counters{};
+    counters.cb = sizeof(counters);
     if (GetProcessMemoryInfo(GetCurrentProcess(),
                              reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters),
                              sizeof(counters))) {
-        usage.commit = counters.ex.PrivateUsage;
-        usage.working_set = counters.ex.WorkingSetSize;
+        usage.commit = counters.PrivateUsage;
+        usage.working_set = counters.WorkingSetSize;
         usage.private_working_set = counters.PrivateWorkingSetSize;
     }
     PERFORMANCE_INFORMATION performance{};

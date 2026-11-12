@@ -91,8 +91,8 @@ function(FixMsysPath target)
         INTERFACE_INCLUDE_DIRECTORIES ${include_dir})
 endfunction()
 
-# Saves linking time. YUZU_MINGW_KEEP_SYMBOLS keeps the symbol table and line tables (built with
-# -gline-tables-only) for sampling profiles.
+# Saves linking time. YUZU_MINGW_KEEP_SYMBOLS keeps the symbol table, and any debug line tables
+# the build adds (such as -gline-tables-only), for sampling profiles.
 option(YUZU_MINGW_KEEP_SYMBOLS "Keep symbols in MinGW release builds" OFF)
 if (MINGW)
     if (YUZU_MINGW_KEEP_SYMBOLS)
