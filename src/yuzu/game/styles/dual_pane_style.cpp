@@ -20,7 +20,6 @@
 #include <QPainterPath>
 #include <QPalette>
 #include <QPen>
-#include <QPolygonF>
 #include <QResizeEvent>
 #include <QStringList>
 #include <QWheelEvent>
@@ -141,8 +140,9 @@ void DualPaneStyle::SetCurrentIndex(const QModelIndex& index) {
     if (!index.isValid()) {
         return;
     }
+    const QModelIndex first = index.siblingAtColumn(0);
     for (size_t i = 0; i < items_.size(); ++i) {
-        if (items_[i] == index) {
+        if (items_[i] == first) {
             SetCurrentRow(static_cast<int>(i), true);
             return;
         }
@@ -197,6 +197,7 @@ void DualPaneStyle::ScheduleRebuild() {
 
 void DualPaneStyle::Rebuild() {
     const QModelIndex old_current = CurrentIndex();
+    const bool had_current = current_ >= 0;
     items_.clear();
 
     if (model_) {
@@ -228,6 +229,15 @@ void DualPaneStyle::Rebuild() {
             }
         }
     }
+    if (row < 0 && !current_path_.isEmpty()) {
+        // The old index died in a model reset: find the same game again by its path.
+        for (size_t i = 0; i < items_.size(); ++i) {
+            if (items_[i].data(GameListItemPath::FullPathRole).toString() == current_path_) {
+                row = static_cast<int>(i);
+                break;
+            }
+        }
+    }
     if (row < 0 && !items_.empty()) {
         row = 0;
     }
@@ -237,10 +247,11 @@ void DualPaneStyle::Rebuild() {
     const QModelIndex now = CurrentIndex();
     shown_ = QPersistentModelIndex(now);
     previous_ = QPersistentModelIndex();
+    current_path_ = now.isValid() ? now.data(GameListItemPath::FullPathRole).toString() : QString();
     ClampScroll();
     EnsureVisible();
     update();
-    if (now != old_current) {
+    if (now != old_current || (had_current && !now.isValid())) {
         emit CurrentChanged(now);
     }
 }
@@ -315,11 +326,12 @@ void DualPaneStyle::SetCurrentRow(int row, bool emit_signal) {
         update();
         return;
     }
+    fade_.stop();
     const QPersistentModelIndex old_shown = shown_;
     current_ = row;
     shown_ = items_[static_cast<size_t>(row)];
+    current_path_ = shown_.data(GameListItemPath::FullPathRole).toString();
     previous_ = old_shown;
-    fade_.stop();
     fade_value_ = previous_.isValid() ? 0.0 : 1.0;
     if (previous_.isValid()) {
         fade_.start();
@@ -417,7 +429,7 @@ void DualPaneStyle::DrawPreview(QPainter& painter, const QModelIndex& index, qre
         title_font.setBold(true);
         const QFontMetrics tfm(title_font);
         const int max_title_h = tfm.lineSpacing() * 3;
-        const int flags = Qt::TextWordWrap | Qt::AlignLeft | Qt::AlignTop;
+        const int flags = Qt::TextWordWrap | Qt::TextWrapAnywhere | Qt::AlignLeft | Qt::AlignTop;
         const QString title = TitleOf(index);
         QRect title_box =
             tfm.boundingRect(QRect(0, 0, text_area.width(), max_title_h), flags, title);
@@ -453,7 +465,7 @@ void DualPaneStyle::DrawPreview(QPainter& painter, const QModelIndex& index, qre
         painter.setPen(pal.text().color());
         painter.setClipRect(text_area);
         painter.drawText(QRect(text_area.left(), y, text_area.width(), title_box.height()),
-                         flags | Qt::TextWrapAnywhere, title);
+                         flags, title);
         y += title_box.height() + 10;
 
         painter.setFont(info_font);
@@ -523,14 +535,16 @@ void DualPaneStyle::DrawGrid(QPainter& painter) {
                 const QPointF tr_pt = box.topRight();
                 const QPointF bl = box.bottomLeft();
                 const QPointF br = box.bottomRight();
-                painter.drawPolyline(
-                    QPolygonF{{QPointF(tl.x(), tl.y() + len), tl, QPointF(tl.x() + len, tl.y())}});
-                painter.drawPolyline(QPolygonF{
-                    {QPointF(tr_pt.x() - len, tr_pt.y()), tr_pt, QPointF(tr_pt.x(), tr_pt.y() + len)}});
-                painter.drawPolyline(
-                    QPolygonF{{QPointF(bl.x(), bl.y() - len), bl, QPointF(bl.x() + len, bl.y())}});
-                painter.drawPolyline(
-                    QPolygonF{{QPointF(br.x() - len, br.y()), br, QPointF(br.x(), br.y() - len)}});
+                const QPointF c0[3] = {{tl.x(), tl.y() + len}, tl, {tl.x() + len, tl.y()}};
+                const QPointF c1[3] = {{tr_pt.x() - len, tr_pt.y()},
+                                       tr_pt,
+                                       {tr_pt.x(), tr_pt.y() + len}};
+                const QPointF c2[3] = {{bl.x(), bl.y() - len}, bl, {bl.x() + len, bl.y()}};
+                const QPointF c3[3] = {{br.x() - len, br.y()}, br, {br.x(), br.y() - len}};
+                painter.drawPolyline(c0, 3);
+                painter.drawPolyline(c1, 3);
+                painter.drawPolyline(c2, 3);
+                painter.drawPolyline(c3, 3);
             }
         }
     }
@@ -625,6 +639,8 @@ void DualPaneStyle::changeEvent(QEvent* event) {
         event->type() == QEvent::StyleChange) {
         art_cache_.clear();
         ComputeLayout();
+        ClampScroll();
+        EnsureVisible();
         update();
     }
 }
@@ -652,7 +668,11 @@ void DualPaneStyle::keyPressEvent(QKeyEvent* event) {
         break;
     case Qt::Key_Down:
     case Qt::Key_S:
-        row = row + cols_ < count ? row + cols_ : row;
+        if (row + cols_ < count) {
+            row += cols_;
+        } else if (row / cols_ < (count - 1) / cols_) {
+            row = count - 1;
+        }
         break;
     case Qt::Key_PageUp:
         row = std::max(0, row - page);

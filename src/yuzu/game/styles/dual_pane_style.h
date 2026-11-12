@@ -63,6 +63,7 @@ private:
     QAbstractItemModel* model_ = nullptr;
     std::vector<QPersistentModelIndex> items_;
     int current_ = -1;
+    QString current_path_;
     QPersistentModelIndex shown_;
     QPersistentModelIndex previous_;
 
