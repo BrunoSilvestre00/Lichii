@@ -91,14 +91,15 @@ void GameCarousel::UpdateIconSize() {
 
     QSize content_size(min_item_width, min_item_height);
     QSize grid_size(min_item_width, grid_height);
+    // The cell is as tall as the view, so it rarely changes; the card inside it does whenever
+    // names or Game Info parts toggle. Always hand the card its new size, or its art stretches.
     if (gridSize() != grid_size) {
         setUpdatesEnabled(false);
-
         setGridSize(grid_size);
-        m_gameCard->setSize(grid_size, content_size, 0, 0);
-
         setUpdatesEnabled(true);
     }
+    m_gameCard->setSize(grid_size, content_size, 0, 0);
+    viewport()->update();
 }
 
 QModelIndex GameCarousel::indexAt(const QPoint& point) const {
