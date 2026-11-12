@@ -298,22 +298,26 @@ QPixmap HomeRowStyle::CoverPixmap(int row, int side) {
     const QModelIndex index = IndexAt(row);
     const qreal dpr = devicePixelRatioF();
     const int target = std::max(1, static_cast<int>(std::ceil(side * kSelectedScale * dpr)));
-    const QString key = QStringLiteral("%1|%2")
+    // The palette is part of the key: games without art get the shared placeholder, which
+    // follows day and night.
+    const QString key = QStringLiteral("%1|%2|%3")
                             .arg(index.data(GameListItemPath::FullPathRole).toString())
-                            .arg(target);
+                            .arg(target)
+                            .arg(palette().window().color().rgb());
     if (const QPixmap* cached = m_cache.object(key)) {
         return *cached;
     }
 
-    if (!index.data(GameListItemPath::HasIconRole).toBool()) {
-        return {};
+    QPixmap art;
+    if (index.data(GameListItemPath::HasIconRole).toBool()) {
+        art = index.data(GameListItemPath::CardIconRole).value<QPixmap>();
+        if (art.isNull()) {
+            art = index.data(Qt::DecorationRole).value<QPixmap>();
+        }
     }
-    QPixmap art = index.data(GameListItemPath::CardIconRole).value<QPixmap>();
     if (art.isNull()) {
-        art = index.data(Qt::DecorationRole).value<QPixmap>();
-    }
-    if (art.isNull()) {
-        return {};
+        // No art: the coloured placeholder every other style uses.
+        art = LibraryStyleContext::Cover(index, QSize(target, target), palette());
     }
 
     QPixmap result(target, target);
@@ -334,23 +338,6 @@ QPixmap HomeRowStyle::CoverPixmap(int row, int side) {
     result.setDevicePixelRatio(dpr);
     m_cache.insert(key, new QPixmap(result));
     return result;
-}
-
-void HomeRowStyle::DrawPlaceholder(QPainter& painter, const QRectF& rect, const QString& title) {
-    const QPalette pal = palette();
-    QPainterPath path;
-    const double radius = rect.width() * 0.06;
-    path.addRoundedRect(rect, radius, radius);
-    QLinearGradient gradient(rect.topLeft(), rect.bottomRight());
-    gradient.setColorAt(0.0, pal.color(QPalette::Mid).lighter(115));
-    gradient.setColorAt(1.0, pal.color(QPalette::Mid).darker(130));
-    painter.fillPath(path, gradient);
-    QFont font = painter.font();
-    font.setPixelSize(std::max(12, static_cast<int>(rect.width() * 0.4)));
-    font.setBold(true);
-    painter.setFont(font);
-    painter.setPen(pal.color(QPalette::WindowText));
-    painter.drawText(rect, Qt::AlignCenter, title.left(1).toUpper());
 }
 
 namespace {
@@ -467,11 +454,7 @@ void HomeRowStyle::paintEvent(QPaintEvent* event) {
             continue;
         }
         const QPixmap pix = CoverPixmap(row, m.side);
-        if (pix.isNull()) {
-            DrawPlaceholder(painter, cover, TitleAt(row));
-        } else {
-            painter.drawPixmap(cover, pix, QRectF(QPointF(0, 0), QSizeF(pix.size())));
-        }
+        painter.drawPixmap(cover, pix, QRectF(QPointF(0, 0), QSizeF(pix.size())));
     }
 
     if (m_current >= 0 && m_current < count) {
@@ -490,11 +473,7 @@ void HomeRowStyle::paintEvent(QPaintEvent* event) {
 
         const QString title = TitleAt(m_current);
         const QPixmap pix = CoverPixmap(m_current, m.side);
-        if (pix.isNull()) {
-            DrawPlaceholder(painter, cover, title);
-        } else {
-            painter.drawPixmap(cover, pix, QRectF(QPointF(0, 0), QSizeF(pix.size())));
-        }
+        painter.drawPixmap(cover, pix, QRectF(QPointF(0, 0), QSizeF(pix.size())));
 
         painter.setBrush(Qt::NoBrush);
         painter.setPen(QPen(accent, std::max(2.0, cover.width() * 0.018)));

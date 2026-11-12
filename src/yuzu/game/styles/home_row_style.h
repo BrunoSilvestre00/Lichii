@@ -67,7 +67,6 @@ private:
     void Rebuild();
     QModelIndex IndexAt(int row) const;
     QPixmap CoverPixmap(int row, int side);
-    void DrawPlaceholder(QPainter& painter, const QRectF& rect, const QString& title);
 
     QPointer<QAbstractItemModel> m_model;
     /// Shown games: top level games and the games inside folder rows.
