@@ -729,8 +729,9 @@ struct Values {
         linkage, false, "use_graphics_pipeline_library", Category::RendererAdvanced};
 
     // Threads that build the graphics programs of the game files in the shader precache on the
-    // loading screen (graphics pipeline libraries), 0 for every CPU thread. The cached pipelines
-    // and compute programs before them use the shader job workers.
+    // loading screen (graphics pipeline libraries), 0 for every CPU thread that fits the free
+    // commit memory (Windows). The cached pipelines and compute programs before them use the
+    // shader job workers.
     SwitchableSetting<u32, true> shader_warm_threads{linkage,
                                                      0,
                                                      0,

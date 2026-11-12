@@ -52,10 +52,14 @@ std::filesystem::path WarmCountPath(const std::filesystem::path& warm_file);
 u64 ReadWarmCount(const std::filesystem::path& warm_file);
 
 /// What a marker records: the precache file's size and last-write time, its entry count, the GPU
-/// driver version and device ID, the pipeline cache version, the marker version and a mode field
-/// of the precache's own (graphics: the dynamic states the device lacks, plus a bit when the
-/// entries were built without an adaptable one, see GraphicsWarmModeBits; 0 for compute).
-/// A marker without the mode field (written before it) reads with a mode of 0.
+/// driver version and device ID, the pipeline cache version, the marker version, a mode field of
+/// the precache's own (graphics: the dynamic states the device lacks, plus a bit when the entries
+/// were built without an adaptable one, see GraphicsWarmModeBits; 0 for compute), the
+/// graphics link mode (bit 0 fast links usable: it decides whether libraries keep link time
+/// optimization info, which changes what the driver caches; 0 for compute) and the variant: a
+/// hash of the build's SPIR-V emission sources (EmissionStamp) and of the settings that change
+/// the SPIR-V or pipeline state of the precache builds (resolution scaling, for one).
+/// Markers written without the last field no longer read, so that precache runs once more.
 struct WarmStamp {
     u64 size{};
     s64 write_time{};
@@ -65,13 +69,16 @@ struct WarmStamp {
     u32 cache_version{};
     u32 marker_version{};
     u32 mode{};
+    u32 link_mode{};
+    u64 variant{};
 
     /// True when `other` was written for the same file, driver, device, cache version, marker
-    /// version and mode (the entry count is informative).
+    /// version, mode, link mode and variant (the entry count is informative).
     [[nodiscard]] bool Matches(const WarmStamp& other) const noexcept {
         return size == other.size && write_time == other.write_time && driver == other.driver &&
                device_id == other.device_id && cache_version == other.cache_version &&
-               marker_version == other.marker_version && mode == other.mode;
+               marker_version == other.marker_version && mode == other.mode &&
+               link_mode == other.link_mode && variant == other.variant;
     }
 };
 
@@ -82,13 +89,20 @@ constexpr u32 WarmMarkerVersion = 4;
 
 /// Version of the graphics warm-up markers (warm-graphics.bin), raised when the entries it builds
 /// change, so that the graphics warm-up runs again. Above 1023: the same field of earlier graphics
-/// markers held mode bits (below 1024), so none of them matches and it runs once more.
+/// markers held mode bits (below 1024), so none of them matches.
 constexpr u32 GraphicsWarmMarkerVersion = 1024;
+
+/// A hash of this build's sources that shape the SPIR-V of guest shaders (the recompiler without
+/// its OpenGL backends, the native lowering, the call inlining and the Vulkan wrapper that calls
+/// the SPIR-V backend), made when it is built. It changes only with a build that may emit other
+/// SPIR-V, unlike the revision.
+[[nodiscard]] u64 EmissionStamp();
 
 /// The stamp of `warm_file` as it is now, empty when its size or time cannot be read.
 std::optional<WarmStamp> CurrentWarmStamp(const std::filesystem::path& warm_file, u64 entries,
                                           u32 driver, u32 device_id, u32 cache_version,
-                                          u32 marker_version = WarmMarkerVersion, u32 mode = 0);
+                                          u32 marker_version = WarmMarkerVersion, u32 mode = 0,
+                                          u32 link_mode = 0, u64 variant = 0);
 
 /// The marker of `warm_file`, empty when there is none or it cannot be read.
 std::optional<WarmStamp> ReadWarmMarker(const std::filesystem::path& warm_file);
