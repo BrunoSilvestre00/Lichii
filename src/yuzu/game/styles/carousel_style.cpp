@@ -33,6 +33,19 @@ namespace LibraryStyles {
 
 namespace {
 
+bool IsGameType(GameListItemType type) {
+    return type == GameListItemType::Game;
+}
+
+bool IsFolderType(GameListItemType type) {
+    return type == GameListItemType::CustomDir || type == GameListItemType::SdmcDir ||
+           type == GameListItemType::UserNandDir || type == GameListItemType::SysNandDir;
+}
+
+GameListItemType TypeOf(const QModelIndex& index) {
+    return index.data(GameListItem::TypeRole).value<GameListItemType>();
+}
+
 constexpr int kAnimationMs = 180;
 constexpr int kMaxDots = 15;
 constexpr int kVisibleRadius = 4;
@@ -44,8 +57,8 @@ QColor Lerp(const QColor& a, const QColor& b, qreal t) {
 }
 
 QColor HashColor(const QString& text) {
-    const uint hash = qHash(text);
-    return QColor::fromHsvF((hash % 360) / 360.0, 0.55, 0.55);
+    const size_t hash = static_cast<size_t>(qHash(text));
+    return QColor::fromHsvF(static_cast<qreal>(hash % 360) / 360.0, 0.55, 0.55);
 }
 
 /// Average colour of the pixmap, weighted towards saturated and bright pixels.
@@ -123,7 +136,12 @@ void CarouselStyle::SetModel(QAbstractItemModel* model) {
         connect(model_, &QAbstractItemModel::rowsInserted, this, schedule);
         connect(model_, &QAbstractItemModel::rowsRemoved, this, schedule);
         connect(model_, &QAbstractItemModel::rowsMoved, this, schedule);
-        connect(model_, &QAbstractItemModel::dataChanged, this, schedule);
+        // Data changes (icons loading in) only invalidate the cached art, not the row list.
+        connect(model_, &QAbstractItemModel::dataChanged, this, [this] {
+            cover_cache_.clear();
+            tint_cache_.clear();
+            update();
+        });
         connect(model_, &QObject::destroyed, this, [this] {
             items_.clear();
             update();
@@ -145,9 +163,8 @@ void CarouselStyle::SetCurrentIndex(const QModelIndex& index) {
     if (!index.isValid()) {
         return;
     }
-    const auto it = std::find_if(items_.begin(), items_.end(), [&](const QPersistentModelIndex& i) {
-        return i.row() == index.row();
-    });
+    const auto it = std::find_if(items_.begin(), items_.end(),
+                                 [&](const QPersistentModelIndex& i) { return i == index; });
     if (it == items_.end()) {
         return;
     }
@@ -189,45 +206,54 @@ void CarouselStyle::EnsureBuilt() {
 void CarouselStyle::Rebuild() {
     dirty_ = false;
 
-    const bool had_current = current_ >= 0 && current_ < static_cast<int>(items_.size()) &&
-                             items_[static_cast<size_t>(current_)].isValid();
-    const int previous_model_row = had_current ? items_[static_cast<size_t>(current_)].row() : -1;
+    const bool had_items = !items_.empty();
+    const QPersistentModelIndex previous =
+        current_ >= 0 && current_ < static_cast<int>(items_.size())
+            ? items_[static_cast<size_t>(current_)]
+            : QPersistentModelIndex();
 
     items_.clear();
     if (model_) {
-        const int count = model_->rowCount();
-        items_.reserve(static_cast<size_t>(count));
-        for (int row = 0; row < count; ++row) {
-            const QModelIndex index = model_->index(row, 0);
-            if (index.data(GameListItem::TypeRole).value<GameListItemType>() ==
-                GameListItemType::Game) {
+        // Games are shown flat: top level games plus the games inside each folder row.
+        // Favorites and "add folder" rows are not covers.
+        const int top_rows = model_->rowCount();
+        for (int r = 0; r < top_rows; ++r) {
+            const QModelIndex index = model_->index(r, 0);
+            const GameListItemType type = TypeOf(index);
+            if (IsGameType(type)) {
                 items_.emplace_back(index);
+            } else if (IsFolderType(type)) {
+                const int children = model_->rowCount(index);
+                for (int c = 0; c < children; ++c) {
+                    const QModelIndex child = model_->index(c, 0, index);
+                    if (IsGameType(TypeOf(child))) {
+                        items_.emplace_back(child);
+                    }
+                }
             }
         }
     }
 
     int new_current = std::clamp(current_, 0, std::max(0, static_cast<int>(items_.size()) - 1));
-    if (previous_model_row >= 0) {
-        const auto it =
-            std::find_if(items_.begin(), items_.end(), [&](const QPersistentModelIndex& i) {
-                return i.row() == previous_model_row;
-            });
+    if (previous.isValid()) {
+        const auto it = std::find_if(items_.begin(), items_.end(),
+                                     [&](const QPersistentModelIndex& i) { return i == previous; });
         if (it != items_.end()) {
             new_current = static_cast<int>(it - items_.begin());
         } else {
             change_pending_ = true;
         }
+    } else if (had_items) {
+        // The selected item was removed.
+        change_pending_ = true;
     }
-    if (new_current != current_) {
-        current_ = new_current;
-        animation_->stop();
-        position_ = current_;
-        progress_ = 1.0;
-        previous_row_ = -1;
-    }
+    current_ = new_current;
+    animation_->stop();
+    position_ = current_;
+    progress_ = 1.0;
+    previous_row_ = -1;
     cover_cache_.clear();
     tint_cache_.clear();
-    update();
 }
 
 QModelIndex CarouselStyle::IndexAt(int row) const {
@@ -345,7 +371,7 @@ QString CarouselStyle::InfoFor(int row) const {
     const qulonglong program_id = index.data(GameListItemPath::ProgramIdRole).toULongLong();
     parts << tr("Program ID: %1")
                  .arg(QString::number(program_id, 16).rightJustified(16, QLatin1Char('0')).toUpper());
-    return parts.join(QStringLiteral("   •   "));
+    return parts.join(QString(QChar(0x2022)).prepend(QStringLiteral("   ")).append(QStringLiteral("   ")));
 }
 
 const CarouselStyle::Tint& CarouselStyle::TintFor(int row) {
@@ -653,6 +679,10 @@ void CarouselStyle::resizeEvent(QResizeEvent* event) {
 }
 
 void CarouselStyle::keyPressEvent(QKeyEvent* event) {
+    if (event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) {
+        LibraryStyleView::keyPressEvent(event);
+        return;
+    }
     switch (event->key()) {
     case Qt::Key_Left:
     case Qt::Key_A:
@@ -677,6 +707,11 @@ void CarouselStyle::keyPressEvent(QKeyEvent* event) {
     case Qt::Key_Return:
     case Qt::Key_Enter:
         Launch(current_);
+        break;
+    case Qt::Key_Menu:
+        if (const QModelIndex index = IndexAt(current_); index.isValid()) {
+            emit ContextMenuRequested(index, mapToGlobal(rect().center()));
+        }
         break;
     default:
         LibraryStyleView::keyPressEvent(event);
@@ -748,6 +783,9 @@ void CarouselStyle::wheelEvent(QWheelEvent* event) {
     int delta = event->angleDelta().y();
     if (delta == 0) {
         delta = event->angleDelta().x();
+    }
+    if ((delta > 0 && wheel_accum_ < 0) || (delta < 0 && wheel_accum_ > 0)) {
+        wheel_accum_ = 0;
     }
     wheel_accum_ += delta;
     while (wheel_accum_ >= 120) {
