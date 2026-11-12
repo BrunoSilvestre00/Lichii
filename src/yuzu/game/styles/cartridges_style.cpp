@@ -695,25 +695,25 @@ QPixmap CartridgesStyle::CardPixmap(const QModelIndex& index, const Metrics& m, 
         return *cached;
     }
 
-    CardData data;
-    data.cover = cover;
-    data.title = title;
-    data.body = body;
-    data.header_text = tr("GAME");
+    CardData card_data;
+    card_data.cover = cover;
+    card_data.title = title;
+    card_data.body = body;
+    card_data.header_text = tr("GAME");
     if (is_game) {
-        data.id_text = QStringLiteral("%1")
+        card_data.id_text = QStringLiteral("%1")
                            .arg(static_cast<qulonglong>(program_id), 16, 16, QLatin1Char('0'))
                            .toUpper();
-        data.strip = DominantColor(cover, static_cast<quint32>(qHash(title)));
+        card_data.strip = DominantColor(cover, static_cast<quint32>(qHash(title)));
         if (info) {
-            ParseInfo(tooltip, data.play_time, data.version);
+            ParseInfo(tooltip, card_data.play_time, card_data.version);
         }
     } else {
-        data.strip = pal.color(QPalette::Highlight);
+        card_data.strip = pal.color(QPalette::Highlight);
     }
-    data.tag_seed = static_cast<int>(program_id % 7);
+    card_data.tag_seed = static_cast<int>(program_id % 7);
 
-    auto* pixmap = new QPixmap(RenderCard(data, m.card_w, m.card_h, dpr));
+    auto* pixmap = new QPixmap(RenderCard(card_data, m.card_w, m.card_h, dpr));
     const int cost = std::max(
         1, static_cast<int>(static_cast<qint64>(pixmap->width()) * pixmap->height() * 4));
     const QPixmap result = *pixmap;

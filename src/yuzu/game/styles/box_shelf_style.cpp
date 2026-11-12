@@ -66,8 +66,7 @@ bool IsFolderType(int type) {
 
 QString TitleOf(const QModelIndex& index) {
     const QString full = index.data(GameListItemPath::TitleRole).toString();
-    return full.isEmpty() ? index.data(Qt::DisplayRole).toString().section(QLatin1Char('
-'), 0, 0)
+    return full.isEmpty() ? index.data(Qt::DisplayRole).toString().section(QLatin1Char('\n'), 0, 0)
                           : full;
 }
 
@@ -80,8 +79,7 @@ QString ItemKey(const QModelIndex& index) {
 /// Reads "label: value" style tooltip line `line` and returns the value, or empty when the line has
 /// no label (for example "Never Played").
 QString TooltipValue(const QModelIndex& index, int line) {
-    const QStringList lines = index.data(Qt::ToolTipRole).toString().split(QLatin1Char('
-'));
+    const QStringList lines = index.data(Qt::ToolTipRole).toString().split(QLatin1Char('\n'));
     if (line < 0 || line >= lines.size()) {
         return {};
     }

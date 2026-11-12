@@ -71,7 +71,6 @@ void HomeRowStyle::SetModel(QAbstractItemModel* model) {
     }
     m_model = model;
     if (m_model) {
-        QAbstractItemModel* const model = m_model.data();
         connect(model, &QAbstractItemModel::modelReset, this, [this] { ModelChanged(true); });
         connect(model, &QAbstractItemModel::layoutChanged, this, [this] { ModelChanged(true); });
         connect(model, &QAbstractItemModel::rowsInserted, this, [this] { ModelChanged(false); });

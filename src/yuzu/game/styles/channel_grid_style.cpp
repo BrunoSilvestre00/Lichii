@@ -86,8 +86,7 @@ QString PlayedOf(const QModelIndex& index) {
     const QModelIndex cell = index.sibling(index.row(), GameListModel::COLUMN_PLAY_TIME);
     if (!cell.isValid()) {
         // The model passed in has no play time column: the tooltip carries the readable text.
-        const QString line = index.data(Qt::ToolTipRole).toString().section(QLatin1Char('
-'), 0, 0);
+        const QString line = index.data(Qt::ToolTipRole).toString().section(QLatin1Char('\n'), 0, 0);
         return line.isEmpty() ? QObject::tr("Never played") : line;
     }
     const qulonglong seconds = cell.data(GameListItemPlayTime::PlayTimeRole).toULongLong();
