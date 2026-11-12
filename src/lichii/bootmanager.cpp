@@ -81,10 +81,11 @@ public:
         setAttribute(Qt::WA_NativeWindow);
         setAttribute(Qt::WA_PaintOnScreen);
         // Only this widget needs a native window: it holds the graphics surface. On Windows, native
-        // ancestors (GRenderWindow, the loading screens, the central widget) cover the whole client
-        // area in single-window borderless fullscreen, where the menu and status bars are hidden.
-        // Qt then sees no exposed area left in the main window and stops painting it, so the
-        // loading screen froze until fullscreen was left.
+        // ancestors (GRenderWindow, the central widget) and their native siblings (the loading
+        // screen, see AA_DontCreateNativeWidgetSiblings in main.cpp) cover the whole client area in
+        // single-window borderless fullscreen, where the menu and status bars are hidden. Qt then
+        // sees no exposed area left in the main window and stops painting it, so the loading
+        // screen froze until fullscreen was left.
         const auto window_system = QtCommon::GetWindowSystemType();
         if (window_system == Core::Frontend::WindowSystemType::Wayland ||
             window_system == Core::Frontend::WindowSystemType::Windows) {
