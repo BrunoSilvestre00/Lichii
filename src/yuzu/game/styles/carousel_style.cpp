@@ -102,6 +102,45 @@ QColor DominantColor(const QPixmap& pixmap) {
     return QColor::fromRgbF(r / total, g / total, b / total);
 }
 
+/// A neighbour at rest (80 % of the selected size, 9 % tilt) with its cover at the origin.
+struct RestingTilt {
+    bool valid = false;
+    /// Maps the cover square (0, 0, side, side) onto the tilted cover.
+    QTransform transform;
+    /// Shadow rect (0 18px 30px of the concept) and reflection rect in the cover's space.
+    QRectF shadow;
+    QRectF reflection;
+    /// Everything above together; the tilted cover itself is (0, 0, 0.8 side, 0.8 side).
+    QRectF bounds;
+};
+
+RestingTilt RestingTiltFor(bool right, qreal side) {
+    RestingTilt tilt;
+    constexpr qreal scale = 0.8;
+    const qreal w = side * scale;
+    const qreal far_h = w * (1.0 - 2.0 * 0.09);
+    QPolygonF quad;
+    if (right) {
+        quad << QPointF(0, 0) << QPointF(w, (w - far_h) / 2) << QPointF(w, (w + far_h) / 2)
+             << QPointF(0, w);
+    } else {
+        quad << QPointF(0, (w - far_h) / 2) << QPointF(w, 0) << QPointF(w, w)
+             << QPointF(0, (w + far_h) / 2);
+    }
+    QPolygonF source;
+    source << QPointF(0, 0) << QPointF(side, 0) << QPointF(side, side) << QPointF(0, side);
+    tilt.valid = QTransform::quadToQuad(source, quad, tilt.transform);
+    const qreal blur = 30.0 * side / 230.0 * scale;
+    const qreal drop = 18.0 * side / 230.0 * scale;
+    tilt.shadow = QRectF(-blur, -blur + drop, w + 2 * blur, w + 2 * blur);
+    tilt.reflection = QRectF(0, side + 6.0 * side / 230.0, side, side * 0.22);
+    tilt.bounds = QRectF(0, 0, w, w).united(tilt.shadow);
+    if (tilt.valid) {
+        tilt.bounds = tilt.bounds.united(tilt.transform.mapRect(tilt.reflection));
+    }
+    return tilt;
+}
+
 } // namespace
 
 CarouselStyle::CarouselStyle(QWidget* parent) : LibraryStyleView(parent) {
@@ -477,12 +516,16 @@ QPixmap CarouselStyle::BackgroundFor(int row) {
     if (found != background_cache_.constEnd()) {
         return *found;
     }
-    // A few entries are enough: the selection, the one it fades from and the next one.
-    if (background_cache_.size() >= 3) {
-        background_cache_.clear();
+    // Entries are window sized: keep only the selection and the one it fades from.
+    for (auto it = background_cache_.begin(); it != background_cache_.end();) {
+        if (it.key() != current_ && it.key() != previous_row_) {
+            it = background_cache_.erase(it);
+        } else {
+            ++it;
+        }
     }
-    // Blur, wash and gradients have no fine detail: render at half the logical size and let the
-    // paint scale it up. A full resolution render cost tens of ms per selection at 200 %.
+    // Blur, wash and gradients have no fine detail: render at half the logical size and scale it
+    // up once below. A full resolution render cost tens of ms per selection at 200 %.
     QPixmap pixmap(QSize(std::max(1, (width() + 1) / 2), std::max(1, (height() + 1) / 2)));
     const QPalette& pal = palette();
     const QRect area(0, 0, width(), height());
@@ -518,8 +561,15 @@ QPixmap CarouselStyle::BackgroundFor(int row) {
     fade.setColorAt(1.0, base);
     painter.fillRect(area, fade);
     painter.end();
-    background_cache_.insert(row, pixmap);
-    return pixmap;
+    // Scale it up once to the device size, so a frame copies it 1:1 instead of scaling the whole
+    // window again.
+    const qreal dpr = devicePixelRatioF();
+    QPixmap full = pixmap.scaled(QSize(std::max(1, static_cast<int>(std::ceil(width() * dpr))),
+                                       std::max(1, static_cast<int>(std::ceil(height() * dpr)))),
+                                 Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    full.setDevicePixelRatio(dpr);
+    background_cache_.insert(row, full);
+    return full;
 }
 
 QPixmap CarouselStyle::TiltedPixmap(int row, bool right, qreal side) {
@@ -537,31 +587,26 @@ QPixmap CarouselStyle::TiltedPixmap(int row, bool right, qreal side) {
     if (tilted_cache_.size() > 24) {
         tilted_cache_.clear();
     }
-    // The shape of a neighbour at rest: 80 % of the selected size, 9 % tilt.
-    const qreal w = side * 0.8;
-    const qreal far_h = w * (1.0 - 2.0 * 0.09);
-    QPolygonF quad;
-    if (right) {
-        quad << QPointF(0, 0) << QPointF(w, (w - far_h) / 2) << QPointF(w, (w + far_h) / 2)
-             << QPointF(0, w);
-    } else {
-        quad << QPointF(0, (w - far_h) / 2) << QPointF(w, 0) << QPointF(w, w)
-             << QPointF(0, (w + far_h) / 2);
-    }
-    QPolygonF source;
-    source << QPointF(0, 0) << QPointF(side, 0) << QPointF(side, side) << QPointF(0, side);
-    QTransform transform;
-    QPixmap tilted(QSize(std::max(1, static_cast<int>(std::ceil(w * dpr))),
-                         std::max(1, static_cast<int>(std::ceil(w * dpr)))));
+    // Shadow, tilted cover and reflection in one pixmap, drawn the same way PaintCover draws a
+    // moving cover.
+    const RestingTilt tilt = RestingTiltFor(right, side);
+    const QRectF& bounds = tilt.bounds;
+    QPixmap tilted(QSize(std::max(1, static_cast<int>(std::ceil(bounds.width() * dpr))),
+                         std::max(1, static_cast<int>(std::ceil(bounds.height() * dpr)))));
     tilted.setDevicePixelRatio(dpr);
     tilted.fill(Qt::transparent);
-    if (QTransform::quadToQuad(source, quad, transform)) {
+    if (tilt.valid) {
         const QPixmap cover = CoverPixmap(row, static_cast<int>(std::ceil(side)));
+        const QPixmap& shadow = ShadowFor(side, false);
+        const QPixmap mirror = Reflection(cover);
         QPainter painter(&tilted);
         painter.setRenderHint(QPainter::Antialiasing);
         painter.setRenderHint(QPainter::SmoothPixmapTransform);
-        painter.setWorldTransform(transform);
+        painter.translate(-bounds.topLeft());
+        painter.drawPixmap(tilt.shadow, shadow, QRectF(shadow.rect()));
+        painter.setWorldTransform(tilt.transform, true);
         painter.drawPixmap(QRectF(0, 0, side, side), cover, QRectF(cover.rect()));
+        painter.drawPixmap(tilt.reflection, mirror, QRectF(mirror.rect()));
     }
     tilted_cache_.insert(key, tilted);
     return tilted;
@@ -609,7 +654,11 @@ QPixmap CarouselStyle::Reflection(const QPixmap& cover) {
     }
     const QImage source = cover.toImage().convertToFormat(QImage::Format_ARGB32_Premultiplied);
     const int h = std::max(1, static_cast<int>(source.height() * 0.22));
+#if QT_VERSION >= QT_VERSION_CHECK(6, 9, 0)
     QImage part = source.copy(0, source.height() - h, source.width(), h).flipped(Qt::Vertical);
+#else
+    QImage part = source.copy(0, source.height() - h, source.width(), h).mirrored(false, true);
+#endif
     {
         // Strongest next to the cover (28 %), gone by 80 % of the way down.
         QPainter p(&part);
@@ -678,6 +727,21 @@ void CarouselStyle::PaintCover(QPainter& painter, const Metrics& m, int row, qre
     painter.save();
     painter.setOpacity(opacity);
 
+    // Covers at rest beside the selection all have the same tilt: draw one cached pixmap with
+    // the shadow, the tilted cover and its reflection, with a plain scale. Transforming every
+    // cover and reflection in perspective and scaling every shadow on every frame is slow.
+    if (!flat_ && a >= 1.0) {
+        const QPixmap tilted = TiltedPixmap(row, sign > 0, side);
+        const QRectF bounds = RestingTiltFor(sign > 0, side).bounds;
+        const QRectF box = quad.boundingRect();
+        const qreal f = box.width() / (side * 0.8);
+        painter.drawPixmap(QRectF(box.left() + bounds.left() * f, box.top() + bounds.top() * f,
+                                  bounds.width() * f, bounds.height() * f),
+                           tilted, QRectF(tilted.rect()));
+        painter.restore();
+        return;
+    }
+
     // Concept shadow: 0 18px 30px at 40 %, the selected cover 0 24px 40px at 50 % (the concept
     // cover is 230 px). Blurred once per cover size, then scaled to each cover.
     {
@@ -690,19 +754,6 @@ void CarouselStyle::PaintCover(QPainter& painter, const Metrics& m, int row, qre
         const QRectF target(box.left() - blur * k, box.top() - blur * k + drop * k,
                             box.width() + 2 * blur * k, box.height() + 2 * blur * k);
         painter.drawPixmap(target, shadow, QRectF(shadow.rect()));
-    }
-
-    // Covers at rest beside the selection all have the same tilt: draw a cached, already tilted
-    // copy with a plain scale. Transforming every cover in perspective on every frame is slow.
-    if (!flat_ && a >= 1.0) {
-        const QPixmap tilted = TiltedPixmap(row, sign > 0, side);
-        painter.drawPixmap(quad.boundingRect(), tilted, QRectF(tilted.rect()));
-        painter.setWorldTransform(transform, true);
-        const QPixmap mirror = Reflection(pixmap);
-        painter.drawPixmap(QRectF(0, side + 6.0 * side / 230.0, side, side * 0.22), mirror,
-                           QRectF(mirror.rect()));
-        painter.restore();
-        return;
     }
 
     painter.setWorldTransform(transform);
