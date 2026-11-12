@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <array>
 #include <atomic>
 
 #include <Hypervisor/Hypervisor.h>
@@ -95,9 +96,11 @@ private:
     u64 m_last_fault_address{};
     u32 m_fault_repeat{};
 
-    // GPU-tracked page whose faulting access is being single-stepped with access granted.
+    // GPU-tracked pages whose faulting access is being single-stepped with access granted; an
+    // access that crosses a page boundary can need both of its pages.
     Kernel::KProcess* m_step_process{};
-    u64 m_step_page{};
+    std::array<u64, 2> m_step_pages{};
+    size_t m_step_page_count{};
     bool m_stepping{};
 };
 

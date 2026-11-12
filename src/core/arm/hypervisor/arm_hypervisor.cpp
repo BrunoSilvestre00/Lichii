@@ -292,7 +292,9 @@ void ArmHypervisor::FinishTrackedAccess() {
     hv_vcpu_set_sys_reg(m_vcpu, HV_SYS_REG_MDSCR_EL1, 0);
     // Restore the protection RasterizerMarkRegionCached applies, unless the GPU released the page
     // in the meantime.
-    m_step_process->GetMemory().ReprotectRasterizerPage(m_step_page);
+    for (size_t i = 0; i < m_step_page_count; ++i) {
+        m_step_process->GetMemory().ReprotectRasterizerPage(m_step_pages[i]);
+    }
 }
 
 bool ArmHypervisor::EmulateMemoryTagging(Kernel::KProcess* process, u64 pc, u64& pstate) {
@@ -653,7 +655,9 @@ HaltReason ArmHypervisor::HandleGuestException(Kernel::KThread* thread) {
         auto* process = thread->GetOwnerProcess();
         const u64 page = far & ~u64{0xFFF};
 
-        const bool repeated = elr == m_last_fault_pc && far == m_last_fault_address;
+        const u64 previous_page = m_last_fault_address & ~u64{0xFFF};
+        const bool same_instruction = elr == m_last_fault_pc;
+        const bool repeated = same_instruction && far == m_last_fault_address;
         m_fault_repeat = repeated ? m_fault_repeat + 1 : 0;
         m_last_fault_pc = elr;
         m_last_fault_address = far;
@@ -681,20 +685,30 @@ HaltReason ArmHypervisor::HandleGuestException(Kernel::KThread* thread) {
             if (m_fault_repeat >= 4) {
                 std::this_thread::yield();
             }
-            auto& memory = process->GetMemory();
-            if (is_write) {
-                memory.InvalidateNCE(page, Memory::YUZU_PAGESIZE);
-            } else {
-                memory.DownloadRasterizerRegion(page, Memory::YUZU_PAGESIZE);
-            }
-            // Open the page for this one access, then single-step it so the protection is
-            // restored right after (every CPU write keeps notifying the GPU, as in Dynarmic).
             FinishTrackedAccess();
-            m_vm.ProtectAccess(page, Memory::YUZU_PAGESIZE,
-                               is_write ? Common::MemoryPermission::ReadWrite
-                                        : Common::MemoryPermission::Read);
+            // The same instruction faulting on another tracked page crosses a page boundary: open
+            // both pages, or each step would close the page the other one needs.
+            m_step_pages[0] = page;
+            m_step_page_count = 1;
+            if (same_instruction && previous_page != page &&
+                IsRasterizerCached(process, previous_page)) {
+                m_step_pages[m_step_page_count++] = previous_page;
+            }
+            // Open the pages for this one access, then single-step it so the protection is
+            // restored right after (every CPU write keeps notifying the GPU, as in Dynarmic).
+            auto& memory = process->GetMemory();
+            for (size_t i = 0; i < m_step_page_count; ++i) {
+                const u64 step_page = m_step_pages[i];
+                if (is_write) {
+                    memory.InvalidateNCE(step_page, Memory::YUZU_PAGESIZE);
+                } else {
+                    memory.DownloadRasterizerRegion(step_page, Memory::YUZU_PAGESIZE);
+                }
+                m_vm.ProtectAccess(step_page, Memory::YUZU_PAGESIZE,
+                                   is_write ? Common::MemoryPermission::ReadWrite
+                                            : Common::MemoryPermission::Read);
+            }
             m_step_process = process;
-            m_step_page = page;
             m_stepping = true;
             hv_vcpu_set_sys_reg(m_vcpu, HV_SYS_REG_MDSCR_EL1, MdscrSoftwareStep);
             spsr |= PstateSoftwareStep;
