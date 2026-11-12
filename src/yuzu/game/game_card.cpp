@@ -391,18 +391,10 @@ QRect GameCard::getCardRect(const QStyleOptionViewItem& option, const QModelInde
     int card_left, card_top, card_height;
 
     if (m_columns >= 1) {
-        // grid mode
-
-        // center everything in-line, such that the leftmost and rightmost cards
-        // have ~ equal padding to the edge of the viewport
-        // spacing between each card is larger, but equal to each other
-        const int column = index.row() % m_columns;
-
-        const int row_width = m_columns * cell_width;
-        const int total_gap = row_width - cardMargin * 2 - m_columns * card_width;
-        const int gap = (m_columns > 1) ? (total_gap / (m_columns - 1)) : 0;
-        card_left =
-            option.rect.left() - column * cell_width + cardMargin + column * (card_width + gap) + 4;
+        // grid mode: the cells share the row width, the card keeps its own width centered in
+        // its cell. The column is not derived from the row: hidden rows (the favorites row, a
+        // search) shift the cells.
+        card_left = option.rect.left() + (cell_width - (card_width - cardMargin)) / 2;
 
         // fill cell vertically
         card_top = option.rect.top() + cardMargin;

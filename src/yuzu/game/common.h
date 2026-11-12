@@ -19,6 +19,14 @@ inline u32 CardIconDisplaySize(bool show_game_name) {
     return show_game_name ? std::max<u32>(icon_size, u32{128}) : icon_size;
 }
 
+/// Card cell size around the icon size in the grid and the carousel. GameCard::paint draws the
+/// artwork 10 pixels narrower than the card cell and 11 pixels shorter, plus 82 for the title band
+/// when names are shown, so these margins keep the artwork square.
+constexpr int CardWidthMargin = 24;
+constexpr int CardHeightMargin(bool show_game_name) {
+    return CardWidthMargin + 1 + (show_game_name ? 82 : 0);
+}
+
 inline bool ContainsAllWords(const QString& haystack, const QString& userinput) {
     const QStringList userinput_split = userinput.split(QLatin1Char{' '}, Qt::SkipEmptyParts);
     return std::all_of(userinput_split.begin(), userinput_split.end(), [&haystack](const QString& s) {
