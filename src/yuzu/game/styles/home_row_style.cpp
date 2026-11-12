@@ -8,6 +8,7 @@
 
 #include <QAbstractItemModel>
 #include <QColor>
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QEasingCurve>
 #include <QFont>
@@ -22,6 +23,7 @@
 #include <QPalette>
 #include <QPen>
 #include <QResizeEvent>
+#include <QStringList>
 #include <QTimer>
 #include <QVariantAnimation>
 #include <QWheelEvent>
@@ -68,6 +70,26 @@ bool ArtRolesChanged(const QList<int>& roles) {
     return false;
 }
 constexpr int kAnimationMs = 180;
+
+/// The info line fitted to `width` (S3): whole parts dropped from the end, then "played"; never
+/// cut inside a part. Empty when not even the first part fits.
+QString FitInfo(const GameInfo& game, const QFontMetrics& fm, int width) {
+    if (game.info_line.isEmpty() || fm.horizontalAdvance(game.info_line) <= width) {
+        return game.info_line;
+    }
+    const QString separator = QStringLiteral(" · ");
+    QStringList parts = game.info_line.split(separator);
+    while (parts.size() > 1 && fm.horizontalAdvance(parts.join(separator)) > width) {
+        parts.removeLast();
+    }
+    const QString played =
+        QCoreApplication::translate("LibraryStyles", "%1 played").arg(game.play_time_text);
+    if (fm.horizontalAdvance(parts.join(separator)) > width && parts.first() == played) {
+        parts.first() = game.play_time_text;
+    }
+    const QString fitted = parts.join(separator);
+    return fm.horizontalAdvance(fitted) <= width ? fitted : QString{};
+}
 
 LibraryStyleView* Make(QWidget* p) {
     return new HomeRowStyle(p);
@@ -501,18 +523,24 @@ void HomeRowStyle::paintEvent(QPaintEvent* event) {
         // Title and info on one line, centred over the selected tile.
         const GameInfo game = LibraryStyleContext::Info(index);
         const QString name = m_show_names ? title : QString{};
-        const QString info = m_show_info ? game.info_line : QString{};
+        QFont title_font = painter.font();
+        title_font.setPixelSize(std::max(15, m.side / 8));
+        title_font.setBold(true);
+        QFont info_font = painter.font();
+        info_font.setPixelSize(std::max(12, m.side / 13));
+        info_font.setBold(true);
+        const QFontMetrics title_fm(title_font);
+        const QFontMetrics info_fm(info_font);
+        const int max_w = static_cast<int>(width() * 0.92);
+        // The info gets what the title leaves, the title keeps at least a third of the line.
+        const int name_reserve =
+            name.isEmpty() ? 0
+                           : std::min(title_fm.horizontalAdvance(name) + 2, max_w / 3) +
+                                 title_fm.height() / 2;
+        const QString info =
+            m_show_info ? FitInfo(game, info_fm, std::max(0, max_w - name_reserve)) : QString{};
         if (!name.isEmpty() || !info.isEmpty()) {
-            QFont title_font = painter.font();
-            title_font.setPixelSize(std::max(15, m.side / 8));
-            title_font.setBold(true);
-            QFont info_font = painter.font();
-            info_font.setPixelSize(std::max(12, m.side / 13));
-            info_font.setBold(true);
-            const QFontMetrics title_fm(title_font);
-            const QFontMetrics info_fm(info_font);
             const int gap = name.isEmpty() || info.isEmpty() ? 0 : title_fm.height() / 2;
-            const int max_w = static_cast<int>(width() * 0.92);
             // Measured widths plus a pixel of slack: eliding to the exact advance can cut the
             // last word through rounding even when it fits.
             int info_w = info.isEmpty() ? 0 : info_fm.horizontalAdvance(info) + 2;
