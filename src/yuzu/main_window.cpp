@@ -1769,6 +1769,10 @@ void MainWindow::ConnectMenuEvents() {
     // the cards, the styles and the list columns always agree.
     auto* game_info_menu = new QMenu(this);
     action_show_library_info = ui->menu_View->addMenu(game_info_menu);
+    // The name is one of the parts too: first entry, then the info parts.
+    ui->menu_View->removeAction(ui->action_Show_Game_Name);
+    game_info_menu->addAction(ui->action_Show_Game_Name);
+    game_info_menu->addSeparator();
     for (auto* setting : {&UISettings::values.show_play_time, &UISettings::values.show_add_ons,
                           &UISettings::values.show_size, &UISettings::values.show_types}) {
         QAction* action = game_info_menu->addAction(QString{});
@@ -4079,6 +4083,7 @@ void MainWindow::RetranslateLibraryStyleActions() {
         action_previous_library_style->setText(tr("Previous Style"));
         action_next_library_style->setText(tr("Next Style"));
         action_show_library_info->setText(tr("Game Info"));
+        ui->action_Show_Game_Name->setText(tr("Name"));
         const QString names[] = {tr("Play Time"), tr("Version"), tr("Size"), tr("File Type")};
         for (int i = 0; i < game_info_actions.size() && i < 4; ++i) {
             game_info_actions[i]->setText(names[i]);

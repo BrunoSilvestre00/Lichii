@@ -157,8 +157,9 @@ GameCard::TextLayout GameCard::Layout(int art, bool names, bool info) {
     meta_font.setPixelSize(t.meta_px);
     const QFontMetrics tfm(title_font);
     const QFontMetrics mfm(meta_font);
-    // The card is the art plus 2 px wide; split the line at its dot when a long one won't fit.
-    const int text_w = art + 2 - 2 * t.pad;
+    // The card is the art plus 16 px wide (Yuzu::CardWidthMargin minus cardMargin); split the
+    // line at its dot when a long one won't fit.
+    const int text_w = art + Yuzu::CardWidthMargin - cardMargin - 2 * t.pad;
     QStringList sample_parts;
     if (UISettings::values.show_play_time.GetValue()) {
         sample_parts << QStringLiteral("88.8 h played");
@@ -365,21 +366,30 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
             for (const QString& part : meta_parts) {
                 pieces += part.split(QStringLiteral(" \u00B7 "), Qt::SkipEmptyParts);
             }
-            // Tiny cards: "8 min" instead of "8 min played" when even the split line won't fit.
-            if (show_info && !add_folder && !game_folder && !pieces.isEmpty() &&
-                mfm.horizontalAdvance(pieces.first()) > textRect.width()) {
+            const auto make_lines = [&](const QStringList& parts) {
+                QStringList out;
+                if (text.meta_lines >= 2 && parts.size() > 1) {
+                    const qsizetype half = (parts.size() + 1) / 2;
+                    out << QStringList(parts.mid(0, half)).join(QStringLiteral(" \u00B7 "))
+                        << QStringList(parts.mid(half)).join(QStringLiteral(" \u00B7 "));
+                } else {
+                    out << parts.join(QStringLiteral(" \u00B7 "));
+                }
+                return out;
+            };
+            QStringList lines = make_lines(pieces);
+            // Narrow cards: "8 min" instead of "8 min played" when any line would be cut.
+            const bool overflows =
+                std::any_of(lines.begin(), lines.end(), [&](const QString& line) {
+                    return mfm.horizontalAdvance(line) > textRect.width();
+                });
+            if (overflows && show_info && UISettings::values.show_play_time.GetValue() &&
+                !add_folder && !game_folder && !pieces.isEmpty()) {
                 const auto game = LibraryStyles::LibraryStyleContext::Info(index);
                 if (game.is_game) {
                     pieces.first() = game.play_time_text;
+                    lines = make_lines(pieces);
                 }
-            }
-            QStringList lines;
-            if (text.meta_lines >= 2 && pieces.size() > 1) {
-                const qsizetype half = (pieces.size() + 1) / 2;
-                lines << QStringList(pieces.mid(0, half)).join(QStringLiteral(" \u00B7 "))
-                      << QStringList(pieces.mid(half)).join(QStringLiteral(" \u00B7 "));
-            } else {
-                lines << meta_parts.join(QStringLiteral(" \u00B7 "));
             }
             for (const QString& line : lines) {
                 painter->drawText(QRect(textRect.left(), y, textRect.width(), mfm.lineSpacing()),
