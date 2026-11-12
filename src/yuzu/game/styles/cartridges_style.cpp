@@ -687,10 +687,18 @@ void CartridgesStyle::DrawNameBubble(QPainter& painter, int row, const Metrics& 
     const int max_w = static_cast<int>(
         std::max(30.0, (show_names_ ? m.cell_w - 12.0 : std::max(190.0 * bs, m.cell_w)) -
                            2 * pad_x));
-    const QRect text_box =
-        fm.boundingRect(QRect(0, 0, max_w, 1000), Qt::AlignHCenter | Qt::TextWordWrap, title);
-    const qreal bw = text_box.width() + 2 * pad_x;
-    const qreal bh = std::min(text_box.height(), fm.lineSpacing() * 2) + 2 * pad_y;
+    // The bubble fits the S4 lines of the name: word wrap only, then "...".
+    const int title_lines = LibraryStyleContext::TitleLines(2);
+    const QStringList lines =
+        LibraryStyleContext::NameLines(title, bubble_font, max_w, title_lines, pad_x);
+    const bool glides = row == current_row_ && title_lines == 1 &&
+                        fm.horizontalAdvance(title) > max_w + pad_x;
+    int text_w = 0;
+    for (const QString& line : lines) {
+        text_w = std::max(text_w, fm.horizontalAdvance(line));
+    }
+    const qreal bw = (glides ? max_w : std::min(text_w, max_w)) + 2 * pad_x;
+    const qreal bh = fm.lineSpacing() * std::max<qsizetype>(1, lines.size()) + 2 * pad_y;
     const qreal arrow = BubbleArrow * bs;
     // Anchored to the cart's resting bottom edge, so lifting the selected cart opens a gap.
     const qreal rest_bottom = m.margin_top + (row / m.cols) * m.cell_h + m.card_h;
@@ -718,10 +726,11 @@ void CartridgesStyle::DrawNameBubble(QPainter& painter, int row, const Metrics& 
     painter.setPen(Qt::NoPen);
     painter.setBrush(bubble);
     painter.drawPolygon(tip);
-    LibraryStyleContext::PaintName(&painter,
-                                   rect.adjusted(pad_x, pad_y, -pad_x, -pad_y).toAlignedRect(), title,
-                                   QColor(0x16, 0x14, 0x1c), bubble_font,
-                                   Qt::AlignHCenter | Qt::AlignVCenter, 2);
+    // The selected cart's long name glides with Scroll Long Names.
+    LibraryStyleContext::PaintTitle(
+        &painter, rect.adjusted(pad_x, pad_y, -pad_x, -pad_y).toAlignedRect(), title,
+        QColor(0x16, 0x14, 0x1c), bubble_font, Qt::AlignHCenter | Qt::AlignVCenter, title_lines,
+        row == current_row_ ? this : nullptr, static_cast<int>(pad_x));
     painter.restore();
 }
 
