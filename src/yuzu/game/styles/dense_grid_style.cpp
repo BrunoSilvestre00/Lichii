@@ -59,9 +59,17 @@ void DenseGridStyle::SetModel(QAbstractItemModel* new_model) {
     }
     model = new_model;
     if (model) {
-        // Population adds rows one by one: rebuild once per event loop pass.
+        // Population adds rows one by one: rebuild once per event loop pass, not once per row.
         const auto schedule = [this] {
-            QTimer::singleShot(0, this, &DenseGridStyle::Rebuild);
+            if (rebuild_pending) {
+                return;
+            }
+            rebuild_pending = true;
+            QTimer::singleShot(0, this, [this] {
+                if (rebuild_pending) {
+                    Rebuild();
+                }
+            });
         };
         connect(model, &QAbstractItemModel::modelReset, this, schedule);
         connect(model, &QAbstractItemModel::layoutChanged, this, schedule);
@@ -110,6 +118,7 @@ QString DenseGridStyle::CycleOption() {
 }
 
 void DenseGridStyle::Rebuild() {
+    rebuild_pending = false;
     const QPersistentModelIndex previous = CurrentIndex();
     entries.clear();
     QPersistentModelIndex add_folder;

@@ -59,6 +59,7 @@ private:
     bool show_names = true;
     bool show_info = false;
     bool names_on_tiles = true;
+    bool rebuild_pending = false;
     QScrollBar* scrollbar = nullptr;
 };
 
