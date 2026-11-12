@@ -413,6 +413,10 @@ void GameList::ActivateStyle(const LibraryStyles::StyleInfo* info) {
     }
     if (info == nullptr || (style_view != nullptr && style_id != info->id)) {
         if (style_view != nullptr) {
+            // The old view lives until the event loop deletes it: cut it off now so a rebuild it
+            // still has queued neither reports a selection nor works on the model.
+            style_view->disconnect(this);
+            style_model->disconnect(style_view);
             style_view->hide();
             style_view->deleteLater();
             style_view = nullptr;
