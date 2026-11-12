@@ -1,22 +1,813 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Placeholder until the Carousel style lands: the style's own files replace this one.
+// Cover Flow library style. Concept by inxomnyaa.
 
+#include <algorithm>
+#include <cmath>
+
+#include <QAbstractItemModel>
+#include <QApplication>
 #include <QCoreApplication>
+#include <QEasingCurve>
+#include <QFontMetrics>
+#include <QImage>
+#include <QKeyEvent>
+#include <QLinearGradient>
+#include <QMouseEvent>
+#include <QPaintEvent>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPalette>
+#include <QRadialGradient>
+#include <QResizeEvent>
+#include <QStringList>
+#include <QTransform>
+#include <QVariantAnimation>
+#include <QWheelEvent>
 
+#include "qt_common/game_list/game_list_p.h"
 #include "yuzu/game/styles/carousel_style.h"
-#include "yuzu/game/styles/library_style_view.h"
-#include "yuzu/game/styles/style_helpers.h"
+
+namespace LibraryStyles {
 
 namespace {
 
-LibraryStyles::LibraryStyleView* Make(QWidget* parent) {
-    return LibraryStyles::MakePlaceholderView(
-        parent, QCoreApplication::translate("LibraryStyles", "Carousel"));
+bool IsGameType(GameListItemType type) {
+    return type == GameListItemType::Game;
+}
+
+bool IsFolderType(GameListItemType type) {
+    return type == GameListItemType::CustomDir || type == GameListItemType::SdmcDir ||
+           type == GameListItemType::UserNandDir || type == GameListItemType::SysNandDir;
+}
+
+GameListItemType TypeOf(const QModelIndex& index) {
+    return index.data(GameListItem::TypeRole).value<GameListItemType>();
+}
+
+constexpr int kAnimationMs = 180;
+constexpr int kMaxDots = 15;
+constexpr int kVisibleRadius = 4;
+
+QColor Lerp(const QColor& a, const QColor& b, qreal t) {
+    return QColor::fromRgbF(a.redF() + (b.redF() - a.redF()) * t,
+                            a.greenF() + (b.greenF() - a.greenF()) * t,
+                            a.blueF() + (b.blueF() - a.blueF()) * t);
+}
+
+QColor HashColor(const QString& text) {
+    const size_t hash = static_cast<size_t>(qHash(text));
+    return QColor::fromHsvF(static_cast<qreal>(hash % 360) / 360.0, 0.55, 0.55);
+}
+
+/// Average colour of the pixmap, weighted towards saturated and bright pixels.
+QColor DominantColor(const QPixmap& pixmap) {
+    const QImage image = pixmap.toImage()
+                             .scaled(24, 24, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                             .convertToFormat(QImage::Format_ARGB32);
+    qreal r = 0, g = 0, b = 0, total = 0;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const QColor c = image.pixelColor(x, y);
+            if (c.alphaF() < 0.5) {
+                continue;
+            }
+            const qreal weight = 0.05 + c.hsvSaturationF() * c.valueF();
+            r += c.redF() * weight;
+            g += c.greenF() * weight;
+            b += c.blueF() * weight;
+            total += weight;
+        }
+    }
+    if (total <= 0.0) {
+        return QColor(60, 60, 70);
+    }
+    return QColor::fromRgbF(r / total, g / total, b / total);
+}
+
+} // namespace
+
+CarouselStyle::CarouselStyle(QWidget* parent) : LibraryStyleView(parent) {
+    setObjectName(QStringLiteral("libraryStyleCarousel"));
+    setFocusPolicy(Qt::StrongFocus);
+    setAutoFillBackground(false);
+
+    animation_ = new QVariantAnimation(this);
+    animation_->setDuration(kAnimationMs);
+    animation_->setEasingCurve(QEasingCurve::OutCubic);
+    animation_->setStartValue(0.0);
+    animation_->setEndValue(1.0);
+    connect(animation_, &QVariantAnimation::valueChanged, this, [this](const QVariant& value) {
+        progress_ = value.toReal();
+        position_ = start_position_ + (static_cast<qreal>(current_) - start_position_) * progress_;
+        update();
+    });
+
+    rebuild_timer_.setSingleShot(true);
+    rebuild_timer_.setInterval(30);
+    connect(&rebuild_timer_, &QTimer::timeout, this, [this] {
+        EnsureBuilt();
+        if (change_pending_) {
+            change_pending_ = false;
+            emit CurrentChanged(CurrentIndex());
+        }
+        update();
+    });
+}
+
+CarouselStyle::~CarouselStyle() = default;
+
+void CarouselStyle::SetModel(QAbstractItemModel* model) {
+    if (model_) {
+        QObject::disconnect(model_, nullptr, this, nullptr);
+    }
+    model_ = model;
+    items_.clear();
+    current_ = 0;
+    position_ = 0.0;
+    progress_ = 1.0;
+    previous_row_ = -1;
+    animation_->stop();
+    if (model_) {
+        const auto schedule = [this] { ScheduleRebuild(); };
+        connect(model_, &QAbstractItemModel::modelReset, this, schedule);
+        connect(model_, &QAbstractItemModel::layoutChanged, this, schedule);
+        connect(model_, &QAbstractItemModel::rowsInserted, this, schedule);
+        connect(model_, &QAbstractItemModel::rowsRemoved, this, schedule);
+        connect(model_, &QAbstractItemModel::rowsMoved, this, schedule);
+        // Data changes (icons loading in) only invalidate the cached art, not the row list.
+        connect(model_, &QAbstractItemModel::dataChanged, this, [this] {
+            cover_cache_.clear();
+            tint_cache_.clear();
+            update();
+        });
+        connect(model_, &QObject::destroyed, this, [this] {
+            items_.clear();
+            update();
+        });
+    }
+    dirty_ = true;
+    EnsureBuilt();
+    change_pending_ = false;
+    update();
+}
+
+QModelIndex CarouselStyle::CurrentIndex() const {
+    const_cast<CarouselStyle*>(this)->EnsureBuilt();
+    return IndexAt(current_);
+}
+
+void CarouselStyle::SetCurrentIndex(const QModelIndex& index) {
+    EnsureBuilt();
+    if (!index.isValid()) {
+        return;
+    }
+    const auto it = std::find_if(items_.begin(), items_.end(),
+                                 [&](const QPersistentModelIndex& i) { return i == index; });
+    if (it == items_.end()) {
+        return;
+    }
+    const bool was_blocked = blockSignals(true);
+    SelectRow(static_cast<int>(it - items_.begin()), false);
+    blockSignals(was_blocked);
+    update();
+}
+
+void CarouselStyle::SetShowNames(bool show) {
+    show_names_ = show;
+    update();
+}
+
+void CarouselStyle::SetShowInfo(bool show) {
+    show_info_ = show;
+    update();
+}
+
+QString CarouselStyle::CycleOption() {
+    flat_ = !flat_;
+    update();
+    return flat_ ? tr("Covers: flat") : tr("Covers: tiles");
+}
+
+void CarouselStyle::ScheduleRebuild() {
+    dirty_ = true;
+    if (!rebuild_timer_.isActive()) {
+        rebuild_timer_.start();
+    }
+}
+
+void CarouselStyle::EnsureBuilt() {
+    if (dirty_) {
+        Rebuild();
+    }
+}
+
+void CarouselStyle::Rebuild() {
+    dirty_ = false;
+
+    const bool had_items = !items_.empty();
+    const QPersistentModelIndex previous =
+        current_ >= 0 && current_ < static_cast<int>(items_.size())
+            ? items_[static_cast<size_t>(current_)]
+            : QPersistentModelIndex();
+
+    items_.clear();
+    if (model_) {
+        // Games are shown flat: top level games plus the games inside each folder row.
+        // Favorites and "add folder" rows are not covers.
+        const int top_rows = model_->rowCount();
+        for (int r = 0; r < top_rows; ++r) {
+            const QModelIndex index = model_->index(r, 0);
+            const GameListItemType type = TypeOf(index);
+            if (IsGameType(type)) {
+                items_.emplace_back(index);
+            } else if (IsFolderType(type)) {
+                const int children = model_->rowCount(index);
+                for (int c = 0; c < children; ++c) {
+                    const QModelIndex child = model_->index(c, 0, index);
+                    if (IsGameType(TypeOf(child))) {
+                        items_.emplace_back(child);
+                    }
+                }
+            }
+        }
+    }
+
+    int new_current = std::clamp(current_, 0, std::max(0, static_cast<int>(items_.size()) - 1));
+    if (previous.isValid()) {
+        const auto it = std::find_if(items_.begin(), items_.end(),
+                                     [&](const QPersistentModelIndex& i) { return i == previous; });
+        if (it != items_.end()) {
+            new_current = static_cast<int>(it - items_.begin());
+        } else {
+            change_pending_ = true;
+        }
+    } else if (had_items) {
+        // The selected item was removed.
+        change_pending_ = true;
+    }
+    current_ = new_current;
+    animation_->stop();
+    position_ = current_;
+    progress_ = 1.0;
+    previous_row_ = -1;
+    cover_cache_.clear();
+    tint_cache_.clear();
+}
+
+QModelIndex CarouselStyle::IndexAt(int row) const {
+    if (row < 0 || row >= static_cast<int>(items_.size())) {
+        return {};
+    }
+    return QModelIndex(items_[static_cast<size_t>(row)]);
+}
+
+void CarouselStyle::SelectRow(int row, bool animate) {
+    if (items_.empty()) {
+        return;
+    }
+    row = std::clamp(row, 0, static_cast<int>(items_.size()) - 1);
+    if (row == current_) {
+        return;
+    }
+    previous_row_ = current_;
+    start_position_ = position_;
+    current_ = row;
+    animation_->stop();
+    if (animate) {
+        progress_ = 0.0;
+        animation_->start();
+    } else {
+        position_ = current_;
+        progress_ = 1.0;
+        previous_row_ = -1;
+    }
+    update();
+    emit CurrentChanged(IndexAt(current_));
+}
+
+void CarouselStyle::MoveBy(int delta) {
+    SelectRow(current_ + delta);
+}
+
+void CarouselStyle::Launch(int row) {
+    const QModelIndex index = IndexAt(row);
+    if (index.isValid()) {
+        last_launch_row_ = row;
+        launch_timer_.start();
+        emit LaunchRequested(index);
+    }
+}
+
+int CarouselStyle::HitRow(const QPoint& point) const {
+    for (auto it = hits_.rbegin(); it != hits_.rend(); ++it) {
+        if (it->polygon.containsPoint(QPointF(point), Qt::OddEvenFill)) {
+            return it->row;
+        }
+    }
+    return -1;
+}
+
+CarouselStyle::Metrics CarouselStyle::ComputeMetrics() const {
+    Metrics m;
+    const qreal w = width();
+    const qreal h = height();
+    m.side = std::clamp(std::min(w * 0.3, h * 0.46), 96.0, 440.0);
+    m.title_px = std::clamp(m.side * 0.1, 15.0, 32.0);
+    m.info_px = std::clamp(m.title_px * 0.5, 11.0, 15.0);
+
+    qreal block = m.side + 22.0 + 22.0;
+    if (show_names_) {
+        block += m.title_px * 1.5;
+    }
+    if (show_info_) {
+        block += m.info_px * 1.6 + 6.0;
+    }
+    const qreal top = std::max(12.0, (h - block) * 0.45);
+    m.center_x = w * 0.5 - m.side * 0.2;
+    m.center_y = top + m.side * 0.5;
+    qreal y = top + m.side + 22.0;
+    m.title_y = y;
+    if (show_names_) {
+        y += m.title_px * 1.5;
+    }
+    m.info_y = y;
+    if (show_info_) {
+        y += m.info_px * 1.6 + 6.0;
+    }
+    m.dots_y = y + 8.0;
+    return m;
+}
+
+QPixmap CarouselStyle::SourceArt(int row, bool* has_art) const {
+    const QModelIndex index = IndexAt(row);
+    QPixmap pixmap = index.data(GameListItemPath::CardIconRole).value<QPixmap>();
+    bool has = index.data(GameListItemPath::HasIconRole).toBool();
+    if (pixmap.isNull()) {
+        pixmap = index.data(Qt::DecorationRole).value<QPixmap>();
+    }
+    has = has && !pixmap.isNull();
+    if (has_art) {
+        *has_art = has;
+    }
+    return pixmap;
+}
+
+QString CarouselStyle::TitleFor(int row) const {
+    const QModelIndex index = IndexAt(row);
+    QString title = index.data(GameListItemPath::TitleRole).toString();
+    if (title.isEmpty()) {
+        title = index.data(Qt::DisplayRole).toString().section(QLatin1Char('\n'), 0, 0);
+    }
+    return title;
+}
+
+QString CarouselStyle::InfoFor(int row) const {
+    const QModelIndex index = IndexAt(row);
+    // The item tooltip already holds the play time and version lines.
+    QStringList parts =
+        index.data(Qt::ToolTipRole).toString().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    const qulonglong program_id = index.data(GameListItemPath::ProgramIdRole).toULongLong();
+    parts << tr("Program ID: %1")
+                 .arg(QString::number(program_id, 16).rightJustified(16, QLatin1Char('0')).toUpper());
+    return parts.join(QString(QChar(0x2022)).prepend(QStringLiteral("   ")).append(QStringLiteral("   ")));
+}
+
+const CarouselStyle::Tint& CarouselStyle::TintFor(int row) {
+    const auto found = tint_cache_.constFind(row);
+    if (found != tint_cache_.constEnd()) {
+        return *found;
+    }
+    Tint tint;
+    bool has_art = false;
+    const QPixmap art = SourceArt(row, &has_art);
+    if (has_art) {
+        tint.color = DominantColor(art);
+        tint.blur = art.scaled(32, 32, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    } else {
+        tint.color = HashColor(TitleFor(row));
+    }
+    return *tint_cache_.insert(row, tint);
+}
+
+QPixmap CarouselStyle::CoverPixmap(int row, int side) {
+    const qreal dpr = devicePixelRatioF();
+    const int px = std::max(1, static_cast<int>(std::ceil(side * dpr)));
+    if (cover_cache_side_ != px) {
+        cover_cache_.clear();
+        cover_cache_side_ = px;
+    }
+    const auto found = cover_cache_.constFind(row);
+    if (found != cover_cache_.constEnd()) {
+        return *found;
+    }
+    // Keep the cache small: only covers around the selection are ever painted.
+    if (cover_cache_.size() > 24) {
+        cover_cache_.clear();
+    }
+
+    bool has_art = false;
+    const QPixmap art = SourceArt(row, &has_art);
+
+    QImage image(px, px, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    {
+        QPainter p(&image);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
+        QPainterPath path;
+        const qreal radius = px * 0.1;
+        path.addRoundedRect(QRectF(0, 0, px, px), radius, radius);
+        p.setClipPath(path);
+        if (has_art) {
+            const QPixmap scaled =
+                art.scaled(px, px, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            p.drawPixmap((px - scaled.width()) / 2, (px - scaled.height()) / 2, scaled);
+        } else {
+            const QColor base = HashColor(TitleFor(row));
+            QLinearGradient gradient(0, 0, 0, px);
+            gradient.setColorAt(0.0, base.lighter(130));
+            gradient.setColorAt(1.0, base.darker(150));
+            p.fillRect(QRectF(0, 0, px, px), gradient);
+            const QString title = TitleFor(row).trimmed();
+            if (!title.isEmpty()) {
+                QFont font = this->font();
+                font.setPixelSize(std::max(8, static_cast<int>(px * 0.45)));
+                font.setBold(true);
+                p.setFont(font);
+                p.setPen(QColor(255, 255, 255, 220));
+                p.drawText(QRectF(0, 0, px, px), Qt::AlignCenter, title.left(1).toUpper());
+            }
+        }
+    }
+    QPixmap pixmap = QPixmap::fromImage(image);
+    pixmap.setDevicePixelRatio(dpr);
+    cover_cache_.insert(row, pixmap);
+    return pixmap;
+}
+
+void CarouselStyle::PaintBackground(QPainter& painter) {
+    const QPalette& pal = palette();
+    painter.fillRect(rect(), pal.color(QPalette::Window));
+    if (items_.empty()) {
+        return;
+    }
+
+    const int cur = std::clamp(current_, 0, static_cast<int>(items_.size()) - 1);
+    const Tint to = TintFor(cur);
+    QColor tint = to.color;
+    QPixmap from_blur;
+    if (progress_ < 1.0 && previous_row_ >= 0 && previous_row_ < static_cast<int>(items_.size())) {
+        const Tint from = TintFor(previous_row_);
+        tint = Lerp(from.color, to.color, progress_);
+        from_blur = from.blur;
+    }
+
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
+    if (!from_blur.isNull()) {
+        painter.setOpacity(0.5 * (1.0 - progress_));
+        painter.drawPixmap(rect(), from_blur);
+    }
+    if (!to.blur.isNull()) {
+        painter.setOpacity(0.5 * (from_blur.isNull() ? 1.0 : progress_));
+        painter.drawPixmap(rect(), to.blur);
+    }
+    painter.setOpacity(1.0);
+
+    // Wash the blurred cover with its dominant colour, then fade into the palette at the bottom.
+    QColor wash = tint;
+    wash.setAlpha(110);
+    painter.fillRect(rect(), wash);
+
+    QRadialGradient glow(QPointF(width() * 0.4, height() * 0.4), std::max(width(), height()) * 0.6);
+    QColor glow_color = tint.lighter(150);
+    glow_color.setAlpha(90);
+    glow.setColorAt(0.0, glow_color);
+    glow_color.setAlpha(0);
+    glow.setColorAt(1.0, glow_color);
+    painter.fillRect(rect(), glow);
+
+    QColor base = pal.color(QPalette::Window);
+    QLinearGradient fade(0, 0, 0, height());
+    base.setAlpha(60);
+    fade.setColorAt(0.0, base);
+    base.setAlpha(190);
+    fade.setColorAt(1.0, base);
+    painter.fillRect(rect(), fade);
+}
+
+void CarouselStyle::PaintCover(QPainter& painter, const Metrics& m, int row, qreal d) {
+    const qreal a = std::abs(d);
+    const qreal sign = d < 0 ? -1.0 : 1.0;
+    const qreal side = m.side;
+
+    qreal scale;
+    qreal offset;
+    qreal tilt;
+    qreal opacity;
+    if (!flat_) {
+        scale = a <= 1.0 ? 1.0 - 0.2 * a : std::max(0.5, 0.8 - 0.07 * (a - 1.0));
+        offset = a <= 1.0 ? 0.45 * side * a : 0.45 * side + (a - 1.0) * 0.18 * side;
+        tilt = std::min(a, 1.0) * 0.09;
+        opacity = std::max(0.35, 1.0 - 0.1 * a);
+    } else {
+        constexpr qreal gap = 0.04;
+        scale = a <= 1.0 ? 1.0 - 0.25 * a : 0.75;
+        offset = a <= 1.0 ? a * (0.5 + gap + 0.375) * side
+                          : (0.5 + gap + 0.375) * side + (a - 1.0) * (0.75 + gap) * side;
+        tilt = 0.0;
+        opacity = std::max(0.4, 1.0 - 0.1 * a);
+    }
+    opacity *= std::clamp(kVisibleRadius + 1.0 - a, 0.0, 1.0);
+    if (opacity <= 0.01) {
+        return;
+    }
+
+    const qreal x = m.center_x + sign * offset;
+    const qreal w = side * scale;
+    const qreal h = side * scale;
+    const qreal far_h = h * (1.0 - 2.0 * tilt);
+
+    QPolygonF quad;
+    if (sign > 0 || a < 1e-6) {
+        quad << QPointF(x - w / 2, m.center_y - h / 2) << QPointF(x + w / 2, m.center_y - far_h / 2)
+             << QPointF(x + w / 2, m.center_y + far_h / 2) << QPointF(x - w / 2, m.center_y + h / 2);
+    } else {
+        quad << QPointF(x - w / 2, m.center_y - far_h / 2) << QPointF(x + w / 2, m.center_y - h / 2)
+             << QPointF(x + w / 2, m.center_y + h / 2) << QPointF(x - w / 2, m.center_y + far_h / 2);
+    }
+    hits_.push_back({row, quad});
+
+    const QPixmap pixmap = CoverPixmap(row, static_cast<int>(std::ceil(side)));
+    QPolygonF source;
+    source << QPointF(0, 0) << QPointF(side, 0) << QPointF(side, side) << QPointF(0, side);
+    QTransform transform;
+    if (!QTransform::quadToQuad(source, quad, transform)) {
+        return;
+    }
+
+    painter.save();
+    painter.setOpacity(opacity);
+
+    // Soft shadow under the covers that are close to the selection.
+    if (a < 1.0) {
+        painter.setPen(Qt::NoPen);
+        for (int i = 0; i < 4; ++i) {
+            painter.setBrush(QColor(0, 0, 0, static_cast<int>(18 * (1.0 - a))));
+            const qreal grow = 4.0 * i;
+            painter.drawRoundedRect(
+                quad.boundingRect().adjusted(-grow, -grow + 10, grow, grow + 10), side * 0.1,
+                side * 0.1);
+        }
+    }
+
+    painter.setWorldTransform(transform);
+    painter.drawPixmap(QRectF(0, 0, side, side), pixmap, QRectF(pixmap.rect()));
+
+    if (a < 0.5) {
+        QColor accent = palette().color(QPalette::Highlight);
+        accent.setAlphaF(1.0 - a * 2.0);
+        QPen pen(accent, std::max(2.0, side * 0.012) * 1.5);
+        painter.setPen(pen);
+        painter.setBrush(Qt::NoBrush);
+        const qreal inset = pen.widthF() / 2.0;
+        painter.drawRoundedRect(QRectF(inset, inset, side - 2 * inset, side - 2 * inset),
+                                side * 0.1, side * 0.1);
+    }
+    painter.restore();
+}
+
+void CarouselStyle::PaintTexts(QPainter& painter, const Metrics& m) {
+    if (items_.empty()) {
+        return;
+    }
+    const int row = std::clamp(current_, 0, static_cast<int>(items_.size()) - 1);
+    const QColor text = palette().color(QPalette::WindowText);
+    const qreal text_width = std::max(40.0, width() * 0.9);
+    const qreal left = (width() - text_width) / 2.0;
+
+    if (show_names_) {
+        QFont font = this->font();
+        font.setPixelSize(static_cast<int>(m.title_px));
+        font.setBold(true);
+        painter.setFont(font);
+        painter.setPen(text);
+        const QString title = QFontMetrics(font).elidedText(TitleFor(row), Qt::ElideRight,
+                                                            static_cast<int>(text_width));
+        painter.drawText(QRectF(left, m.title_y, text_width, m.title_px * 1.5),
+                         Qt::AlignHCenter | Qt::AlignVCenter, title);
+    }
+    if (show_info_) {
+        QFont font = this->font();
+        font.setPixelSize(static_cast<int>(m.info_px));
+        painter.setFont(font);
+        QColor muted = text;
+        muted.setAlpha(170);
+        painter.setPen(muted);
+        const QString info = QFontMetrics(font).elidedText(InfoFor(row), Qt::ElideRight,
+                                                           static_cast<int>(text_width));
+        painter.drawText(QRectF(left, m.info_y, text_width, m.info_px * 1.6),
+                         Qt::AlignHCenter | Qt::AlignVCenter, info);
+    }
+}
+
+void CarouselStyle::PaintDots(QPainter& painter, const Metrics& m) {
+    const int count = static_cast<int>(items_.size());
+    if (count <= 1) {
+        return;
+    }
+    const int dots = std::min(count, kMaxDots);
+    const int active = count <= kMaxDots
+                           ? current_
+                           : static_cast<int>(std::lround(static_cast<double>(current_) *
+                                                          (dots - 1) / (count - 1)));
+    constexpr qreal spacing = 14.0;
+    const qreal start = width() / 2.0 - spacing * (dots - 1) / 2.0;
+    QColor muted = palette().color(QPalette::WindowText);
+    muted.setAlpha(90);
+    painter.setPen(Qt::NoPen);
+    for (int i = 0; i < dots; ++i) {
+        const bool on = i == active;
+        painter.setBrush(on ? palette().color(QPalette::Highlight) : muted);
+        const qreal radius = on ? 4.5 : 3.0;
+        painter.drawEllipse(QPointF(start + spacing * i, m.dots_y), radius, radius);
+    }
+}
+
+void CarouselStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
+    EnsureBuilt();
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
+    painter.setRenderHint(QPainter::TextAntialiasing);
+
+    hits_.clear();
+    PaintBackground(painter);
+
+    if (items_.empty()) {
+        painter.setPen(palette().color(QPalette::WindowText));
+        painter.drawText(rect(), Qt::AlignCenter, tr("No games to show"));
+        return;
+    }
+
+    const Metrics m = ComputeMetrics();
+    const int count = static_cast<int>(items_.size());
+    const int lo = std::max(0, static_cast<int>(std::floor(position_)) - kVisibleRadius);
+    const int hi = std::min(count - 1, static_cast<int>(std::ceil(position_)) + kVisibleRadius);
+
+    std::vector<int> order;
+    order.reserve(static_cast<size_t>(std::max(0, hi - lo + 1)));
+    for (int row = lo; row <= hi; ++row) {
+        order.push_back(row);
+    }
+    // Far covers first so the nearer ones overlap them.
+    std::stable_sort(order.begin(), order.end(), [this](int l, int r) {
+        return std::abs(l - position_) > std::abs(r - position_);
+    });
+    for (const int row : order) {
+        PaintCover(painter, m, row, row - position_);
+    }
+
+    PaintTexts(painter, m);
+    PaintDots(painter, m);
+}
+
+void CarouselStyle::resizeEvent(QResizeEvent* event) {
+    LibraryStyleView::resizeEvent(event);
+    cover_cache_.clear();
+}
+
+void CarouselStyle::keyPressEvent(QKeyEvent* event) {
+    if (event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) {
+        LibraryStyleView::keyPressEvent(event);
+        return;
+    }
+    switch (event->key()) {
+    case Qt::Key_Left:
+    case Qt::Key_A:
+        MoveBy(-1);
+        break;
+    case Qt::Key_Right:
+    case Qt::Key_D:
+        MoveBy(1);
+        break;
+    case Qt::Key_PageUp:
+        MoveBy(-5);
+        break;
+    case Qt::Key_PageDown:
+        MoveBy(5);
+        break;
+    case Qt::Key_Home:
+        SelectRow(0);
+        break;
+    case Qt::Key_End:
+        SelectRow(static_cast<int>(items_.size()) - 1);
+        break;
+    case Qt::Key_Return:
+    case Qt::Key_Enter:
+        Launch(current_);
+        break;
+    case Qt::Key_Menu:
+        if (const QModelIndex index = IndexAt(current_); index.isValid()) {
+            emit ContextMenuRequested(index, mapToGlobal(rect().center()));
+        }
+        break;
+    default:
+        LibraryStyleView::keyPressEvent(event);
+        return;
+    }
+    event->accept();
+}
+
+void CarouselStyle::mousePressEvent(QMouseEvent* event) {
+    setFocus();
+    const int row = HitRow(event->position().toPoint());
+    if (event->button() == Qt::LeftButton) {
+        press_row_ = row;
+        press_was_selected_ = row >= 0 && row == current_;
+        if (row >= 0 && row != current_) {
+            SelectRow(row);
+        }
+        event->accept();
+    } else if (event->button() == Qt::RightButton) {
+        if (row >= 0) {
+            if (row != current_) {
+                SelectRow(row);
+            }
+            emit ContextMenuRequested(IndexAt(row), event->globalPosition().toPoint());
+        }
+        event->accept();
+    } else {
+        LibraryStyleView::mousePressEvent(event);
+    }
+}
+
+void CarouselStyle::mouseReleaseEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton) {
+        const int row = HitRow(event->position().toPoint());
+        if (press_row_ >= 0 && press_was_selected_ && row == press_row_) {
+            Launch(row);
+        }
+        press_row_ = -1;
+        press_was_selected_ = false;
+        event->accept();
+        return;
+    }
+    LibraryStyleView::mouseReleaseEvent(event);
+}
+
+void CarouselStyle::mouseDoubleClickEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton) {
+        press_row_ = -1;
+        press_was_selected_ = false;
+        const int row = HitRow(event->position().toPoint());
+        if (row >= 0) {
+            const bool just_launched =
+                launch_timer_.isValid() && last_launch_row_ == row &&
+                launch_timer_.elapsed() <= QApplication::doubleClickInterval() + 100;
+            if (row != current_) {
+                SelectRow(row);
+            }
+            if (!just_launched) {
+                Launch(row);
+            }
+        }
+        event->accept();
+        return;
+    }
+    LibraryStyleView::mouseDoubleClickEvent(event);
+}
+
+void CarouselStyle::wheelEvent(QWheelEvent* event) {
+    int delta = event->angleDelta().y();
+    if (delta == 0) {
+        delta = event->angleDelta().x();
+    }
+    if ((delta > 0 && wheel_accum_ < 0) || (delta < 0 && wheel_accum_ > 0)) {
+        wheel_accum_ = 0;
+    }
+    wheel_accum_ += delta;
+    while (wheel_accum_ >= 120) {
+        MoveBy(-1);
+        wheel_accum_ -= 120;
+    }
+    while (wheel_accum_ <= -120) {
+        MoveBy(1);
+        wheel_accum_ += 120;
+    }
+    event->accept();
+}
+
+namespace {
+
+LibraryStyleView* Make(QWidget* parent) {
+    return new CarouselStyle(parent);
 }
 
 [[maybe_unused]] const bool registered =
-    LibraryStyles::Register({"carousel", QT_TRANSLATE_NOOP("LibraryStyles", "Carousel"), &Make});
+    LibraryStyles::Register({"carousel", QT_TR_NOOP("Cover Flow"), &Make});
 
 } // namespace
+
+} // namespace LibraryStyles
