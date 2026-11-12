@@ -82,7 +82,8 @@ private:
     const Tint& TintFor(int row);
     /// The full tinted background for a selected cover, cached for the current size.
     QPixmap BackgroundFor(int row);
-    /// A neighbour cover at rest, already tilted towards the selection, cached.
+    /// A neighbour cover at rest, already tilted towards the selection, with its shadow and
+    /// reflection, cached.
     QPixmap TiltedPixmap(int row, bool right, qreal side);
     QString TitleFor(int row) const;
     QString InfoFor(int row) const;
