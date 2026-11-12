@@ -77,9 +77,8 @@ QString TitleOf(const QModelIndex& index) {
 
 } // namespace
 
-[[maybe_unused]] static const bool registered =
-    LibraryStyles::Register(
-        {"dense_grid", QT_TRANSLATE_NOOP("LibraryStyles", "Dense grid"), &Make});
+[[maybe_unused]] static const bool registered = LibraryStyles::Register(
+    {"dense_grid", QT_TRANSLATE_NOOP("LibraryStyles", "Dense grid"), &Make});
 
 DenseGridStyle::DenseGridStyle(QWidget* parent) : LibraryStyleView{parent} {
     setFocusPolicy(Qt::StrongFocus);
@@ -96,7 +95,7 @@ void DenseGridStyle::SetModel(QAbstractItemModel* new_model) {
     }
     model = new_model;
     if (model) {
-        // Population adds rows one by one: rebuild once per event loop pass.
+        // Population adds rows one by one: rebuild once per event loop pass, not once per row.
         const auto schedule = [this] {
             if (rebuild_pending) {
                 return;

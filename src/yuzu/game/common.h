@@ -19,6 +19,14 @@ inline u32 CardIconDisplaySize(bool show_game_name) {
     return show_game_name ? std::max<u32>(icon_size, u32{128}) : icon_size;
 }
 
+/// Card cell size around the icon size in the grid and the carousel. GameCard::paint draws the
+/// artwork 10 pixels narrower than the card cell and 11 pixels shorter, plus 82 for the title band
+/// when names are shown, so these margins keep the artwork square.
+constexpr int CardWidthMargin = 24;
+constexpr int CardHeightMargin(bool show_game_name) {
+    return CardWidthMargin + 1 + (show_game_name ? 82 : 0);
+}
+
 inline bool ContainsAllWords(const QString& haystack, const QString& userinput) {
     const QStringList userinput_split = userinput.split(QLatin1Char{' '}, Qt::SkipEmptyParts);
     return std::all_of(userinput_split.begin(), userinput_split.end(), [&haystack](const QString& s) {
@@ -30,9 +38,11 @@ inline bool FilterMatches(const QString& filter, const QStandardItem* item) {
     if (filter.isEmpty())
         return true;
 
+    // Compiled once: this runs for every game on every search keystroke, in several views.
+    static const QRegularExpression non_letters(QStringLiteral("[^a-z\\s]"));
     auto const sluggify = [](const QString& s) {
         QString o(s.normalized(QString::NormalizationForm_D).toLower());
-        return o.replace(QRegularExpression(QStringLiteral("[^a-z\\s]")), QStringLiteral(""));
+        return o.replace(non_letters, QString{});
     };
 
     const auto norm_filter = sluggify(filter);

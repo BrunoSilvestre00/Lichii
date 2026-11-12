@@ -95,8 +95,6 @@ public:
 
     void ResetViewMode();
 
-    /// True while a library style (yuzu/game/styles) is shown in place of the Modern grid.
-    bool IsStyleActive() const;
     /// Hands the persisted Names and Info panel toggles to the active style.
     void UpdateStyleToggles();
 

@@ -53,7 +53,10 @@ struct StyleInfo {
 };
 
 // Self-registration: each style's .cpp has
-// `static const bool registered = LibraryStyles::Register({"canvas", QT_TR_NOOP("Canvas"), &Make});`
+// `static const bool registered = LibraryStyles::Register(
+//      {"canvas", QT_TRANSLATE_NOOP("LibraryStyles", "Canvas"), &Make});`
+// The display name is translated in the "LibraryStyles" context (see DisplayName); QT_TR_NOOP
+// outside a class gives lupdate no such context.
 bool Register(const StyleInfo& info);
 const std::vector<StyleInfo>& All();
 

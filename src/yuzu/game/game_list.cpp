@@ -399,10 +399,6 @@ void GameList::ResetViewMode() {
     ActivateStyle(LibraryStyles::Active());
 }
 
-bool GameList::IsStyleActive() const {
-    return style_view != nullptr;
-}
-
 void GameList::UpdateStyleToggles() {
     if (style_view == nullptr) {
         return;
@@ -417,6 +413,10 @@ void GameList::ActivateStyle(const LibraryStyles::StyleInfo* info) {
     }
     if (info == nullptr || (style_view != nullptr && style_id != info->id)) {
         if (style_view != nullptr) {
+            // The old view lives until the event loop deletes it: cut it off now so a rebuild it
+            // still has queued neither reports a selection nor works on the model.
+            style_view->disconnect(this);
+            style_model->disconnect(style_view);
             style_view->hide();
             style_view->deleteLater();
             style_view = nullptr;
@@ -799,12 +799,16 @@ void GameList::RefreshExternalContent() {
 
 void GameList::UpdateIconSizes() {
     UpdateStyleToggles();
+    // The cards read the icon size and the names setting when they paint, so a repaint is enough
+    // even when the cell size stays the same.
     switch (game_list_mode) {
     case Settings::GameListMode::GridView:
         grid_view->UpdateIconSize();
+        grid_view->viewport()->update();
         break;
     case Settings::GameListMode::CarouselView:
         carousel_view->UpdateIconSize();
+        carousel_view->viewport()->update();
         break;
     case Settings::GameListMode::TreeView:
         break;
