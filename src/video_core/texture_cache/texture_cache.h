@@ -881,7 +881,10 @@ bool TextureCache<P>::KeepTemplateTextures(std::span<const TextureHandleRead> re
             Tegra::Texture::TexturePair(reads[i].raw, via_header_index);
         const u32 tic_index = Tegra::Texture::TextureHeaderIndex(
             view_index, image_table.current_limit, native_tiling);
-        if (!views[i].id || !samplers[i] || tic_index > image_table.current_limit ||
+        // A null view can stand for an image that failed to allocate, which the next read of the
+        // descriptor after TickFrame's collection makes again: a template would keep it null.
+        if (!views[i].id || views[i].id == NULL_IMAGE_VIEW_ID || !samplers[i] ||
+            tic_index > image_table.current_limit ||
             sampler_index > sampler_table.current_limit) {
             return false;
         }
