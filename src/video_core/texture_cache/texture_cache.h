@@ -876,16 +876,25 @@ bool TextureCache<P>::KeepTemplateTextures(std::span<const TextureHandleRead> re
         }
         return gpu_memory->GetPointer(address);
     };
+    // VisitImageView gives the null view for a descriptor that names no mapped image, or one the
+    // cache could not make (kept in image_views), and both stay null while its bytes and the
+    // mappings do. An image that failed to allocate is not kept there: a later read makes it.
+    const auto null_view_holds = [&](const TICEntry& tic) {
+        if (!IsValidEntry(*gpu_memory, tic)) {
+            return true;
+        }
+        const auto it = channel_state->image_views.find(tic);
+        return it != channel_state->image_views.end() && it->second == NULL_IMAGE_VIEW_ID;
+    };
     for (size_t i = 0; i < reads.size(); ++i) {
         const auto [view_index, sampler_index] =
             Tegra::Texture::TexturePair(reads[i].raw, via_header_index);
         const u32 tic_index = Tegra::Texture::TextureHeaderIndex(
             view_index, image_table.current_limit, native_tiling);
-        // A null view can stand for an image that failed to allocate, which the next read of the
-        // descriptor after TickFrame's collection makes again: a template would keep it null.
-        if (!views[i].id || views[i].id == NULL_IMAGE_VIEW_ID || !samplers[i] ||
-            tic_index > image_table.current_limit ||
-            sampler_index > sampler_table.current_limit) {
+        if (!views[i].id || !samplers[i] || tic_index > image_table.current_limit ||
+            sampler_index > sampler_table.current_limit ||
+            (views[i].id == NULL_IMAGE_VIEW_ID &&
+             !null_view_holds(image_table.descriptors[tic_index]))) {
             return false;
         }
         const DrawTemplateTexture& texture = textures.emplace_back(DrawTemplateTexture{
