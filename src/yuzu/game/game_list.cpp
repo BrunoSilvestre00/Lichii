@@ -261,6 +261,11 @@ void GameList::OnPopulate() {
     } else {
         grid_root_dir_index_to_restore = -1;
     }
+    // removeRows() below runs while the grid's root is the opened folder and its current index is
+    // that folder's row; Qt's single selection then walks parents looking for the root and never
+    // stops. Reset both first; OnPopulatingCompleted() opens the folder again.
+    grid_view->setCurrentIndex(QModelIndex{});
+    grid_view->setRootIndex(QModelIndex{});
     m_populating = true;
     m_currentView->setEnabled(false);
     if (style_view != nullptr) {
