@@ -30,9 +30,44 @@
 #include "core/hle/service/glue/glue_manager.h"
 #include "core/hle/service/kernel_helpers.h"
 #include "core/hle/service/server_manager.h"
+#include "core/hle/service/sockets/online_profile.h"
 #include "core/loader/loader.h"
 
 namespace Service::Account {
+
+// While the host redirect sends the game to a private server, answers with this emulator's
+// profile on it, which the server reads as the player's account at login
+// (sockets/online_profile.h, from Droplet). Otherwise the caller keeps its own answer.
+static bool ReplyServerIdToken(Core::System& system, HLERequestContext& ctx) {
+    const auto& id = system.GetApplicationProcessBuildID();
+    size_t length = id.size();
+    while (length > 0 && id[length - 1] == 0) {
+        --length;
+    }
+    std::string build;
+    for (size_t i = 0; i < length; ++i) {
+        build += fmt::format("{:02x}", id[i]);
+    }
+    const std::string token = Sockets::OnlineProfile::IdentityToken(build);
+    if (token.empty()) {
+        return false;
+    }
+    const size_t capacity = ctx.GetWriteBufferSize();
+    if (token.size() >= capacity) {
+        LOG_ERROR(Service_ACC, "Server id token ({} bytes) does not fit the {}-byte buffer",
+                  token.size(), capacity);
+        return false;
+    }
+    // Titles read the token as a C string, so the rest of their buffer is zeroed.
+    std::vector<u8> out(capacity, 0);
+    std::memcpy(out.data(), token.data(), token.size());
+    ctx.WriteBuffer(out);
+
+    IPC::ResponseBuilder rb{ctx, 3};
+    rb.Push(ResultSuccess);
+    rb.Push(static_cast<u32>(token.size()));
+    return true;
+}
 
 // Thumbnails are hard coded to be at least this size
 constexpr std::size_t THUMBNAIL_SIZE = 0x24000;
@@ -505,6 +540,9 @@ protected:
     }
 
     void LoadIdTokenCache(HLERequestContext& ctx) {
+        if (ReplyServerIdToken(system, ctx)) {
+            return;
+        }
         LOG_WARNING(Service_ACC, "(STUBBED) called");
 
         std::vector<u8> token_data(0x100);
@@ -746,7 +784,7 @@ public:
     ~EnsureTokenIdCacheAsyncInterface() = default;
 
     void LoadIdTokenCache(HLERequestContext& ctx) {
-        if (ReplyNextendoIdToken(system, ctx)) {
+        if (ReplyNextendoIdToken(system, ctx) || ReplyServerIdToken(system, ctx)) {
             return;
         }
         LOG_WARNING(Service_ACC, "(STUBBED) called");
@@ -832,7 +870,7 @@ private:
     }
 
     void LoadIdTokenCache(HLERequestContext& ctx) {
-        if (ReplyNextendoIdToken(system, ctx)) {
+        if (ReplyNextendoIdToken(system, ctx) || ReplyServerIdToken(system, ctx)) {
             return;
         }
         LOG_WARNING(Service_ACC, "(STUBBED) called");
