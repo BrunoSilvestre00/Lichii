@@ -3,9 +3,8 @@
 
 #include <algorithm>
 #include <cmath>
-#include <vector>
 #include <QColor>
-#include <QDateTime>
+#include <QAbstractItemView>
 #include <QFileInfo>
 #include <QFont>
 #include <QGuiApplication>
@@ -141,7 +140,6 @@ QPixmap GameListFallbackIcon(int size, const QString& title, const QPalette& pal
     return pixmap;
 }
 
-
 GameCard::TextLayout GameCard::Layout(int art, bool names, bool info) {
     TextLayout t;
     // Without art the title is the card: always show it.
@@ -165,12 +163,13 @@ GameCard::TextLayout GameCard::Layout(int art, bool names, bool info) {
     // The card is the art plus 16 px wide (Yuzu::CardWidthMargin minus cardMargin); split the
     // line at its dot when a long one won't fit.
     const int text_w = art + Yuzu::CardWidthMargin - cardMargin - 2 * t.pad;
-    // Game Info lines, laid out once for the view (shared with the library styles).
-    const auto info_layout = LibraryStyles::LibraryStyleContext::LayoutInfo(mfm, text_w);
-    t.meta_lines = info ? info_layout.lines : 0;
-    t.line_of = info_layout.line_of;
-    t.short_play = info_layout.short_play;
-    const int title_lines = LibraryStyles::LibraryStyleContext::TitleLines(2);
+    // Each part on a fixed line for the whole view, packed once for the card width (the same
+    // code as the library styles).
+    t.info = info ? LibraryStyles::LibraryStyleContext::LayoutInfo(meta_font, text_w)
+                  : LibraryStyles::InfoLayout{};
+    t.meta_lines = t.info.lines;
+    // No bottom padding of its own: the card's inset under the text already gives the room.
+    const int title_lines = Yuzu::ScrollLongNames() ? 1 : 2;
     t.height =
         6 + (names ? tfm.lineSpacing() * title_lines + 3 : 0) + t.meta_lines * mfm.lineSpacing();
     return t;
@@ -338,14 +337,17 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
             QFont titleFont = option.font;
             titleFont.setBold(true);
             titleFont.setPixelSize(text.title_px);
-            const int line = QFontMetrics(titleFont).lineSpacing();
+            const QFontMetrics tfm(titleFont);
+            const int line = tfm.lineSpacing();
+            const int overflow = std::max(0, text.pad - 2);
+            // Two lines at most, cut with "..."; one with Scroll Long Names, where the selected
+            // card's long name glides to its end and back. Never runs into the info line below.
             const int title_lines = LibraryStyles::LibraryStyleContext::TitleLines(2);
-            // Up to two lines cut with "..." (shared with the styles); with Scroll Long Names one
-            // line, and the selected card's name scrolls (the views repaint it on a timer).
+            const auto* view = qobject_cast<const QAbstractItemView*>(option.widget);
             LibraryStyles::LibraryStyleContext::PaintTitle(
                 painter, QRect(textRect.left(), y, textRect.width(), line * title_lines), title,
                 titleColor, titleFont, Qt::AlignLeft | Qt::AlignTop, title_lines,
-                std::max(0, text.pad - 2), selected);
+                selected && view != nullptr ? view->viewport() : nullptr, overflow);
             y += line * title_lines + 3;
         }
 
@@ -365,14 +367,12 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
             const QFontMetrics mfm(metaFont);
             painter->setPen(subtitleColor);
             painter->setFont(metaFont);
-            // Every part on its fixed line, the same on every card (shared with the styles).
+            // Every part on its fixed line (TextLayout::info), so play time, version, size and
+            // type sit in the same place on every card; placeholders keep the lines filled.
             QStringList lines;
-            if (show_info && !add_folder && !game_folder) {
-                LibraryStyles::LibraryStyleContext::InfoLayout layout;
-                layout.lines = text.meta_lines;
-                layout.line_of = text.line_of;
-                layout.short_play = text.short_play;
-                lines = LibraryStyles::LibraryStyleContext::InfoLines(index, layout);
+            const auto game = LibraryStyles::LibraryStyleContext::Info(index);
+            if (show_info && game.is_game) {
+                lines = LibraryStyles::LibraryStyleContext::InfoLines(game, text.info, metaFont);
             } else {
                 lines << meta_parts.join(QStringLiteral(" \u00B7 "));
             }

@@ -6,8 +6,6 @@
 #include <QScroller>
 #include <QScrollerProperties>
 
-#include <QTimer>
-
 #include "qt_common/config/uisettings.h"
 #include "qt_common/game_list/model.h"
 #include "yuzu/game/common.h"
@@ -18,16 +16,6 @@ GameGrid::GameGrid(QWidget* parent) : QListView{parent} {
     m_gameCard = new GameCard(this);
     setItemDelegate(m_gameCard);
     setObjectName(QStringLiteral("gameGridView"));
-
-    // View > Game Info > Scroll Long Names: repaint only the selected card while its name moves.
-    auto* name_scroll_timer = new QTimer(this);
-    name_scroll_timer->setInterval(33);
-    connect(name_scroll_timer, &QTimer::timeout, this, [this] {
-        if (Yuzu::ScrollLongNames() && currentIndex().isValid() && isVisible()) {
-            viewport()->update(visualRect(currentIndex()));
-        }
-    });
-    name_scroll_timer->start();
 
     setViewMode(QListView::ListMode);
     setResizeMode(QListView::Fixed);

@@ -25,7 +25,6 @@
 
 #include "qt_common/config/uisettings.h"
 #include "qt_common/game_list/game_list_p.h"
-#include "yuzu/game/common.h"
 #include "yuzu/game/styles/canvas_style.h"
 #include "yuzu/game/styles/style_helpers.h"
 
@@ -97,16 +96,6 @@ CanvasStyle::CanvasStyle(QWidget* parent) : LibraryStyleView(parent) {
     setObjectName(QStringLiteral("canvasLibraryStyle"));
     setFocusPolicy(Qt::StrongFocus);
     setAutoFillBackground(false);
-
-    // View > Game Info > Scroll Long Names: repaint the selected tile while its name moves.
-    auto* name_scroll_timer = new QTimer(this);
-    name_scroll_timer->setInterval(33);
-    connect(name_scroll_timer, &QTimer::timeout, this, [this] {
-        if (Yuzu::ScrollLongNames() && show_names && current >= 0 && isVisible()) {
-            update(TileRect(current).translated(0, -scroll).adjusted(-24, -24, 24, 24));
-        }
-    });
-    name_scroll_timer->start();
 }
 
 CanvasStyle::~CanvasStyle() = default;
@@ -621,7 +610,8 @@ void CanvasStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
                 const QString title = LibraryStyleContext::Info(index).title;
                 QStringList info_lines =
                     show_info ? LibraryStyleContext::InfoLines(
-                                    index, LibraryStyleContext::LayoutInfo(sfm, text_w))
+                                    LibraryStyleContext::Info(index),
+                                    LibraryStyleContext::LayoutInfo(sub_font, text_w), sub_font)
                               : QStringList{};
                 int title_lines = 0;
                 if (show_names) {
@@ -658,7 +648,7 @@ void CanvasStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
                     LibraryStyleContext::PaintTitle(
                         &p, QRect(rect.left() + pad, y, text_w, title_lines * tfm.lineSpacing()),
                         title, Qt::white, title_font, Qt::AlignHCenter | Qt::AlignTop,
-                        title_lines, pad - 2, true);
+                        title_lines, this, pad - 2);
                     y += title_lines * tfm.lineSpacing();
                 }
                 p.setFont(sub_font);

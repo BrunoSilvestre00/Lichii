@@ -71,26 +71,6 @@ bool ArtRolesChanged(const QList<int>& roles) {
 }
 constexpr int kAnimationMs = 180;
 
-/// The info line fitted to `width` (S3): whole parts dropped from the end, then "played"; never
-/// cut inside a part. Empty when not even the first part fits.
-QString FitInfo(const GameInfo& game, const QFontMetrics& fm, int width) {
-    if (game.info_line.isEmpty() || fm.horizontalAdvance(game.info_line) <= width) {
-        return game.info_line;
-    }
-    const QString separator = QStringLiteral(" · ");
-    QStringList parts = game.info_line.split(separator);
-    while (parts.size() > 1 && fm.horizontalAdvance(parts.join(separator)) > width) {
-        parts.removeLast();
-    }
-    const QString played =
-        QCoreApplication::translate("LibraryStyles", "%1 played").arg(game.play_time_text);
-    if (fm.horizontalAdvance(parts.join(separator)) > width && parts.first() == played) {
-        parts.first() = game.play_time_text;
-    }
-    const QString fitted = parts.join(separator);
-    return fm.horizontalAdvance(fitted) <= width ? fitted : QString{};
-}
-
 LibraryStyleView* Make(QWidget* p) {
     return new HomeRowStyle(p);
 }
@@ -319,22 +299,26 @@ QPixmap HomeRowStyle::CoverPixmap(int row, int side) {
     const QModelIndex index = IndexAt(row);
     const qreal dpr = devicePixelRatioF();
     const int target = std::max(1, static_cast<int>(std::ceil(side * kSelectedScale * dpr)));
-    const QString key = QStringLiteral("%1|%2")
+    // The palette is part of the key: games without art get the shared placeholder, which
+    // follows day and night.
+    const QString key = QStringLiteral("%1|%2|%3")
                             .arg(index.data(GameListItemPath::FullPathRole).toString())
-                            .arg(target);
+                            .arg(target)
+                            .arg(palette().window().color().rgb());
     if (const QPixmap* cached = m_cache.object(key)) {
         return *cached;
     }
 
-    if (!index.data(GameListItemPath::HasIconRole).toBool()) {
-        return {};
+    QPixmap art;
+    if (index.data(GameListItemPath::HasIconRole).toBool()) {
+        art = index.data(GameListItemPath::CardIconRole).value<QPixmap>();
+        if (art.isNull()) {
+            art = index.data(Qt::DecorationRole).value<QPixmap>();
+        }
     }
-    QPixmap art = index.data(GameListItemPath::CardIconRole).value<QPixmap>();
     if (art.isNull()) {
-        art = index.data(Qt::DecorationRole).value<QPixmap>();
-    }
-    if (art.isNull()) {
-        return {};
+        // No art: the coloured placeholder every other style uses.
+        art = LibraryStyleContext::Cover(index, QSize(target, target), palette());
     }
 
     QPixmap result(target, target);
@@ -355,23 +339,6 @@ QPixmap HomeRowStyle::CoverPixmap(int row, int side) {
     result.setDevicePixelRatio(dpr);
     m_cache.insert(key, new QPixmap(result));
     return result;
-}
-
-void HomeRowStyle::DrawPlaceholder(QPainter& painter, const QRectF& rect, const QString& title) {
-    const QPalette pal = palette();
-    QPainterPath path;
-    const double radius = rect.width() * 0.06;
-    path.addRoundedRect(rect, radius, radius);
-    QLinearGradient gradient(rect.topLeft(), rect.bottomRight());
-    gradient.setColorAt(0.0, pal.color(QPalette::Mid).lighter(115));
-    gradient.setColorAt(1.0, pal.color(QPalette::Mid).darker(130));
-    painter.fillPath(path, gradient);
-    QFont font = painter.font();
-    font.setPixelSize(std::max(12, static_cast<int>(rect.width() * 0.4)));
-    font.setBold(true);
-    painter.setFont(font);
-    painter.setPen(pal.color(QPalette::WindowText));
-    painter.drawText(rect, Qt::AlignCenter, title.left(1).toUpper());
 }
 
 namespace {
@@ -488,11 +455,7 @@ void HomeRowStyle::paintEvent(QPaintEvent* event) {
             continue;
         }
         const QPixmap pix = CoverPixmap(row, m.side);
-        if (pix.isNull()) {
-            DrawPlaceholder(painter, cover, TitleAt(row));
-        } else {
-            painter.drawPixmap(cover, pix, QRectF(QPointF(0, 0), QSizeF(pix.size())));
-        }
+        painter.drawPixmap(cover, pix, QRectF(QPointF(0, 0), QSizeF(pix.size())));
     }
 
     if (m_current >= 0 && m_current < count) {
@@ -511,11 +474,7 @@ void HomeRowStyle::paintEvent(QPaintEvent* event) {
 
         const QString title = TitleAt(m_current);
         const QPixmap pix = CoverPixmap(m_current, m.side);
-        if (pix.isNull()) {
-            DrawPlaceholder(painter, cover, title);
-        } else {
-            painter.drawPixmap(cover, pix, QRectF(QPointF(0, 0), QSizeF(pix.size())));
-        }
+        painter.drawPixmap(cover, pix, QRectF(QPointF(0, 0), QSizeF(pix.size())));
 
         painter.setBrush(Qt::NoBrush);
         painter.setPen(QPen(accent, std::max(2.0, cover.width() * 0.018)));
@@ -538,8 +497,15 @@ void HomeRowStyle::paintEvent(QPaintEvent* event) {
             name.isEmpty() ? 0
                            : std::min(title_fm.horizontalAdvance(name) + 2, max_w / 3) +
                                  title_fm.height() / 2;
-        const QString info =
-            m_show_info ? FitInfo(game, info_fm, std::max(0, max_w - name_reserve)) : QString{};
+        // One line (S3): the parts of this game that fit, never cut inside a part.
+        const QStringList info_lines =
+            m_show_info ? LibraryStyleContext::InfoLines(
+                              game,
+                              LibraryStyleContext::LayoutInfo(
+                                  info_font, std::max(0, max_w - name_reserve), 1, &game),
+                              info_font)
+                        : QStringList{};
+        const QString info = info_lines.isEmpty() ? QString{} : info_lines.first();
         if (!name.isEmpty() || !info.isEmpty()) {
             const int gap = name.isEmpty() || info.isEmpty() ? 0 : title_fm.height() / 2;
             // Measured widths plus a pixel of slack: eliding to the exact advance can cut the
@@ -556,10 +522,13 @@ void HomeRowStyle::paintEvent(QPaintEvent* event) {
             const int baseline =
                 static_cast<int>(cover.top()) - m.side / 14 - title_fm.descent();
             if (!name.isEmpty()) {
-                painter.setFont(title_font);
-                painter.setPen(accent);
-                painter.drawText(QPoint(left, baseline),
-                                 title_fm.elidedText(name, Qt::ElideRight, name_w));
+                // S4 on one line; with Scroll Long Names a long name glides. It may only run
+                // into the gap before the info, never into the info itself.
+                LibraryStyleContext::PaintTitle(
+                    &painter,
+                    QRect(left, baseline - title_fm.ascent(), name_w, title_fm.height()), name,
+                    accent, title_font, Qt::AlignLeft | Qt::AlignTop, 1, this,
+                    info.isEmpty() ? -1 : std::max(0, gap / 2));
             }
             if (!info.isEmpty()) {
                 QColor muted = pal.color(QPalette::WindowText);

@@ -21,6 +21,8 @@
 #include <QRadialGradient>
 #include <QRegularExpression>
 #include <QTextLayout>
+#include <QTextOption>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include "qt_common/config/uisettings.h"
@@ -422,120 +424,60 @@ void LibraryStyleContext::PaintSelection(QPainter* painter, const QRect& rect,
     painter->restore();
 }
 
-LibraryStyleContext::InfoLayout LibraryStyleContext::LayoutInfo(const QFontMetrics& metrics,
-                                                                 int width) {
-    InfoLayout layout;
-    const bool on[4] = {UISettings::values.show_play_time.GetValue(),
-                        UISettings::values.show_add_ons.GetValue(),
-                        UISettings::values.show_size.GetValue(),
-                        UISettings::values.show_types.GetValue()};
-    // Worst-case samples, so real values fit the lines picked here.
-    const QString samples[4] = {Tr("%1 played").arg(QStringLiteral("88.8 h")),
-                                QStringLiteral("v8.88.8"), QStringLiteral("88.8 GB"),
-                                QStringLiteral("NSP")};
-    const QString dot = QStringLiteral(" \u00B7 ");
-    const auto pack = [&](const QString& play, std::array<int, 4>* line_of) {
-        int line = 0;
-        int widest = 0;
-        QString current;
-        bool any = false;
-        for (int kind = 0; kind < 4; ++kind) {
-            if (!on[kind]) {
-                continue;
-            }
-            any = true;
-            const QString part = kind == 0 ? play : samples[kind];
-            const QString joined = current.isEmpty() ? part : current + dot + part;
-            if (!current.isEmpty() && metrics.horizontalAdvance(joined) > width) {
-                ++line;
-                current = part;
-            } else {
-                current = joined;
-            }
-            widest = std::max(widest, metrics.horizontalAdvance(current));
-            (*line_of)[static_cast<size_t>(kind)] = line;
-        }
-        return std::pair<int, bool>{any ? line + 1 : 0, widest <= width};
-    };
-    std::array<int, 4> long_lines{-1, -1, -1, -1};
-    std::array<int, 4> short_lines{-1, -1, -1, -1};
-    const auto [long_count, long_fits] = pack(samples[0], &long_lines);
-    const auto [short_count, short_fits] = pack(QStringLiteral("88.8 h"), &short_lines);
-    layout.short_play = on[0] && !(long_fits && long_count <= short_count);
-    layout.lines = layout.short_play ? short_count : long_count;
-    layout.line_of = layout.short_play ? short_lines : long_lines;
-    return layout;
-}
-
-QStringList LibraryStyleContext::InfoLines(const QModelIndex& index, const InfoLayout& layout) {
-    const GameInfo game = Info(index);
-    if (!game.is_game || layout.lines <= 0) {
-        return {};
+QStringList LibraryStyleContext::NameLines(const QString& text, const QFont& font, int width,
+                                           int max_lines, int max_overflow) {
+    QStringList out;
+    if (text.isEmpty() || width <= 0 || max_lines <= 0) {
+        return out;
     }
-    const QString parts[4] = {
-        layout.short_play || game.play_time_seconds == 0 ? game.play_time_text
-                                                         : Tr("%1 played").arg(game.play_time_text),
-        game.update_version.isEmpty() ? Tr("Base") : QStringLiteral("v") + game.update_version,
-        game.size_text.isEmpty() ? QStringLiteral("NaN GB") : game.size_text,
-        game.file_type,
+    // Every frame asks again for the same names: remember the lines instead of laying them out.
+    static QHash<QString, QStringList> cache;
+    const QString key = font.key() + QLatin1Char('|') + QString::number(width) +
+                        QLatin1Char('|') + QString::number(max_lines) + QLatin1Char('|') +
+                        QString::number(max_overflow) + QLatin1Char('|') + text;
+    if (const auto it = cache.constFind(key); it != cache.constEnd()) {
+        return *it;
+    }
+    if (cache.size() > 4096) {
+        cache.clear();
+    }
+    const QFontMetrics metrics(font);
+    // A last letter is narrower than "...": keep the whole line when it overflows by less.
+    const int ellipsis = metrics.horizontalAdvance(QChar(0x2026));
+    const int slack = std::max(0, max_overflow < 0 ? ellipsis : std::min(max_overflow, ellipsis));
+    const auto fit = [&](const QString& part) {
+        return metrics.horizontalAdvance(part) <= width + slack
+                   ? part
+                   : metrics.elidedText(part, Qt::ElideRight, width);
     };
-    std::vector<QStringList> line_parts(static_cast<size_t>(layout.lines));
-    for (int kind = 0; kind < 4; ++kind) {
-        const int line = layout.line_of[static_cast<size_t>(kind)];
-        if (line >= 0 && line < layout.lines && !parts[kind].isEmpty()) {
-            line_parts[static_cast<size_t>(line)] << parts[kind];
+    if (max_lines == 1 || metrics.horizontalAdvance(text) <= width) {
+        out.append(fit(text.trimmed()));
+        cache.insert(key, out);
+        return out;
+    }
+
+    // Word wrap only: a word wider than the line stays on its own line and is cut there.
+    QTextOption option;
+    option.setWrapMode(QTextOption::WordWrap);
+    QTextLayout layout(text, font);
+    layout.setTextOption(option);
+    layout.beginLayout();
+    for (int i = 0; i < max_lines; ++i) {
+        QTextLine line = layout.createLine();
+        if (!line.isValid()) {
+            break;
+        }
+        line.setLineWidth(width);
+        if (i == max_lines - 1) {
+            out.append(fit(text.mid(line.textStart()).trimmed()));
+        } else {
+            out.append(fit(text.mid(line.textStart(), line.textLength()).trimmed()));
         }
     }
-    QStringList lines;
-    for (const QStringList& parts_of_line : line_parts) {
-        lines << parts_of_line.join(QStringLiteral(" \u00B7 "));
-    }
-    return lines;
-}
-
-int LibraryStyleContext::TitleLines(int max_lines) {
-    return Yuzu::ScrollLongNames() ? 1 : max_lines;
-}
-
-void LibraryStyleContext::PaintTitle(QPainter* painter, const QRect& rect, const QString& text,
-                                     const QColor& color, const QFont& font,
-                                     Qt::Alignment alignment, int max_lines, int max_overflow,
-                                     bool selected) {
-    if (!Yuzu::ScrollLongNames()) {
-        PaintName(painter, rect, text, color, font, alignment, max_lines, max_overflow);
-        return;
-    }
-    const QFontMetrics fm(font);
-    const int slack =
-        std::max(0, max_overflow < 0 ? fm.horizontalAdvance(QChar(0x2026))
-                                     : std::min(max_overflow, fm.horizontalAdvance(QChar(0x2026))));
-    const int extra = fm.horizontalAdvance(text) - rect.width();
-    const QRect line(rect.left(), rect.top(), rect.width(), std::min(rect.height(), fm.lineSpacing()));
-    if (!selected || extra <= slack) {
-        PaintName(painter, line, text, color, font, alignment, 1, max_overflow);
-        return;
-    }
-    // Wait, glide to the end at 40 px/s, wait, glide back.
-    constexpr qint64 pause = 1200;
-    constexpr qint64 ms_per_px = 25;
-    const qint64 travel = extra * ms_per_px;
-    const qint64 t = QDateTime::currentMSecsSinceEpoch() % (2 * (pause + travel));
-    qint64 x = 0;
-    if (t >= pause && t < pause + travel) {
-        x = (t - pause) / ms_per_px;
-    } else if (t >= pause + travel && t < 2 * pause + travel) {
-        x = extra;
-    } else if (t >= 2 * pause + travel) {
-        x = extra - (t - 2 * pause - travel) / ms_per_px;
-    }
-    painter->save();
-    painter->setClipRect(line);
-    painter->setFont(font);
-    painter->setPen(color);
-    painter->drawText(QRect(line.left() - static_cast<int>(x), line.top(),
-                            fm.horizontalAdvance(text) + 2, line.height()),
-                      Qt::AlignLeft | (alignment & Qt::AlignVertical_Mask), text);
-    painter->restore();
+    layout.endLayout();
+    out.removeAll(QString{});
+    cache.insert(key, out);
+    return out;
 }
 
 void LibraryStyleContext::PaintName(QPainter* painter, const QRect& rect, const QString& text,
@@ -544,45 +486,283 @@ void LibraryStyleContext::PaintName(QPainter* painter, const QRect& rect, const 
     if (rect.isEmpty() || text.isEmpty()) {
         return;
     }
+    const QFontMetrics metrics(font);
+    const int lines = std::max(1, std::min(max_lines, rect.height() / metrics.lineSpacing()));
+    const QStringList out = NameLines(text, font, rect.width(), lines, max_overflow);
+    const int ellipsis = metrics.horizontalAdvance(QChar(0x2026));
+    const int slack = std::max(0, max_overflow < 0 ? ellipsis : std::min(max_overflow, ellipsis));
+
     painter->save();
     painter->setFont(font);
     painter->setPen(color);
-    const QFontMetrics metrics(font);
-    const int lines = std::max(1, std::min(max_lines, rect.height() / metrics.lineSpacing()));
-
-    // A last letter is narrower than "...": draw the whole text when it overflows by less.
-    const int ellipsis = metrics.horizontalAdvance(QChar(0x2026));
-    const int slack = std::max(0, max_overflow < 0 ? ellipsis : std::min(max_overflow, ellipsis));
-    const auto fit = [&](const QString& part) {
-        return metrics.horizontalAdvance(part) <= rect.width() + slack
-                   ? part
-                   : metrics.elidedText(part, Qt::ElideRight, rect.width());
-    };
-
-    QTextLayout layout(text, font);
-    layout.beginLayout();
-    QStringList out;
-    for (int i = 0; i < lines; ++i) {
-        QTextLine line = layout.createLine();
-        if (!line.isValid()) {
-            break;
-        }
-        line.setLineWidth(rect.width());
-        if (i == lines - 1) {
-            out.append(fit(text.mid(line.textStart()).trimmed()));
-        } else {
-            // A single word wider than the box can't wrap: cut it, or draw it whole when only
-            // a sliver sticks out.
-            out.append(fit(text.mid(line.textStart(), line.textLength()).trimmed()));
-        }
-    }
-    layout.endLayout();
-
-    const QString joined = out.join(QLatin1Char('\n'));
     // Room for the allowed overflow, on both sides when centred.
     const int left = (alignment & Qt::AlignHCenter) ? slack : 0;
-    painter->drawText(rect.adjusted(-left, 0, slack, 0), alignment.toInt(), joined);
+    painter->drawText(rect.adjusted(-left, 0, slack, 0), alignment.toInt(),
+                      out.join(QLatin1Char('\n')));
     painter->restore();
+}
+
+int LibraryStyleContext::TitleLines(int max_lines) {
+    return Yuzu::ScrollLongNames() ? 1 : max_lines;
+}
+
+namespace {
+
+/// Repaints the gliding name of one widget: a single shot timer owned by the widget, started
+/// by each paint that drew a gliding name, so it stops on its own once no name glides.
+class NameGlideTimer final : public QTimer {
+public:
+    explicit NameGlideTimer(QWidget* widget) : QTimer{widget} {
+        setObjectName(QStringLiteral("libraryNameGlide"));
+        setSingleShot(true);
+        connect(this, &QTimer::timeout, widget, [this, widget] {
+            const QRect rect = pending;
+            pending = {};
+            widget->update(rect);
+        });
+    }
+
+    static NameGlideTimer* For(QWidget* widget) {
+        if (auto* timer = widget->findChild<QTimer*>(QStringLiteral("libraryNameGlide"),
+                                                     Qt::FindDirectChildrenOnly)) {
+            return static_cast<NameGlideTimer*>(timer);
+        }
+        return new NameGlideTimer(widget);
+    }
+
+    void Schedule(const QRect& rect, int delay) {
+        pending |= rect;
+        if (!isActive() || remainingTime() > delay) {
+            start(delay);
+        }
+    }
+
+private:
+    QRect pending;
+};
+
+} // namespace
+
+void LibraryStyleContext::PaintTitle(QPainter* painter, const QRect& rect, const QString& text,
+                                     const QColor& color, const QFont& font,
+                                     Qt::Alignment alignment, int max_lines,
+                                     const QWidget* glide_in,
+                                     int max_overflow) {
+    if (rect.isEmpty() || text.isEmpty()) {
+        return;
+    }
+    const int lines = TitleLines(max_lines);
+    if (glide_in == nullptr || lines != 1) {
+        PaintName(painter, rect, text, color, font, alignment, lines, max_overflow);
+        return;
+    }
+    const QFontMetrics metrics(font);
+    const int ellipsis = metrics.horizontalAdvance(QChar(0x2026));
+    const int slack = std::max(0, max_overflow < 0 ? ellipsis : std::min(max_overflow, ellipsis));
+    const int text_w = metrics.horizontalAdvance(text);
+    const int extra = text_w - rect.width();
+    if (!Yuzu::ScrollLongNames() || extra <= slack) {
+        PaintName(painter, rect, text, color, font, alignment, lines, max_overflow);
+        return;
+    }
+
+    // One line, gliding to its end and back: a pause at each end, 25 ms per pixel between.
+    constexpr qint64 pause = 1200;
+    constexpr qint64 ms_per_px = 25;
+    const qint64 travel = extra * ms_per_px;
+    const qint64 t = QDateTime::currentMSecsSinceEpoch() % (2 * (pause + travel));
+    qint64 x = 0;
+    qint64 next = 0;
+    if (t < pause) {
+        next = pause - t;
+    } else if (t < pause + travel) {
+        x = (t - pause) / ms_per_px;
+        next = ms_per_px - (t - pause) % ms_per_px;
+    } else if (t < 2 * pause + travel) {
+        x = extra;
+        next = 2 * pause + travel - t;
+    } else {
+        x = extra - (t - 2 * pause - travel) / ms_per_px;
+        next = ms_per_px - (t - 2 * pause - travel) % ms_per_px;
+    }
+
+    const int line_h = std::min(rect.height(), metrics.lineSpacing());
+    int top = rect.top();
+    if (alignment & Qt::AlignBottom) {
+        top = rect.bottom() + 1 - line_h;
+    } else if (alignment & Qt::AlignVCenter) {
+        top = rect.top() + (rect.height() - line_h) / 2;
+    }
+    const QRect line_rect(rect.left(), top, rect.width(), line_h);
+    painter->save();
+    painter->setClipRect(line_rect, Qt::IntersectClip);
+    painter->setFont(font);
+    painter->setPen(color);
+    painter->drawText(QRect(line_rect.left() - static_cast<int>(x), top, text_w + 2, line_h),
+                      Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine, text);
+    painter->restore();
+
+    // Repainting is not a change of the widget: a const view may glide its names too.
+    NameGlideTimer::For(const_cast<QWidget*>(glide_in))->Schedule(
+        painter->transform().mapRect(line_rect).adjusted(-2, -2, 2, 2),
+        static_cast<int>(std::max<qint64>(15, next)));
+}
+
+namespace {
+
+constexpr std::array<const char*, 4> SampleInfo{"88.8 h played", "v8.88.8", "88.8 GB", "NSP"};
+
+std::array<bool, 4> InfoPartsOn() {
+    return {UISettings::values.show_play_time.GetValue(),
+            UISettings::values.show_add_ons.GetValue(), UISettings::values.show_size.GetValue(),
+            UISettings::values.show_types.GetValue()};
+}
+
+/// The four parts of `game`, with placeholders for missing values.
+std::array<QString, 4> InfoParts(const GameInfo& game, bool short_play) {
+    return {short_play || game.play_time_seconds == 0 ? game.play_time_text
+                                                      : Tr("%1 played").arg(game.play_time_text),
+            game.update_version.isEmpty() ? Tr("Base")
+                                          : QStringLiteral("v") + game.update_version,
+            game.size_text.isEmpty() ? QStringLiteral("NaN GB") : game.size_text, game.file_type};
+}
+
+} // namespace
+
+InfoLayout LibraryStyleContext::LayoutInfo(const QFont& font, int width, int max_lines,
+                                           const GameInfo* only) {
+    InfoLayout layout;
+    layout.width = width;
+    const std::array<bool, 4> on = InfoPartsOn();
+    std::array<QString, 4> long_parts;
+    std::array<QString, 4> short_parts;
+    if (only != nullptr) {
+        long_parts = InfoParts(*only, false);
+        short_parts = InfoParts(*only, true);
+    } else {
+        for (size_t i = 0; i < 4; ++i) {
+            long_parts[i] = QString::fromLatin1(SampleInfo[i]);
+        }
+        short_parts = long_parts;
+        short_parts[0] = QStringLiteral("88.8 h");
+    }
+
+    const QFontMetrics fm(font);
+    const QString dot = QStringLiteral(" · ");
+    struct Packed {
+        std::array<int, 4> line_of{-1, -1, -1, -1};
+        int lines = 0;
+        bool fits = true;
+        int kept = 0;
+    };
+    // As many parts per line as fit; a part too wide alone gets its own line.
+    const auto pack = [&](const std::array<QString, 4>& parts) {
+        Packed packed;
+        QString current;
+        int line = 0;
+        for (size_t kind = 0; kind < 4; ++kind) {
+            if (!on[kind] || parts[kind].isEmpty()) {
+                continue;
+            }
+            const QString joined = current.isEmpty() ? parts[kind] : current + dot + parts[kind];
+            if (!current.isEmpty() && fm.horizontalAdvance(joined) > width) {
+                ++line;
+                current = parts[kind];
+            } else {
+                current = joined;
+            }
+            packed.fits = packed.fits && fm.horizontalAdvance(current) <= width;
+            packed.line_of[kind] = line;
+            packed.lines = line + 1;
+            packed.kept += line < max_lines ? 1 : 0;
+        }
+        return packed;
+    };
+    const Packed full = pack(long_parts);
+    const Packed shorter = pack(short_parts);
+    // The short play time when the long one takes more lines, does not fit or leaves parts out.
+    layout.short_play =
+        on[0] && (!(full.fits && full.lines <= shorter.lines) || shorter.kept > full.kept);
+    const Packed& chosen = layout.short_play ? shorter : full;
+    for (size_t kind = 0; kind < 4; ++kind) {
+        layout.line_of[kind] = chosen.line_of[kind] < max_lines ? chosen.line_of[kind] : -1;
+    }
+    layout.lines = std::min(chosen.lines, std::max(0, max_lines));
+    return layout;
+}
+
+QStringList LibraryStyleContext::InfoLines(const GameInfo& game, const InfoLayout& layout,
+                                           const QFont& font) {
+    QStringList lines;
+    if (!game.is_game || layout.lines <= 0) {
+        return lines;
+    }
+    const std::array<QString, 4> parts = InfoParts(game, layout.short_play);
+    const QString short_play = InfoParts(game, true)[0];
+    const QFontMetrics fm(font);
+    const QString dot = QStringLiteral(" · ");
+    for (int line = 0; line < layout.lines; ++line) {
+        QStringList on_line;
+        for (size_t kind = 0; kind < 4; ++kind) {
+            if (layout.line_of[kind] == line && !parts[kind].isEmpty()) {
+                on_line << parts[kind];
+            }
+        }
+        // Real values can be longer than the samples: "played" goes first, then whole parts
+        // from the end; only a single part too wide for the line is cut.
+        if (layout.line_of[0] == line && !on_line.isEmpty() && on_line.first() != short_play &&
+            fm.horizontalAdvance(on_line.join(dot)) > layout.width) {
+            on_line.first() = short_play;
+        }
+        while (on_line.size() > 1 && fm.horizontalAdvance(on_line.join(dot)) > layout.width) {
+            on_line.removeLast();
+        }
+        lines << fm.elidedText(on_line.join(dot), Qt::ElideRight, layout.width);
+    }
+    return lines;
+}
+
+void LibraryStyleContext::PaintInfoLines(QPainter* painter, const QRect& rect,
+                                         const QStringList& lines, const QColor& color,
+                                         const QFont& font, Qt::Alignment alignment) {
+    if (lines.isEmpty() || rect.isEmpty()) {
+        return;
+    }
+    const QFontMetrics fm(font);
+    const int line_h = fm.lineSpacing();
+    const int block = line_h * static_cast<int>(lines.size());
+    int y = rect.top();
+    if (alignment & Qt::AlignBottom) {
+        y = rect.bottom() + 1 - block;
+    } else if (alignment & Qt::AlignVCenter) {
+        y = rect.top() + (rect.height() - block) / 2;
+    }
+    const Qt::Alignment horizontal = alignment & Qt::AlignHorizontal_Mask;
+    painter->save();
+    painter->setFont(font);
+    painter->setPen(color);
+    for (const QString& line : lines) {
+        painter->drawText(QRect(rect.left(), y, rect.width(), line_h),
+                          horizontal.toInt() | Qt::AlignVCenter | Qt::TextSingleLine, line);
+        y += line_h;
+    }
+    painter->restore();
+}
+
+void LibraryStyleContext::SetFamilyWithFallbacks(QFont& font, const QString& family) {
+    QStringList families;
+    if (!family.isEmpty()) {
+        families << family;
+    }
+    // Japanese fonts first: Chinese ones lack the Japanese kanji forms of many titles.
+    families << QStringLiteral("Yu Gothic UI") << QStringLiteral("Yu Gothic")
+             << QStringLiteral("Meiryo UI") << QStringLiteral("Meiryo")
+             << QStringLiteral("MS UI Gothic") << QStringLiteral("MS Gothic")
+             << QStringLiteral("Noto Sans CJK JP") << QStringLiteral("Noto Sans JP")
+             << QStringLiteral("Hiragino Sans") << QStringLiteral("Microsoft YaHei UI")
+             << QStringLiteral("Microsoft JhengHei UI") << QStringLiteral("Malgun Gothic")
+             << QStringLiteral("PingFang SC") << QFont().family();
+    font.setFamilies(families);
 }
 
 void LibraryStyleContext::PaintInfoPanel(QPainter* painter, const QRect& rect,
@@ -603,27 +783,33 @@ void LibraryStyleContext::PaintInfoPanel(QPainter* painter, const QRect& rect,
     const QRect inner = rect.adjusted(12, 8, -12, -8);
     QFont title_font = font;
     title_font.setBold(true);
-    const int info_height = info.info_line.isEmpty() ? 0 : QFontMetrics(font).height() + 4;
-    PaintName(painter, inner.adjusted(0, 0, 0, -info_height), info.title, palette.text().color(),
-              title_font, Qt::AlignHCenter | Qt::AlignVCenter);
+    const QStringList info_lines = InfoLines(info, LayoutInfo(font, inner.width(), 1), font);
+    const int info_height = info_lines.isEmpty() ? 0 : QFontMetrics(font).height() + 4;
+    PaintTitle(painter, inner.adjusted(0, 0, 0, -info_height), info.title,
+               palette.text().color(), title_font, Qt::AlignHCenter | Qt::AlignVCenter);
     if (info_height > 0) {
-        PaintName(painter, QRect(inner.left(), inner.bottom() - info_height, inner.width(),
-                                 info_height),
-                  info.info_line, MutedText(palette), font, Qt::AlignHCenter | Qt::AlignVCenter,
-                  1);
+        PaintInfoLines(painter,
+                       QRect(inner.left(), inner.bottom() - info_height, inner.width(),
+                             info_height),
+                       info_lines, MutedText(palette), font, Qt::AlignHCenter | Qt::AlignVCenter);
     }
     painter->restore();
 }
 
 void LibraryStyleContext::PaintCoverCaption(QPainter* painter, const QRect& cover_rect,
                                             const QModelIndex& index, const QFont& font,
-                                            bool show_info) {
+                                            bool show_info, const QWidget* glide_in) {
     if (cover_rect.isEmpty() || !index.isValid()) {
         return;
     }
     const GameInfo info = Info(index);
     const QFontMetrics metrics(font);
-    const int lines = show_info && !info.info_line.isEmpty() ? 3 : 2;
+    // Up to two info lines, packed the same way on every tile (S3).
+    const QStringList info_lines =
+        show_info ? InfoLines(info, LayoutInfo(font, cover_rect.width() - 16, 2), font)
+                  : QStringList{};
+    const int title_lines = TitleLines(2);
+    const int lines = title_lines + static_cast<int>(info_lines.size());
     const int caption_height = std::min(cover_rect.height(), metrics.lineSpacing() * lines + 16);
     const QRect caption(cover_rect.left(), cover_rect.bottom() - caption_height + 1,
                         cover_rect.width(), caption_height);
@@ -638,14 +824,15 @@ void LibraryStyleContext::PaintCoverCaption(QPainter* painter, const QRect& cove
     const QRect text = caption.adjusted(8, 6, -8, -6);
     QFont title_font = font;
     title_font.setBold(true);
-    const int info_height = lines == 3 ? metrics.lineSpacing() : 0;
-    PaintName(painter, text.adjusted(0, 0, 0, -info_height), info.title, Qt::white, title_font,
-              Qt::AlignHCenter | Qt::AlignBottom);
+    const int info_height = metrics.lineSpacing() * static_cast<int>(info_lines.size());
+    PaintTitle(painter, text.adjusted(0, 0, 0, -info_height), info.title, Qt::white, title_font,
+               Qt::AlignHCenter | Qt::AlignBottom, title_lines, glide_in);
     if (info_height > 0) {
-        PaintName(painter,
-                  QRect(text.left(), text.bottom() - info_height + 1, text.width(), info_height),
-                  info.info_line, QColor(255, 255, 255, 210), font,
-                  Qt::AlignHCenter | Qt::AlignVCenter, 1);
+        PaintInfoLines(painter,
+                       QRect(text.left(), text.bottom() - info_height + 1, text.width(),
+                             info_height),
+                       info_lines, QColor(255, 255, 255, 210), font,
+                       Qt::AlignHCenter | Qt::AlignVCenter);
     }
     painter->restore();
 }

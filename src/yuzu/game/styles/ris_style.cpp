@@ -47,7 +47,8 @@ bool IsFolder(GameListItemType type) {
            type == GameListItemType::UserNandDir || type == GameListItemType::SysNandDir;
 }
 
-/// Chakra Petch ships with the RIS theme resources; the style uses it with any theme.
+/// Chakra Petch ships with the RIS theme resources; the style uses it with any theme. It has
+/// no CJK glyphs: every font set from it falls back to system CJK fonts (titles in Japanese).
 QString LoadDisplayFamily() {
     static const QString family = [] {
         const int id =
@@ -413,7 +414,7 @@ void RisStyle::PaintHeader(QPainter& painter, const Colors& colors) {
 
     QFont display = font();
     if (!display_family.isEmpty()) {
-        display.setFamily(display_family);
+        LibraryStyleContext::SetFamilyWithFallbacks(display, display_family);
     }
     display.setPixelSize(17);
     display.setBold(true);
@@ -493,7 +494,7 @@ void RisStyle::PaintHero(QPainter& painter, const Colors& colors) {
     if (!selected.isValid()) {
         QFont empty = font();
         if (!display_family.isEmpty()) {
-            empty.setFamily(display_family);
+            LibraryStyleContext::SetFamilyWithFallbacks(empty, display_family);
         }
         empty.setPixelSize(22);
         empty.setBold(true);
@@ -538,16 +539,20 @@ void RisStyle::PaintHero(QPainter& painter, const Colors& colors) {
 
     QFont title = font();
     if (!display_family.isEmpty()) {
-        title.setFamily(display_family);
+        LibraryStyleContext::SetFamilyWithFallbacks(title, display_family);
     }
     title.setPixelSize(std::clamp(hero.height() / 8, 20, 40));
     title.setBold(true);
     const QFontMetrics title_metrics(title);
-    const QRect title_rect(left, y, column, title_metrics.lineSpacing() * 2);
-    LibraryStyleContext::PaintName(&painter, title_rect, info.title, colors.text, title,
-                                   Qt::AlignLeft | Qt::AlignTop, 2);
-    const QRect used = title_metrics.boundingRect(title_rect, Qt::TextWordWrap, info.title);
-    y += std::min(title_rect.height(), used.height()) + 12;
+    // S4: two lines at most, one gliding line with Scroll Long Names.
+    const int title_lines = LibraryStyleContext::TitleLines(2);
+    const int used_lines = static_cast<int>(
+        LibraryStyleContext::NameLines(info.title, title, column, title_lines).size());
+    const QRect title_rect(left, y, column, title_metrics.lineSpacing() * title_lines);
+    LibraryStyleContext::PaintTitle(&painter, title_rect, info.title, colors.text, title,
+                                    Qt::AlignLeft | Qt::AlignTop, title_lines, this);
+    y += title_metrics.height() +
+         title_metrics.lineSpacing() * (std::max(1, used_lines) - 1) + 12;
 
     painter.fillRect(QRect(left, y, 56, 3), colors.accent);
     y += 3 + 16;
@@ -570,7 +575,7 @@ void RisStyle::PaintHero(QPainter& painter, const Colors& colors) {
     const QFont label_font = MonoFont(11);
     QFont value_font = font();
     if (!display_family.isEmpty()) {
-        value_font.setFamily(display_family);
+        LibraryStyleContext::SetFamilyWithFallbacks(value_font, display_family);
     }
     value_font.setPixelSize(17);
     value_font.setWeight(QFont::DemiBold);
@@ -605,7 +610,7 @@ void RisStyle::PaintHero(QPainter& painter, const Colors& colors) {
     if (y + 40 < hero.bottom()) {
         QFont plate_font = font();
         if (!display_family.isEmpty()) {
-            plate_font.setFamily(display_family);
+            LibraryStyleContext::SetFamilyWithFallbacks(plate_font, display_family);
         }
         plate_font.setPixelSize(15);
         plate_font.setBold(true);
@@ -684,9 +689,10 @@ void RisStyle::PaintShelf(QPainter& painter, const Colors& colors) {
                              metrics.lineSpacing());
             QFont name_font = font();
             name_font.setBold(selected);
-            LibraryStyleContext::PaintName(&painter, name, LibraryStyleContext::Title(index),
-                                           selected ? colors.text : colors.muted, name_font,
-                                           Qt::AlignHCenter | Qt::AlignTop, 1);
+            LibraryStyleContext::PaintTitle(&painter, name, LibraryStyleContext::Title(index),
+                                            selected ? colors.text : colors.muted, name_font,
+                                            Qt::AlignHCenter | Qt::AlignTop, 1,
+                                            selected ? this : nullptr);
         }
     }
     painter.restore();
