@@ -4048,6 +4048,10 @@ void MainWindow::UpdateLibraryStyleActions() {
         action->setChecked(active != nullptr &&
                            action->data().toString() == QString::fromUtf8(active->id));
     }
+    // Only the styles have an info panel; the Modern grid shows the size and type on its cards.
+    if (action_show_library_info != nullptr) {
+        action_show_library_info->setEnabled(active != nullptr);
+    }
 }
 
 void MainWindow::RetranslateLibraryStyleActions() {
