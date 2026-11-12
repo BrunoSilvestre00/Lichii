@@ -63,9 +63,11 @@ struct BuiltinPatch {
     size_t state_size = 0;
     // Another built-in this one contains; it is skipped once this one is applied.
     std::string_view replaces{};
-    // A built-in chosen by a setting instead of the Add-Ons list: applied only while this
-    // returns true, and not listed in Add-Ons.
-    bool (*selected)() = nullptr;
+    // Off until checked in Add-Ons (stored as EnabledAddonKey(name)), for game options rather
+    // than fixes.
+    bool off_by_default = false;
+    // Built-ins that patch the same place: the first one applied (in this list's order) wins.
+    std::string_view group{};
 };
 
 constexpr std::array<u8, 4> MAX_RESOLUTION_ORIGINAL{0xE8, 0x41, 0x00, 0x36};
@@ -149,11 +151,6 @@ constexpr std::array TEXT_SPEED_INSTANT_RECORDS{
     BuiltinPatchRecord{TEXT_SPEED_CAVE, TEXT_SPEED_INSTANT_CAVE, {}, true},
 };
 
-template <Settings::TextSpeed speed>
-bool TextSpeedSelected() {
-    return Settings::values.text_speed.GetValue() == speed;
-}
-
 constexpr std::array BUILTIN_PATCHES{
     // Ocarina of Time takes its "dynamic resolution disabled" path, so the 3D renders at full scale
     // instead of following the GPU-time controller down to its 480p floor.
@@ -194,14 +191,15 @@ constexpr std::array BUILTIN_PATCHES{
         .state_offset = 0x4E9FE00,
         .state_size = 16,
     },
-    // Text speed: picked with Settings text_speed (Configure > System), not in Add-Ons.
+    // Text speed: off until checked in Add-Ons; with more than one checked, the fastest wins.
     BuiltinPatch{
-        .name = "Text Speed 2x (built-in)",
+        .name = "Text Speed Instant (built-in)",
         .title_id = 0x0400486024DEC000,
         .module = "main",
         .build_id = "E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348",
-        .records = TEXT_SPEED_2X_RECORDS,
-        .selected = TextSpeedSelected<Settings::TextSpeed::Double>,
+        .records = TEXT_SPEED_INSTANT_RECORDS,
+        .off_by_default = true,
+        .group = "Text Speed",
     },
     BuiltinPatch{
         .name = "Text Speed 4x (built-in)",
@@ -209,17 +207,27 @@ constexpr std::array BUILTIN_PATCHES{
         .module = "main",
         .build_id = "E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348",
         .records = TEXT_SPEED_4X_RECORDS,
-        .selected = TextSpeedSelected<Settings::TextSpeed::Quadruple>,
+        .off_by_default = true,
+        .group = "Text Speed",
     },
     BuiltinPatch{
-        .name = "Text Speed Instant (built-in)",
+        .name = "Text Speed 2x (built-in)",
         .title_id = 0x0400486024DEC000,
         .module = "main",
         .build_id = "E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348",
-        .records = TEXT_SPEED_INSTANT_RECORDS,
-        .selected = TextSpeedSelected<Settings::TextSpeed::Instant>,
+        .records = TEXT_SPEED_2X_RECORDS,
+        .off_by_default = true,
+        .group = "Text Speed",
     },
 };
+
+} // Anonymous namespace
+
+std::string EnabledAddonKey(std::string_view name) {
+    return fmt::format("+{}", name);
+}
+
+namespace {
 
 enum class TitleVersionFormat : u8 {
     ThreeElements, ///< vX.Y.Z
@@ -641,15 +649,24 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
 
     const auto disabled = GetDisabledAddons();
     std::vector<std::string_view> replaced;
+    std::vector<std::string_view> applied_groups;
     for (const auto& patch : BUILTIN_PATCHES) {
         if (patch.title_id != title_id || patch.module != name) {
             continue;
         }
-        if (patch.selected != nullptr && !patch.selected()) {
+        if (patch.off_by_default) {
+            if (std::find(disabled.cbegin(), disabled.cend(), EnabledAddonKey(patch.name)) ==
+                disabled.cend()) {
+                continue;
+            }
+        } else if (std::find(disabled.cbegin(), disabled.cend(), patch.name) != disabled.cend()) {
+            LOG_INFO(Loader, "    - Skipping \"{}\": disabled in Add-Ons", patch.name);
             continue;
         }
-        if (std::find(disabled.cbegin(), disabled.cend(), patch.name) != disabled.cend()) {
-            LOG_INFO(Loader, "    - Skipping \"{}\": disabled in Add-Ons", patch.name);
+        if (!patch.group.empty() && std::find(applied_groups.cbegin(), applied_groups.cend(),
+                                              patch.group) != applied_groups.cend()) {
+            LOG_INFO(Loader, "    - Skipping \"{}\": another {} built-in is applied", patch.name,
+                     patch.group);
             continue;
         }
         if (std::find(replaced.cbegin(), replaced.cend(), patch.name) != replaced.cend()) {
@@ -741,6 +758,9 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
                  patch.records.size(), name);
         if (!patch.replaces.empty()) {
             replaced.push_back(patch.replaces);
+        }
+        if (!patch.group.empty()) {
+            applied_groups.push_back(patch.group);
         }
     }
 
@@ -1300,7 +1320,7 @@ std::vector<Patch> PatchManager::GetPatches(VirtualFile update_raw) const {
     }
 
     for (const auto& patch : BUILTIN_PATCHES) {
-        if (patch.title_id != title_id || patch.selected != nullptr) {
+        if (patch.title_id != title_id) {
             continue;
         }
         const auto is_disabled = [&](std::string_view name) {
@@ -1313,7 +1333,8 @@ std::vector<Patch> PatchManager::GetPatches(VirtualFile update_raw) const {
             return other.title_id == title_id && other.replaces == patch.name &&
                    !is_disabled(other.name);
         });
-        out.push_back({.enabled = !is_disabled(patch.name),
+        out.push_back({.enabled = patch.off_by_default ? is_disabled(EnabledAddonKey(patch.name))
+                                                       : !is_disabled(patch.name),
                        .name = std::string{patch.name},
                        .version = replacing != BUILTIN_PATCHES.end()
                                       ? fmt::format("IPS, replaced by {} when it applies",
@@ -1322,7 +1343,8 @@ std::vector<Patch> PatchManager::GetPatches(VirtualFile update_raw) const {
                        .type = PatchType::Mod,
                        .program_id = title_id,
                        .title_id = title_id,
-                       .source = PatchSource::Unknown});
+                       .source = PatchSource::Unknown,
+                       .off_by_default = patch.off_by_default});
     }
 
     // DLC
