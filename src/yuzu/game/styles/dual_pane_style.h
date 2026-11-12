@@ -85,6 +85,9 @@ private:
     QTimer clock_timer_;
     QTimer rebuild_timer_;
     QCache<QString, QPixmap> art_cache_;
+    /// Both panes with their dot pattern, rebuilt when the size or the palette changes.
+    QPixmap panes_;
+    QString panes_key_;
 };
 
 } // namespace LibraryStyles
