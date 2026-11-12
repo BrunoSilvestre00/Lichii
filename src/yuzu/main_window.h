@@ -466,9 +466,9 @@ private slots:
     void OnEmulationStopTimeExpired();
     void OnEmulationStopTimeout();
 
-    /// Shows the first-run game library style chooser and records the choice (the fallback when
-    /// the chooser is dismissed).
-    void PromptGameLibraryStyle();
+    /// Shows the first-run setup for theme and library style, then records the choices (the
+    /// library style fallback when the dialog is dismissed).
+    void PromptFirstRunSetup();
 
 #ifdef ENABLE_UPDATE_CHECKER
     void OnEmulatorUpdateAvailable();
@@ -549,8 +549,8 @@ private:
     bool modern_loading_screen = true;
     /// Artwork captured before emulation starts, so shutdown never reads a loader being torn down.
     LoadingScreen::Snapshot closing_snapshot;
-    /// Set when a direct launch skipped the first-run library style chooser; the choice is asked
-    /// once the interactive library session comes back.
+    /// Set when a direct launch skipped the first-run setup; the setup is shown once the
+    /// interactive library session comes back.
     bool deferred_library_style_prompt = false;
     QTimer shutdown_timer;
     QTimer emu_terminate_timer;

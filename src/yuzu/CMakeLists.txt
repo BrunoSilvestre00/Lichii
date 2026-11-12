@@ -241,6 +241,7 @@ add_executable(yuzu
     shader_warm_dialog.h shader_warm_dialog.cpp
     recommended_settings_dialog.h recommended_settings_dialog.cpp
     whats_new_dialog.h whats_new_dialog.cpp
+    first_run_setup_dialog.h first_run_setup_dialog.cpp
     migration_worker.h migration_worker.cpp
     libqt_common.h libqt_common.cpp
 

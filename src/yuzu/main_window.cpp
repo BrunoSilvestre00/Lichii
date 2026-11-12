@@ -43,6 +43,7 @@
 #include "ryujinx_dialog.h"
 #include "set_play_time_dialog.h"
 #include "util/util.h"
+#include "yuzu/first_run_setup_dialog.h"
 #include "yuzu/game/game_list.h"
 #include "yuzu/nup_dialogs.h"
 #include "yuzu/recommended_settings_dialog.h"
@@ -373,65 +374,6 @@ QString GetTranslatedGameIconSize(size_t index) {
     return QCoreApplication::translate("MainWindow", default_game_icon_sizes[index].second);
 }
 
-bool SelectGameLibraryStyle(QWidget* parent, UISettings::GameLibraryStyle& selected_style) {
-    QDialog dialog(parent);
-    dialog.setWindowTitle(QObject::tr("Choose a game list style"));
-    dialog.setMinimumWidth(430);
-
-    auto* layout = new QVBoxLayout(&dialog);
-    layout->setContentsMargins(24, 22, 24, 18);
-    layout->setSpacing(10);
-
-    auto* title = new QLabel(QObject::tr("How would you like to browse your games?"), &dialog);
-    QFont title_font = title->font();
-    title_font.setPointSize(title_font.pointSize() + 3);
-    title_font.setWeight(QFont::DemiBold);
-    title->setFont(title_font);
-    title->setWordWrap(true);
-
-    auto* modern = new QRadioButton(QObject::tr("Modern Style (Recommended)"), &dialog);
-    auto* modern_description = new QLabel(QObject::tr("Browse your games in folder cards."), &dialog);
-    modern_description->setWordWrap(true);
-    modern_description->setContentsMargins(24, 0, 0, 4);
-
-    auto* classic = new QRadioButton(QObject::tr("Legacy Style"), &dialog);
-    auto* classic_description =
-        new QLabel(QObject::tr("Browse your games in the familiar expandable list."), &dialog);
-    classic_description->setWordWrap(true);
-    classic_description->setContentsMargins(24, 0, 0, 4);
-
-    auto* note = new QLabel(
-        QObject::tr(
-            "Change it under Emulation → Configure... → General → UI → Game List → Style."),
-        &dialog);
-    note->setWordWrap(true);
-    note->setStyleSheet(QStringLiteral("color: palette(mid);"));
-
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok, &dialog);
-    buttons->button(QDialogButtonBox::Ok)->setText(QObject::tr("Continue"));
-    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-
-    modern->setChecked(true);
-    layout->addWidget(title);
-    layout->addSpacing(6);
-    layout->addWidget(modern);
-    layout->addWidget(modern_description);
-    layout->addSpacing(4);
-    layout->addWidget(classic);
-    layout->addWidget(classic_description);
-    layout->addSpacing(4);
-    layout->addWidget(note);
-    layout->addSpacing(6);
-    layout->addWidget(buttons);
-
-    if (dialog.exec() != QDialog::Accepted) {
-        return false;
-    }
-    selected_style = modern->isChecked() ? UISettings::GameLibraryStyle::Modern
-                                         : UISettings::GameLibraryStyle::Classic;
-    return true;
-}
-
 } // namespace
 
 #ifndef _WIN32
@@ -555,7 +497,7 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     if (Settings::values.use_dev_keys.GetValue()) {
         Core::Crypto::KeyManager::Instance().ReloadKeys();
     }
-    // Parse launch arguments once, before the first-run chooser: a direct game launch must boot
+    // Parse launch arguments once, before the first-run setup: a direct game launch must boot
     // without being blocked by a modal dialog.
     Core::LaunchParams startup_lp{};
     if (QStringList args = QApplication::arguments(); args.size() >= 2) {
@@ -574,11 +516,11 @@ MainWindow::MainWindow(bool has_broken_vulkan)
 
     if (!UISettings::values.has_selected_game_library_style.GetValue()) {
         if (direct_launch) {
-            // Defer the first-run choice until the interactive library session comes back after
-            // this launch; do not record a style while the user never picked one.
+            // Defer the first-run setup until the interactive library session comes back after
+            // this launch; do not record choices while the user never picked them.
             deferred_library_style_prompt = true;
         } else {
-            PromptGameLibraryStyle();
+            PromptFirstRunSetup();
         }
     }
 
@@ -665,20 +607,29 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     }
 }
 
-void MainWindow::PromptGameLibraryStyle() {
+void MainWindow::PromptFirstRunSetup() {
+    FirstRunSetupDialog dialog(this);
     UISettings::GameLibraryStyle style = UISettings::GameLibraryStyle::Modern;
-    if (!SelectGameLibraryStyle(this, style)) {
-        // Dismissing the chooser with Escape or the window close button is a completed choice
-        // too, so persist the fallback instead of asking again on the next start.
+
+    if (dialog.exec() == QDialog::Accepted) {
+        style = dialog.selected_library_style();
+        UISettings::values.theme =
+            UISettings::themes[static_cast<size_t>(dialog.selected_theme())].second;
+        UpdateUITheme();
+    } else {
+        // Dismissing the chooser is a completed choice too, so persist the fallback instead of
+        // asking again on the next start.
         style = UISettings::values.game_list_mode.GetValue() == Settings::GameListMode::TreeView
                     ? UISettings::GameLibraryStyle::Classic
                     : UISettings::GameLibraryStyle::Modern;
     }
+
     UISettings::values.game_library_style = static_cast<u8>(style);
-    UISettings::values.game_list_mode = style == UISettings::GameLibraryStyle::Modern
-                                            ? Settings::GameListMode::GridView
-                                            : Settings::GameListMode::TreeView;
     UISettings::values.has_selected_game_library_style = true;
+    SetGameListMode(style == UISettings::GameLibraryStyle::Modern
+                        ? Settings::GameListMode::GridView
+                        : Settings::GameListMode::TreeView,
+                    false);
     config->SaveAllValues();
 }
 
@@ -2792,12 +2743,12 @@ void MainWindow::OnEmulationStopped() {
     } else if (!boot_in_progress) {
         game_list->SetScanEnabled(true);
         game_list->PopulateAsync(UISettings::values.game_dirs);
-        // Ask after cleanup and rescan so a deferred first-run prompt cannot interrupt shutdown.
+        // Ask after cleanup and rescan so deferred first-run setup cannot interrupt shutdown.
         if (deferred_library_style_prompt && isVisible()) {
             deferred_library_style_prompt = false;
             if (!UISettings::values.has_selected_game_library_style.GetValue()) {
-                PromptGameLibraryStyle();
-                SetGameListMode(UISettings::values.game_list_mode.GetValue());
+                PromptFirstRunSetup();
+                SetGameListMode(UISettings::values.game_list_mode.GetValue(), false);
             }
         }
     }
@@ -4140,7 +4091,7 @@ void MainWindow::OnConfigure() {
         RestoreUIState();
     }
     if (UISettings::values.game_library_style.GetValue() != old_library_style || reset_requested) {
-        // Defaults return to the first-run state, so the library style chooser asks again.
+        // Defaults return to the first-run state, so the setup asks again.
         UISettings::values.has_selected_game_library_style = !reset_requested;
         SetGameListMode(static_cast<UISettings::GameLibraryStyle>(
                                 UISettings::values.game_library_style.GetValue()) ==
