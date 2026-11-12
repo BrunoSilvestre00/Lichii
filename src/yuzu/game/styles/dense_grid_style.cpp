@@ -216,7 +216,7 @@ int DenseGridStyle::CellHeight() const {
     if (!show_names || names_on_tiles) {
         return tile;
     }
-    return tile + 4 + QFontMetrics(TileFont()).lineSpacing() * 2;
+    return tile + 4 + QFontMetrics(TileFont()).lineSpacing() * LibraryStyleContext::TitleLines(2);
 }
 
 QRect DenseGridStyle::GridArea() const {
@@ -315,13 +315,15 @@ void DenseGridStyle::paintEvent(QPaintEvent*) {
                                              static_cast<int>(Radius * ratio)));
         if (show_names && names_on_tiles) {
             LibraryStyleContext::PaintCoverCaption(&painter, tile, index, tile_font,
-                                                   show_info && i == current);
+                                                   show_info && i == current,
+                                                   i == current ? this : nullptr);
         } else if (show_names) {
+            const int lines = LibraryStyleContext::TitleLines(2);
             const QRect name(tile.left(), tile.bottom() + 4, tile.width(),
-                             tile_metrics.lineSpacing() * 2);
-            LibraryStyleContext::PaintName(&painter, name, TitleOf(index),
-                                           pal.text().color(), tile_font,
-                                           Qt::AlignHCenter | Qt::AlignTop);
+                             tile_metrics.lineSpacing() * lines);
+            LibraryStyleContext::PaintTitle(&painter, name, TitleOf(index), pal.text().color(),
+                                            tile_font, Qt::AlignHCenter | Qt::AlignTop, lines,
+                                            i == current ? this : nullptr);
         }
         if (i == current) {
             LibraryStyleContext::PaintSelection(&painter, tile, pal, Radius, 3);
@@ -347,21 +349,36 @@ void DenseGridStyle::paintEvent(QPaintEvent*) {
     const QModelIndex selected = CurrentIndex();
     if (selected.isValid()) {
         // The bar follows the same toggles as the tiles: no names, no title down here either.
+        // One line: the title, then the info parts that fit after it (S3), never cut inside.
         const GameInfo info = LibraryStyleContext::Info(selected);
-        QStringList parts;
-        if (show_names) {
-            parts.append(info.title);
-        }
-        if (show_info && !info.info_line.isEmpty()) {
-            parts.append(info.info_line);
-        }
-        const QString text = parts.join(QStringLiteral("    "));
         QFont bold = font();
         bold.setBold(true);
-        const QRect title_rect(bar.left() + Margin, bar.top(),
-                               std::max(0, bar.width() - Margin * 3 - hint_width), bar.height());
-        LibraryStyleContext::PaintName(&painter, title_rect, text, pal.text().color(), bold,
-                                       Qt::AlignLeft | Qt::AlignVCenter, 1);
+        const QRect text_rect(bar.left() + Margin, bar.top(),
+                              std::max(0, bar.width() - Margin * 3 - hint_width), bar.height());
+        const int gap = metrics.horizontalAdvance(QStringLiteral("    "));
+        const int title_w = show_names ? QFontMetrics(bold).horizontalAdvance(info.title) : 0;
+        // The info gets what the title leaves, the title keeps at least half of the line.
+        const int title_room = show_names ? std::min(title_w, text_rect.width() / 2) + gap : 0;
+        const int info_room = std::max(0, text_rect.width() - title_room);
+        const QStringList info_lines =
+            show_info ? LibraryStyleContext::InfoLines(
+                            info, LibraryStyleContext::LayoutInfo(bold, info_room, 1, &info), bold)
+                      : QStringList{};
+        const int info_w =
+            info_lines.isEmpty() ? 0 : QFontMetrics(bold).horizontalAdvance(info_lines.first()) + 2;
+        const int name_w = std::max(0, text_rect.width() - (info_w > 0 ? info_w + gap : 0));
+        if (show_names) {
+            LibraryStyleContext::PaintTitle(
+                &painter, QRect(text_rect.left(), text_rect.top(), name_w, text_rect.height()),
+                info.title, pal.text().color(), bold, Qt::AlignLeft | Qt::AlignVCenter, 1, this);
+        }
+        if (!info_lines.isEmpty()) {
+            const int left = show_names ? text_rect.left() + std::min(title_w + 2, name_w) + gap
+                                        : text_rect.left();
+            LibraryStyleContext::PaintInfoLines(
+                &painter, QRect(left, text_rect.top(), info_w, text_rect.height()), info_lines,
+                pal.text().color(), bold, Qt::AlignLeft | Qt::AlignVCenter);
+        }
     }
 }
 
