@@ -60,6 +60,8 @@ private:
         qreal card_h = 0;
         qreal margin_x = 0;
         qreal margin_top = 0;
+        /// Name bubble size relative to the concept (1.0 on a 160 px cart, down to 0.65).
+        qreal bubble_scale = 1.0;
     };
     struct Placement {
         QPointF center;

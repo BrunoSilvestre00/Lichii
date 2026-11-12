@@ -319,7 +319,7 @@ void DenseGridStyle::paintEvent(QPaintEvent*) {
         } else if (show_names) {
             const QRect name(tile.left(), tile.bottom() + 4, tile.width(),
                              tile_metrics.lineSpacing() * 2);
-            LibraryStyleContext::PaintName(&painter, name, LibraryStyleContext::Title(index),
+            LibraryStyleContext::PaintName(&painter, name, TitleOf(index),
                                            pal.text().color(), tile_font,
                                            Qt::AlignHCenter | Qt::AlignTop);
         }

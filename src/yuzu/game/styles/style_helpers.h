@@ -75,7 +75,7 @@ public:
     static bool IsDark(const QPalette& palette);
     /// Selection colour of the theme.
     static QColor Accent(const QPalette& palette);
-    /// Side of the square cover art in every grid style: View > Game Icon Size, at least 96 px.
+    /// Side of the square cover art in every grid style: View > Game Icon Size, at least 32 px.
     /// One setting gives the same art size in every style.
     static int ArtSize();
     /// Art of the one-row showcase styles (Home Row tiles, Showcase centre): 1.6x ArtSize.

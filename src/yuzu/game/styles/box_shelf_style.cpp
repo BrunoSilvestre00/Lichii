@@ -452,7 +452,16 @@ BoxShelfStyle::Metrics BoxShelfStyle::ComputeMetrics() const {
         m.cell_w = usable / m.cols;
         m.case_h = m.case_w / kCaseAspect;
         // Names on: every case gets a bubble of up to two lines underneath.
-        m.bubble_h = m_show_names ? QFontMetrics(font()).lineSpacing() * 2 + 44.0 : 0.0;
+        if (m_show_names) {
+            // Matches DrawNameBubble: gap, two lines and padding, scaled with the case.
+            const double bs = std::clamp(m.case_w / 160.0, 0.65, 1.0);
+            QFont f = font();
+            f.setPixelSize(std::max(9, static_cast<int>(std::lround(13.0 * bs))));
+            f.setBold(true);
+            m.bubble_h = 22.0 * bs + QFontMetrics(f).lineSpacing() * 2 + 16.0 * bs + 6.0;
+        } else {
+            m.bubble_h = 0.0;
+        }
     } else {
         const double spine_w = std::clamp(w / 56.0, 26.0, 44.0);
         m.case_w = spine_w;
@@ -1384,22 +1393,28 @@ void BoxShelfStyle::DrawNameBubble(QPainter& p, const Metrics& m, const QRectF& 
     if (title.isEmpty()) {
         return;
     }
+    // Concept bubble, shrunk with small cases (down to 65 %) so names never outgrow them.
+    const double bs = std::clamp(m.case_w / 160.0, 0.65, 1.0);
     QFont f = font();
-    f.setPixelSize(13);
+    f.setPixelSize(std::max(9, static_cast<int>(std::lround(13.0 * bs))));
     f.setBold(true);
     const QFontMetrics fm(f);
-    // Concept bubble: up to 190 px, or the case width + 20 px when every name shows, so
-    // neighbours never overlap.
-    const double max_w = std::min(m_show_names ? m.case_w + 20.0 : 190.0, m.cell_w - 8.0);
-    const QRect text_box = fm.boundingRect(QRect(0, 0, static_cast<int>(max_w - 24.0), 1000),
-                                           Qt::AlignHCenter | Qt::TextWordWrap, title);
+    const double pad_x = 12.0 * bs;
+    const double pad_y = 8.0 * bs;
+    const double corner = 12.0 * bs;
+    // Up to 190 px, or the case width + 20 px when every name shows, so neighbours never overlap.
+    const double max_w =
+        std::min(m_show_names ? m.case_w + 20.0 : 190.0 * bs, m.cell_w - 8.0);
+    const QRect text_box =
+        fm.boundingRect(QRect(0, 0, static_cast<int>(std::max(20.0, max_w - 2 * pad_x)), 1000),
+                        Qt::AlignHCenter | Qt::TextWordWrap, title);
     const double text_h = std::min<double>(text_box.height(), fm.lineSpacing() * 2);
-    const double bw = text_box.width() + 24.0;
-    const double bh = text_h + 16.0;
-    const double arrow = 7.0;
-    // Bubble 22 px below the case, its arrow reaching up to 15 px.
+    const double bw = text_box.width() + 2 * pad_x;
+    const double bh = text_h + 2 * pad_y;
+    const double arrow = 7.0 * bs;
+    // Bubble 22 px below the case (scaled), its arrow reaching up towards it.
     Q_UNUSED(selected);
-    const double top = base.bottom() + 22.0 - arrow;
+    const double top = base.bottom() + 22.0 * bs - arrow;
     double left = base.center().x() - bw / 2;
     left = std::clamp(left, 6.0, std::max(6.0, width() - 6.0 - bw));
     const QRectF rect(left, top + arrow, bw, bh);
@@ -1408,18 +1423,19 @@ void BoxShelfStyle::DrawNameBubble(QPainter& p, const Metrics& m, const QRectF& 
     p.setPen(Qt::NoPen);
     for (int i = 1; i <= 4; ++i) {
         p.setBrush(QColor(0, 0, 0, 18));
-        p.drawRoundedRect(rect.adjusted(-i, -i + 5, i, i + 5), 12 + i, 12 + i);
+        p.drawRoundedRect(rect.adjusted(-i, -i + 5 * bs, i, i + 5 * bs), corner + i, corner + i);
     }
     const QColor bubble(255, 255, 255, 235);
     p.setBrush(bubble);
-    p.drawRoundedRect(rect, 12, 12);
-    const double cx = std::clamp(base.center().x(), rect.left() + 14.0, rect.right() - 14.0);
+    p.drawRoundedRect(rect, corner, corner);
+    const double cx =
+        std::clamp(base.center().x(), rect.left() + corner + 2, rect.right() - corner - 2);
     p.drawPolygon(QPolygonF{{cx - arrow, rect.top() + 0.75},
                             {cx, rect.top() - arrow},
                             {cx + arrow, rect.top() + 0.75}});
     // Two lines at most, cut with "...", like the cartridge bubbles.
-    LibraryStyleContext::PaintName(&p, rect.adjusted(12, 8, -12, -8).toAlignedRect(), title,
-                                   QColor(0x16, 0x14, 0x1c), f, Qt::AlignCenter, 2);
+    LibraryStyleContext::PaintName(&p, rect.adjusted(pad_x, pad_y, -pad_x, -pad_y).toAlignedRect(),
+                                   title, QColor(0x16, 0x14, 0x1c), f, Qt::AlignCenter, 2);
     p.restore();
 }
 

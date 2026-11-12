@@ -686,10 +686,49 @@ void GameList::OnPopulatingCompleted(const QStringList& watch_list) {
                 }
             }
         }
+        // First load after start: open the folder holding the last played game (or the first
+        // folder) and select that game, instead of the folder overview.
+        QModelIndex start_game;
+        if (!root_index.isValid() && !start_folder_opened) {
+            start_folder_opened = true;
+            for (const QString& recent : std::as_const(UISettings::values.recent_files)) {
+                const QModelIndexList matches = item_model->match(
+                    item_model->index(0, 0), GameListItemPath::FullPathRole, recent, 1,
+                    Qt::MatchExactly | Qt::MatchRecursive);
+                for (const QModelIndex& match : matches) {
+                    if (match.parent().isValid() &&
+                        match.parent().data(GameListItem::TypeRole).value<GameListItemType>() !=
+                            GameListItemType::Favorites) {
+                        start_game = match;
+                        break;
+                    }
+                }
+                if (start_game.isValid()) {
+                    break;
+                }
+            }
+            if (start_game.isValid()) {
+                root_index = start_game.parent();
+            } else if (item_model->rowCount() > 2) {
+                const QModelIndex first = item_model->index(1, 0);
+                const auto type = first.data(GameListItem::TypeRole).value<GameListItemType>();
+                if (type == GameListItemType::CustomDir || type == GameListItemType::SdmcDir ||
+                    type == GameListItemType::UserNandDir || type == GameListItemType::SysNandDir) {
+                    root_index = first;
+                }
+            }
+            if (start_game.isValid() && style_selected_path.isEmpty()) {
+                style_selected_path = start_game.data(GameListItemPath::FullPathRole).toString();
+            }
+        }
         grid_view->setRootIndex(root_index);
         if (root_index.isValid()) {
             grid_view->UpdateIconSize();
             grid_view->scrollToTop();
+            if (start_game.isValid()) {
+                grid_view->setCurrentIndex(start_game);
+                grid_view->scrollTo(start_game);
+            }
         } else {
             grid_view->setRowHidden(0, true);
         }

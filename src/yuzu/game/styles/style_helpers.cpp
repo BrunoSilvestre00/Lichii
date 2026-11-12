@@ -240,7 +240,7 @@ QColor LibraryStyleContext::MutedText(const QPalette& palette) {
 }
 
 int LibraryStyleContext::ArtSize() {
-    return std::max(96, static_cast<int>(UISettings::values.game_cover_size.GetValue()));
+    return std::max(32, static_cast<int>(UISettings::values.game_cover_size.GetValue()));
 }
 
 int LibraryStyleContext::FeaturedArtSize() {

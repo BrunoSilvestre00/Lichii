@@ -46,6 +46,17 @@ constexpr qreal BubbleGap = 14.0;
 constexpr qreal BubbleArrow = 7.0;
 constexpr int BubbleFontPx = 13;
 
+/// Bubbles shrink with small carts so names never take more room than the carts themselves.
+qreal BubbleScale(qreal card_w) {
+    return std::clamp(card_w / 160.0, 0.65, 1.0);
+}
+
+QFont BubbleFont(QFont font, qreal scale) {
+    font.setPixelSize(std::max(9, static_cast<int>(std::lround(BubbleFontPx * scale))));
+    font.setBold(true);
+    return font;
+}
+
 /// How far the lifted, scaled selected cart and its ring reach above its resting top edge.
 qreal SelectedHeadroom(qreal card_h) {
     return LiftAmount + card_h * (SelectedScale - 1.0) / 2 + RingWidth + 6.0;
@@ -448,10 +459,10 @@ CartridgesStyle::Metrics CartridgesStyle::ComputeMetrics() const {
     m.card_h = m.card_w * 1.408;
     // Concept row gap of 34 px. With names on, the gap holds a two-line bubble plus the lifted,
     // scaled selected cart of the next row, so neither covers the other.
-    QFont bubble_font = font();
-    bubble_font.setPixelSize(BubbleFontPx);
-    bubble_font.setBold(true);
-    const qreal bubble_h = BubbleGap + QFontMetrics(bubble_font).lineSpacing() * 2 + 16.0;
+    m.bubble_scale = BubbleScale(m.card_w);
+    const qreal bs = m.bubble_scale;
+    const qreal bubble_h =
+        BubbleGap * bs + QFontMetrics(BubbleFont(font(), bs)).lineSpacing() * 2 + 16.0 * bs;
     m.cell_h = m.card_h + (show_names_ ? std::max(34.0, bubble_h + SelectedHeadroom(m.card_h) + 6.0)
                                        : 34.0);
     m.margin_x = SideMargin;
@@ -664,23 +675,26 @@ void CartridgesStyle::DrawNameBubble(QPainter& painter, int row, const Metrics& 
     if (title.isEmpty()) {
         return;
     }
-    QFont bubble_font = font();
-    bubble_font.setPixelSize(BubbleFontPx);
-    bubble_font.setBold(true);
+    const qreal bs = m.bubble_scale;
+    const QFont bubble_font = BubbleFont(font(), bs);
     const QFontMetrics fm(bubble_font);
+    const qreal pad_x = 12.0 * bs;
+    const qreal pad_y = 8.0 * bs;
+    const qreal corner = 12.0 * bs;
     // With every name showing, each bubble keeps to its own column so neighbours never overlap;
     // at most two lines, the rest is cut with "...", so the row gap always holds it.
     const int max_w = static_cast<int>(
-        std::max(40.0, (show_names_ ? m.cell_w - 12.0 : std::max(190.0, m.cell_w)) - 24.0));
+        std::max(30.0, (show_names_ ? m.cell_w - 12.0 : std::max(190.0 * bs, m.cell_w)) -
+                           2 * pad_x));
     const QRect text_box =
         fm.boundingRect(QRect(0, 0, max_w, 1000), Qt::AlignHCenter | Qt::TextWordWrap, title);
-    const qreal bw = text_box.width() + 24.0;
-    const qreal bh = std::min(text_box.height(), fm.lineSpacing() * 2) + 16.0;
-    const qreal arrow = BubbleArrow;
+    const qreal bw = text_box.width() + 2 * pad_x;
+    const qreal bh = std::min(text_box.height(), fm.lineSpacing() * 2) + 2 * pad_y;
+    const qreal arrow = BubbleArrow * bs;
     // Anchored to the cart's resting bottom edge, so lifting the selected cart opens a gap.
     const qreal rest_bottom = m.margin_top + (row / m.cols) * m.cell_h + m.card_h;
     const qreal top = std::max(rest_bottom, place.center.y() + m.card_h * SelectedScale / 2) +
-                      BubbleGap - arrow;
+                      BubbleGap * bs - arrow;
     qreal left = place.center.x() - bw / 2;
     left = std::clamp(left, 6.0, std::max(6.0, width() - 6.0 - bw));
     const QRectF rect(left, top + arrow, bw, bh);
@@ -689,19 +703,22 @@ void CartridgesStyle::DrawNameBubble(QPainter& painter, int row, const Metrics& 
     painter.setPen(Qt::NoPen);
     for (int i = 1; i <= 4; ++i) {
         painter.setBrush(QColor(0, 0, 0, 18));
-        painter.drawRoundedRect(rect.adjusted(-i, -i + 5, i, i + 5), 12 + i, 12 + i);
+        painter.drawRoundedRect(rect.adjusted(-i, -i + 5 * bs, i, i + 5 * bs), corner + i,
+                                corner + i);
     }
     const QColor bubble(255, 255, 255, 235);
     painter.setBrush(bubble);
-    painter.drawRoundedRect(rect, 12, 12);
-    const qreal cx = std::clamp(place.center.x(), rect.left() + 14.0, rect.right() - 14.0);
+    painter.drawRoundedRect(rect, corner, corner);
+    const qreal cx =
+        std::clamp(place.center.x(), rect.left() + corner + 2, rect.right() - corner - 2);
     QPolygonF tip;
     tip << QPointF(cx - arrow, rect.top() + 0.75) << QPointF(cx, rect.top() - arrow)
         << QPointF(cx + arrow, rect.top() + 0.75);
     painter.setPen(Qt::NoPen);
     painter.setBrush(bubble);
     painter.drawPolygon(tip);
-    LibraryStyleContext::PaintName(&painter, rect.adjusted(12, 8, -12, -8).toAlignedRect(), title,
+    LibraryStyleContext::PaintName(&painter,
+                                   rect.adjusted(pad_x, pad_y, -pad_x, -pad_y).toAlignedRect(), title,
                                    QColor(0x16, 0x14, 0x1c), bubble_font,
                                    Qt::AlignHCenter | Qt::AlignVCenter, 2);
     painter.restore();

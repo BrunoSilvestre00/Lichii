@@ -66,7 +66,9 @@ void GameCarousel::UpdateIconSize() {
 
     // Same card shape as the grid: square artwork with the title band under it.
     const int widthMargin = Yuzu::CardWidthMargin;
-    const int heightMargin = Yuzu::CardHeightMargin(show_game_name);
+    const int heightMargin =
+        GameCard::HeightMargin(static_cast<int>(display_icon_size), show_game_name,
+                               UISettings::values.show_library_info.GetValue());
 
     const int min_item_width = display_icon_size + widthMargin;
     const int min_item_height = display_icon_size + heightMargin;

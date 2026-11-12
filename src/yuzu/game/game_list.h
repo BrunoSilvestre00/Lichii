@@ -212,6 +212,9 @@ private:
     bool m_isFlat = false;
     bool m_populating = false;
     int grid_root_dir_index_to_restore = -1;
+    /// The first load after start opens the folder of the last played game (see
+    /// OnPopulatingCompleted); later loads keep whatever the user opened.
+    bool start_folder_opened = false;
     bool suppress_grid_double_click = false;
     bool nup_conversion_running{};
     bool nx_tool_running{};

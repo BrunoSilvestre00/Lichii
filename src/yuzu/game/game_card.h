@@ -32,8 +32,22 @@ public:
     void setSize(const QSize& newSize, const QSize& contentSize, const int padding, const int columns);
 
     static constexpr int cardMargin = 8;
-    /// Height the title and subtitle add below the art (title area plus the bottom inset).
-    static constexpr int TitleHeight = 74;
+
+    /// The text under the art, sized to what it shows. Every card of a view shares it, so the
+    /// grid stays even: the title always gets two lines when names are on.
+    struct TextLayout {
+        bool names = false;    ///< title lines
+        bool meta = false;     ///< info line (play time, version) or size and type
+        int pad = 12;          ///< side padding, smaller on small cards
+        int title_px = 14;
+        int meta_px = 11;
+        int meta_lines = 1;    ///< 2 when the line is split at its separator dot
+        int height = 0;        ///< 0: no text block at all
+    };
+    /// `art` is the artwork side; names/info follow View > Show Game Name / Show Info.
+    static TextLayout Layout(int art, bool names, bool info);
+    /// Cell height margin around the art, see Yuzu::CardWidthMargin.
+    static int HeightMargin(int art, bool names, bool info);
 
 private:
 

@@ -269,13 +269,12 @@ void DualPaneStyle::ComputeLayout() {
                        std::max(0, total_h - top_h));
     grid_area_ = grid_pane_.adjusted(PanePad - 4, PanePad - 4, -(PanePad - 4), -(PanePad - 4));
 
-    // The global cover size is the base (Cover 160 -> 72 px, the old medium); the style's own
-    // option (X) still steps it smaller or larger.
+    // The bottom screen's small icons are 3/5 of View > Game Icon Size, so every size option
+    // changes them; the style's own option (X) still steps them smaller or larger.
     static constexpr qreal level_scale[3] = {0.72, 1.0, 1.39};
-    const int base = std::max(
-        32, static_cast<int>(UISettings::values.game_cover_size.GetValue()) * 72 / 160);
+    const int base = LibraryStyleContext::ArtSize() * 3 / 5;
     icon_px_ = std::clamp(static_cast<int>(base * level_scale[std::clamp(icon_level_, 0, 2)]),
-                          32, 256);
+                          16, 256);
     const int gap_w = icon_px_ / 4 + 6;
     cols_ = std::max(1, (grid_area_.width() + gap_w) / (icon_px_ + gap_w));
     cell_w_ = std::max(1, grid_area_.width() / cols_);
