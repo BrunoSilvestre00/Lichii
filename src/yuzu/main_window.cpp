@@ -2497,10 +2497,9 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     const auto gpu_vendor = QtCommon::system->GPU().Renderer().GetDeviceVendor();
     UpdateWindowTitle(title_name, title_version, gpu_vendor);
 
-    // The modern loading screen belongs to the Modern library style; Classic keeps the
-    // original screen and closing dialog.
-    modern_loading_screen = UISettings::values.game_library_style.GetValue() ==
-                            static_cast<u8>(UISettings::GameLibraryStyle::Modern);
+    // Only the Lichii Modern theme uses the modern loading and closing screens; every other theme
+    // keeps the original ones. Read at boot, so a theme change applies to the next game.
+    modern_loading_screen = UISettings::values.theme == std::string("lichii_modern");
     if (!modern_loading_screen) {
         classic_loading_screen->Prepare(QtCommon::system->GetAppLoader());
         classic_loading_screen->show();

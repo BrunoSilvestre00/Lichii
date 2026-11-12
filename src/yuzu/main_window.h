@@ -539,7 +539,7 @@ private:
     GRenderWindow* render_window = nullptr;
     GameList* game_list = nullptr;
     LoadingScreen* loading_screen = nullptr;
-    /// The loading screen of the Classic library style, with the closing dialog it used.
+    /// The original loading screen and closing dialog, used by every theme but Lichii Modern.
     ClassicLoadingScreen* classic_loading_screen = nullptr;
     OverlayDialog* shutdown_dialog{};
     /// Whether the running game uses the modern loading screen, chosen when it boots.
