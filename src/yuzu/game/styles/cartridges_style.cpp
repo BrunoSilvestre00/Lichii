@@ -94,7 +94,8 @@ bool IsDark(const QPalette& palette) {
 
 /// Room around the card in its pixmap: the stickers stick out past the right edge.
 qreal CardMargin(qreal card_w) {
-    return card_w * 0.2;
+    // At least 22 px: on small carts the stickers move further out past the right edge.
+    return std::max(card_w * 0.2, 22.0);
 }
 
 QPainterPath BodyPath(qreal w, qreal h) {
@@ -223,14 +224,28 @@ QPixmap RenderCard(const CardData& d, qreal w, qreal h, qreal dpr) {
     std::vector<Sticker> stickers;
     QRectF sticker_bounds;
     {
+        const std::pair<QString, QColor> tags[] = {{d.play_time, QColor(0xff, 0xd3, 0x6b)},
+                                                   {d.version, QColor(0xff, 0xf3, 0xc9)}};
+        const auto tag_width = [&](const QString& text) {
+            return tag_metrics.horizontalAdvance(text) + tag_font.pixelSize() * 1.4;
+        };
+        // Right edges 7 % past the cart like the concept. The tag font has a floor, so on small
+        // carts the stickers would cover the art: shift them out until they cover at most 26 %
+        // of the cart, keeping their right edges aligned.
+        qreal widest = 0.0;
+        for (const auto& [text, fill] : tags) {
+            if (!text.isEmpty()) {
+                widest = std::max(widest, tag_width(text));
+            }
+        }
+        const qreal right = w * 1.07 + std::max<qreal>(0.0, widest - w * 0.07 - w * 0.26);
         qreal tag_y = h * 0.17;
-        for (const auto& [text, fill] : {std::pair{d.play_time, QColor(0xff, 0xd3, 0x6b)},
-                                         std::pair{d.version, QColor(0xff, 0xf3, 0xc9)}}) {
+        for (const auto& [text, fill] : tags) {
             if (text.isEmpty()) {
                 continue;
             }
-            const qreal tw = tag_metrics.horizontalAdvance(text) + tag_font.pixelSize() * 1.4;
-            const QRectF rect(w + w * 0.07 - tw, tag_y, tw, tag_h);
+            const qreal tw = tag_width(text);
+            const QRectF rect(right - tw, tag_y, tw, tag_h);
             stickers.push_back({text, fill, rect});
             QTransform tilt;
             tilt.translate(rect.center().x(), rect.center().y());

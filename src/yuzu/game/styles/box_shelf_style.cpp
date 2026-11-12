@@ -1379,7 +1379,20 @@ void BoxShelfStyle::DrawFront(QPainter& p, const Metrics& m, int pos, bool selec
         const QPointF top_right = front.at(1);
         const QPointF bottom_right = front.at(2);
         const double t = 0.17;
-        QPointF anchor = top_right + (bottom_right - top_right) * t + QPointF(10.0 * u, 0);
+        // Right edges 10 concept px past the case. The tag font has a floor, so on small cases
+        // the stickers would cover the art: shift them out until they cover at most 26 % of it.
+        const QFontMetricsF tag_metrics(f);
+        double widest = 0.0;
+        if (info.is_game && UISettings::values.show_play_time.GetValue()) {
+            widest = tag_metrics.horizontalAdvance(info.play_time_text);
+        }
+        if (UISettings::values.show_add_ons.GetValue() && !info.update_version.isEmpty()) {
+            widest = std::max(widest, tag_metrics.horizontalAdvance(QStringLiteral("v") +
+                                                                     info.update_version));
+        }
+        widest += f.pixelSize() * 1.4;
+        const double out = 10.0 * u + std::max(0.0, widest - 10.0 * u - w * 0.26);
+        QPointF anchor = top_right + (bottom_right - top_right) * t + QPointF(out, 0);
         if (selected) {
             anchor += QPointF(6.0 * u, -22.0 * u);
         }
