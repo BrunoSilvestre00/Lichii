@@ -2,6 +2,7 @@ Build DXVK v2.6.2 dxbc and spirv on their own, for translating Lossless.dll comp
 
 - dxbc_dxvk.h replaces dxvk_shader.h with the few types the compiler uses.
 - dxbc_options: drop the D3D11 device constructor.
+- dxbc_reader: readString stops at the end of the chunk instead of reading past it.
 - util/log/log.h: forward messages to a sink instead of DXVK log files.
 - util/util_string.h: drop the COM and wide string helpers.
 - util/util_bit.h: other CPUs take the generic paths instead of failing to build.
@@ -244,6 +245,32 @@ index 37fdbe9..78b7d20 100644
    struct D3D11Options;
  
    enum class DxbcFloatControlFlag : uint32_t {
+diff --git a/src/dxbc/dxbc_reader.cpp b/src/dxbc/dxbc_reader.cpp
+index 9b9a340..a088b57 100644
+--- a/src/dxbc/dxbc_reader.cpp
++++ b/src/dxbc/dxbc_reader.cpp
+@@ -14,10 +14,17 @@ namespace dxvk {
+   std::string DxbcReader::readString() {
+     std::string result;
+     
+-    while (m_data[m_pos] != '\0')
+-      result.push_back(m_data[m_pos++]);
+-    
+-    m_pos++;
++    while (true) {
++      if (m_pos >= m_size)
++        throw DxvkError("DxbcReader::readString: Unterminated string");
++
++      const char c = m_data[m_pos++];
++      if (c == '\0')
++        break;
++
++      result.push_back(c);
++    }
++
+     return result;
+   }
+   
 diff --git a/src/util/log/log.h b/src/util/log/log.h
 index ddfdaad..ab64b65 100644
 --- a/src/util/log/log.h

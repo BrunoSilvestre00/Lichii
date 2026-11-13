@@ -46,6 +46,7 @@ constexpr u32 PERFORMANCE_SHADER_ID_LAST = 302;
 
 constexpr u32 CACHE_MAGIC = 0x4746534C;
 constexpr u32 CACHE_VERSION = 5;
+constexpr u32 SPIRV_HEADER_WORDS = 5;
 
 struct CacheHeader {
     u32 magic;
@@ -364,7 +365,8 @@ template <typename Map>
     for (u32 i = 0; i < header.module_count; ++i) {
         u32 id{};
         u32 word_count{};
-        if (file.Read(id) != 1 || file.Read(word_count) != 1 || word_count == 0) {
+        if (file.Read(id) != 1 || file.Read(word_count) != 1 ||
+            word_count < SPIRV_HEADER_WORDS) {
             return false;
         }
 
