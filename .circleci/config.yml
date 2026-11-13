@@ -10,9 +10,10 @@ version: 2.1
 # Linux runs on the open-source allowance (400,000 credits a month). Windows and macOS draw from
 # the free plan's 30,000, so macOS only runs when a pipeline is triggered with macos: true.
 #
-# Only nx2 pushes and API-triggered runs save caches, at most once a day per job, which keeps
-# stored caches near the free plan's storage. Every run restores the newest one; ccache keys
-# objects by content, so a cache from another branch still helps.
+# Each job saves its cache at most twice a day: once after a build that stopped early and once
+# after a complete one. Caches live three days, which keeps storage near the free plan's 2 GB.
+# Every run restores the newest one; ccache keys objects by content, so a cache from another
+# branch still helps.
 
 parameters:
   macos:
@@ -40,13 +41,14 @@ commands:
         type: string
     steps:
       - run:
-          name: Pick the cache day
+          name: Pick the cache key
           shell: bash
-          command: date -u +%F > .circleci-cache-day
+          command: |
+            date -u +%F > .circleci-cache-day
+            echo partial > .circleci-build-state
       - restore_cache:
           name: Restore dependencies and compiler objects
           keys:
-            - << parameters.cache >>-{{ checksum ".circleci-cache-day" }}
             - << parameters.cache >>-
 
   save-objects:
@@ -54,19 +56,13 @@ commands:
       cache:
         type: string
     steps:
-      - when:
-          condition:
-            or:
-              - equal: [nx2, << pipeline.git.branch >>]
-              - equal: [api, << pipeline.event.name >>]
-          steps:
-            - save_cache:
-                name: Save dependencies and compiler objects
-                when: always
-                key: << parameters.cache >>-{{ checksum ".circleci-cache-day" }}
-                paths:
-                  - .cache/cpm
-                  - .ccache
+      - save_cache:
+          name: Save dependencies and compiler objects
+          when: always
+          key: << parameters.cache >>-{{ checksum ".circleci-cache-day" }}-{{ checksum ".circleci-build-state" }}
+          paths:
+            - .cache/cpm
+            - .ccache
 
 jobs:
   linux-gcc:
@@ -83,7 +79,7 @@ jobs:
       image: ubuntu-2404:current
     resource_class: << parameters.resource_class >>
     retention:
-      caches: 7d
+      caches: 3d
     environment:
       CCACHE_DIR: /home/circleci/project/.ccache
       CCACHE_MAXSIZE: 1G
@@ -154,6 +150,7 @@ jobs:
           command: |
             ccache --zero-stats
             timeout 48m cmake --build build --parallel "$(nproc)"
+            echo complete > .circleci-build-state
             ccache --show-stats
 
       - run:
@@ -189,7 +186,7 @@ jobs:
       shell: bash.exe
     resource_class: windows.medium
     retention:
-      caches: 7d
+      caches: 3d
     # ccache rather than sccache: sccache has no direct mode for clang-cl, so every hit still ran the
     # preprocessor and a 99% hit build took 8.5 minutes.
     environment:
@@ -311,7 +308,8 @@ jobs:
             . /c/ci/env.sh
             export CCACHE_COMPILERCHECK="string:$(sha256sum tools/windows/install-llvm.ps1 | cut -c1-64)"
             ccache --zero-stats
-            timeout 48m cmake --build build --parallel
+            /usr/bin/timeout 48m cmake --build build --parallel
+            echo complete > .circleci-build-state
             ccache --show-stats -v
 
       # nxformat is linked statically: lichii.exe must not need an nxformat.dll, which Windows
@@ -357,7 +355,7 @@ jobs:
       xcode: "26.6"
     resource_class: m4pro.medium
     retention:
-      caches: 7d
+      caches: 3d
     environment:
       CCACHE_DIR: /Users/distiller/project/.ccache
       CCACHE_MAXSIZE: 1G
@@ -407,6 +405,7 @@ jobs:
           command: |
             ccache --zero-stats
             gtimeout 48m cmake --build build --parallel "$(sysctl -n hw.ncpu)"
+            echo complete > .circleci-build-state
             ccache --show-stats
 
       - run:
