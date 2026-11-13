@@ -82,19 +82,4 @@ const StyleInfo* Active() {
     return Find(UISettings::values.library_layout.GetValue());
 }
 
-std::string Cycle(const std::string& current, int step) {
-    const auto& styles = Registry();
-    // Position 0 is the Modern grid, then the styles in menu order.
-    const int count = static_cast<int>(styles.size()) + 1;
-    int position = 0;
-    for (int i = 0; i < static_cast<int>(styles.size()); ++i) {
-        if (current == styles[i].id) {
-            position = i + 1;
-            break;
-        }
-    }
-    position = ((position + step) % count + count) % count;
-    return position == 0 ? std::string{} : std::string{styles[position - 1].id};
-}
-
 } // namespace LibraryStyles

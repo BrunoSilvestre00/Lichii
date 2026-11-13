@@ -22,8 +22,4 @@ QString DisplayName(const StyleInfo& info);
 /// The style the setting asks for, or nullptr when the Modern grid (or Classic list) is in use.
 const StyleInfo* Active();
 
-/// Id of the style `step` places after `current` (negative steps go back). The Modern grid takes
-/// part in the cycle as the empty id, so cycling from the last style returns to it.
-std::string Cycle(const std::string& current, int step);
-
 } // namespace LibraryStyles

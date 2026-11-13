@@ -158,8 +158,12 @@ GameList::GameList(FileSys::VirtualFilesystem vfs_, FileSys::ManualContentProvid
                         target, new QKeyEvent(QEvent::KeyPress, style_key, Qt::NoModifier));
                     return;
                 }
-                if (key == Qt::Key_X || key == Qt::Key_Y || key == Qt::Key_BracketLeft ||
-                    key == Qt::Key_BracketRight) {
+                if (key == Qt::Key_BracketLeft || key == Qt::Key_BracketRight) {
+                    // L / R switch the view here too, so they cycle through every view.
+                    emit CycleStyleRequested(key == Qt::Key_BracketLeft ? -1 : 1);
+                    return;
+                }
+                if (key == Qt::Key_X || key == Qt::Key_Y) {
                     // Library style buttons only.
                     return;
                 }

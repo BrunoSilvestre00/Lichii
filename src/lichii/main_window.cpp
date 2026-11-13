@@ -8,6 +8,8 @@
 #undef VMA_IMPLEMENTATION
 #endif
 
+#include <cstring>
+
 #include <QSysInfo>
 #include <boost/algorithm/string/split.hpp>
 #include "common/fs/path_util.h"
@@ -4157,13 +4159,41 @@ void MainWindow::CycleLibraryStyle(int step) {
     if (emulation_running) {
         return;
     }
-    const auto* active = LibraryStyles::Active();
-    const std::string next = LibraryStyles::Cycle(active != nullptr ? active->id : "", step);
-    SetLibraryLayout(next);
-    const auto* shown = LibraryStyles::Find(next);
-    statusBar()->showMessage(shown != nullptr ? LibraryStyles::DisplayName(*shown)
-                                              : ui->action_Grid_View->text().remove(QLatin1Char('&')),
-                             2000);
+    // Every view in View > Mode order: the list, the Modern grid, the Carousel, then the styles.
+    const auto& styles = LibraryStyles::All();
+    constexpr int builtin_views = 3;
+    const int count = builtin_views + static_cast<int>(styles.size());
+    int position = 1;
+    if (const auto* active = LibraryStyles::Active(); active != nullptr) {
+        for (int i = 0; i < static_cast<int>(styles.size()); ++i) {
+            if (std::strcmp(styles[i].id, active->id) == 0) {
+                position = builtin_views + i;
+                break;
+            }
+        }
+    } else if (UISettings::values.game_list_mode.GetValue() == Settings::GameListMode::TreeView) {
+        position = 0;
+    } else if (UISettings::values.game_list_mode.GetValue() ==
+               Settings::GameListMode::CarouselView) {
+        position = 2;
+    }
+    position = ((position + step) % count + count) % count;
+    QString name;
+    if (position == 0) {
+        SetTreeView();
+        name = ui->action_Tree_View->text();
+    } else if (position == 1) {
+        SetGridView();
+        name = ui->action_Grid_View->text();
+    } else if (position == 2) {
+        SetCarouselView();
+        name = ui->action_Carousel_View->text();
+    } else {
+        const auto& style = styles[static_cast<size_t>(position - builtin_views)];
+        SetLibraryLayout(style.id);
+        name = LibraryStyles::DisplayName(style);
+    }
+    statusBar()->showMessage(name.remove(QLatin1Char('&')), 2000);
 }
 
 void MainWindow::ToggleShowLibraryInfo() {
