@@ -503,23 +503,23 @@ void CanvasStyle::PaintBackground(QPainter& painter, bool dark) {
         // Day or night background and arcs follow the palette.
         const QColor bg = dark ? pal.window().color().darker(135) : QColor(246, 233, 212);
         p.fillRect(QRect(0, 0, w, h), bg);
-        const QColor warm[] = {dark ? QColor(92, 62, 58) : QColor(244, 203, 144),
-                               dark ? QColor(98, 70, 54) : QColor(235, 164, 143),
-                               dark ? QColor(70, 78, 62) : QColor(236, 178, 128)};
-        const QColor cool[] = {dark ? QColor(56, 86, 88) : QColor(183, 216, 202),
-                               dark ? QColor(60, 70, 96) : QColor(138, 185, 172),
-                               dark ? QColor(76, 62, 92) : QColor(222, 171, 160)};
-        const int band = std::max(w, h) / 17;
-        p.setBrush(Qt::NoBrush);
-        for (int i = 0; i < 6; ++i) {
-            p.setPen(QPen(warm[i % 3], band, Qt::SolidLine, Qt::FlatCap));
-            const qreal r = h * 0.30 + i * band * 2.0;
-            p.drawEllipse(QPointF(w * 0.08, h * 1.18), r, r);
-        }
-        for (int i = 0; i < 5; ++i) {
-            p.setPen(QPen(cool[i % 3], band, Qt::SolidLine, Qt::FlatCap));
-            const qreal r = h * 0.45 + i * band * 2.0;
-            p.drawEllipse(QPointF(w * 1.02, h * 1.12), r, r);
+        // Lichii icon tiled in staggered rows, the whole pattern slanted.
+        static const QPixmap logo(QStringLiteral(":/icons/default/256x256/lichii.png"));
+        if (!logo.isNull()) {
+            const qreal tile = std::clamp(h / 6.5, 56.0, 150.0);
+            const qreal step = tile * 1.7;
+            const qreal reach = std::hypot(w, h);
+            p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+            p.setOpacity(dark ? 0.07 : 0.11);
+            p.translate(w / 2.0, h / 2.0);
+            p.rotate(-18);
+            int row = 0;
+            for (qreal y = -reach / 2; y < reach / 2 + step; y += step, ++row) {
+                const qreal shift = (row % 2) ? step / 2 : 0;
+                for (qreal x = -reach / 2 - step + shift; x < reach / 2 + step; x += step) {
+                    p.drawPixmap(QRectF(x, y, tile, tile), logo, QRectF(logo.rect()));
+                }
+            }
         }
         p.end();
         background = pixmap;
