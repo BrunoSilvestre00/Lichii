@@ -110,6 +110,7 @@ GameList::GameList(FileSys::VirtualFilesystem vfs_, FileSys::ManualContentProvid
 
     controller_navigation = new ControllerNavigation(system.HIDCore(), this);
     controller_navigation->SetLibraryButtonsEnabled(true);
+    controller_navigation->SetDirectionRepeatEnabled(true);
 
     SetupScrollAnimation();
 
@@ -142,36 +143,9 @@ GameList::GameList(FileSys::VirtualFilesystem vfs_, FileSys::ManualContentProvid
             &GameCarousel::SetSort);
 
     connect(controller_navigation, &ControllerNavigation::TriggerKeyboardEvent, this,
-            [this](Qt::Key key) {
-                if (system.IsPoweredOn()) {
-                    return;
-                }
-                if (!this->isActiveWindow()) {
-                    return;
-                }
-                if (style_view != nullptr && style_view->isVisible()) {
-                    // B toggles the names in the styles; there is no folder level to leave.
-                    const Qt::Key style_key = key == Qt::Key_Escape ? Qt::Key_B : key;
-                    QWidget* target = style_view->focusWidget();
-                    if (target == nullptr || !IsStyleObject(target)) {
-                        target = style_view;
-                    }
-                    QCoreApplication::postEvent(
-                        target, new QKeyEvent(QEvent::KeyPress, style_key, Qt::NoModifier));
-                    return;
-                }
-                if (key == Qt::Key_BracketLeft || key == Qt::Key_BracketRight) {
-                    // L / R switch the view here too, so they cycle through every view.
-                    emit CycleStyleRequested(key == Qt::Key_BracketLeft ? -1 : 1);
-                    return;
-                }
-                if (key == Qt::Key_X || key == Qt::Key_Y) {
-                    // Library style buttons only.
-                    return;
-                }
-                QKeyEvent* event = new QKeyEvent(QEvent::KeyPress, key, Qt::NoModifier);
-                QCoreApplication::postEvent(m_currentView, event);
-            });
+            [this](Qt::Key key) { OnControllerKey(key, false); });
+    connect(controller_navigation, &ControllerNavigation::RepeatKeyboardEvent, this,
+            [this](Qt::Key key) { OnControllerKey(key, true); });
 
     connect(item_model, &GameListModel::PopulatingCompleted, this,
             &GameList::OnPopulatingCompleted);
@@ -512,6 +486,38 @@ bool GameList::IsStyleObject(const QObject* object) const {
            style_view->isAncestorOf(static_cast<const QWidget*>(object));
 }
 
+void GameList::OnControllerKey(Qt::Key key, bool auto_repeat) {
+    if (system.IsPoweredOn()) {
+        return;
+    }
+    if (!this->isActiveWindow()) {
+        return;
+    }
+    if (style_view != nullptr && style_view->isVisible()) {
+        // B toggles the names in the styles; there is no folder level to leave.
+        const Qt::Key style_key = key == Qt::Key_Escape ? Qt::Key_B : key;
+        QWidget* target = style_view->focusWidget();
+        if (target == nullptr || !IsStyleObject(target)) {
+            target = style_view;
+        }
+        QCoreApplication::postEvent(target, new QKeyEvent(QEvent::KeyPress, style_key,
+                                                          Qt::NoModifier, QString(), auto_repeat));
+        return;
+    }
+    if (key == Qt::Key_BracketLeft || key == Qt::Key_BracketRight) {
+        // L / R switch the view here too, so they cycle through every view.
+        emit CycleStyleRequested(key == Qt::Key_BracketLeft ? -1 : 1);
+        return;
+    }
+    if (key == Qt::Key_X || key == Qt::Key_Y) {
+        // Library style buttons only.
+        return;
+    }
+    QKeyEvent* event =
+        new QKeyEvent(QEvent::KeyPress, key, Qt::NoModifier, QString(), auto_repeat);
+    QCoreApplication::postEvent(m_currentView, event);
+}
+
 bool GameList::HandleStyleKey(QObject* target, const QKeyEvent* event) {
     const int key = event->key();
     const Qt::KeyboardModifiers modifiers =
@@ -527,9 +533,12 @@ bool GameList::HandleStyleKey(QObject* target, const QKeyEvent* event) {
         return false;
     }
 
-    const auto post_arrow = [target](Qt::Key arrow) {
-        QCoreApplication::postEvent(target,
-                                    new QKeyEvent(QEvent::KeyPress, arrow, Qt::NoModifier));
+    // Handled right away, as the arrow keys are, and still marked as a repeat while held:
+    // the views step held keys differently.
+    const auto send_arrow = [target, event](Qt::Key arrow) {
+        QKeyEvent arrow_event(QEvent::KeyPress, arrow, Qt::NoModifier, QString(),
+                              event->isAutoRepeat());
+        QCoreApplication::sendEvent(target, &arrow_event);
     };
     switch (key) {
     case Qt::Key_Return:
@@ -537,16 +546,16 @@ bool GameList::HandleStyleKey(QObject* target, const QKeyEvent* event) {
         OnStyleLaunch(style_view->CurrentIndex());
         return true;
     case Qt::Key_W:
-        post_arrow(Qt::Key_Up);
+        send_arrow(Qt::Key_Up);
         return true;
     case Qt::Key_A:
-        post_arrow(Qt::Key_Left);
+        send_arrow(Qt::Key_Left);
         return true;
     case Qt::Key_S:
-        post_arrow(Qt::Key_Down);
+        send_arrow(Qt::Key_Down);
         return true;
     case Qt::Key_D:
-        post_arrow(Qt::Key_Right);
+        send_arrow(Qt::Key_Right);
         return true;
     case Qt::Key_I:
     case Qt::Key_Y:

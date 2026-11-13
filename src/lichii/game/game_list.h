@@ -172,6 +172,8 @@ private:
     void ActivateStyle(const LibraryStyles::StyleInfo* info);
     bool IsStyleObject(const QObject* object) const;
     bool HandleStyleKey(QObject* target, const QKeyEvent* event);
+    /// A controller button as a key press; held directions come again with auto_repeat set.
+    void OnControllerKey(Qt::Key key, bool auto_repeat);
     void OnStyleLaunch(const QModelIndex& index);
     void OnStyleContextMenu(const QModelIndex& index, const QPoint& global_pos);
     void RestoreStyleSelection();
