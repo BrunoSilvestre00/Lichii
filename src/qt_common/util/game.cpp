@@ -21,7 +21,9 @@
 #include <QFile>
 #include <QSaveFile>
 #include <QStandardPaths>
-#include <QUrl>
+#include <QString>
+
+#include "qt_common/util/open.h"
 
 #ifdef _WIN32
 #include <shlobj.h>
@@ -163,8 +165,7 @@ bool MakeShortcutIcoPath(const u64 program_id, const std::string_view game_file_
 }
 
 void OpenEdenFolder(const Common::FS::EdenPath& path) {
-    QDesktopServices::openUrl(
-        QUrl::fromLocalFile(QString::fromStdString(Common::FS::GetEdenPathString(path))));
+    QtCommon::OpenLocalFolder(QString::fromStdString(Common::FS::GetEdenPathString(path)));
 }
 
 void OpenRootDataFolder() {
@@ -178,7 +179,7 @@ void OpenNANDFolder() {
 void OpenSaveFolder() {
     const auto path =
         Common::FS::GetEdenPath(Common::FS::EdenPath::NANDDir) / "user/save/0000000000000000";
-    QDesktopServices::openUrl(QUrl::fromLocalFile(QString::fromStdString(path.string())));
+    QtCommon::OpenLocalFolder(path);
 }
 
 void OpenSDMCFolder() {
