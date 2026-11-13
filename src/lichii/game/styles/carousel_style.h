@@ -72,7 +72,9 @@ private:
     void EnsureBuilt();
     void SelectRow(int row, bool animate = true);
     void MoveBy(int delta);
-    void MoveSteps(int step, bool animate);
+    /// One step of a held key: lands on its game before the next repeat comes.
+    void RepeatBy(int delta);
+    void MoveSteps(int step, bool animate, int duration_ms);
     void Launch(int row);
     int HitRow(const QPoint& point) const;
 
@@ -141,6 +143,8 @@ private:
     int last_launch_row_ = -1;
     QElapsedTimer launch_timer_;
     int wheel_accum_ = 0;
+    /// Time since the last step of the arrow keys, to fit the steps of a held key.
+    QElapsedTimer key_step_clock_;
 };
 
 } // namespace LibraryStyles

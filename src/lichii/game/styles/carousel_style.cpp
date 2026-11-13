@@ -353,10 +353,10 @@ void CarouselStyle::SelectRow(int row, bool animate) {
     } else if (step < -count / 2) {
         step += count;
     }
-    MoveSteps(step, animate);
+    MoveSteps(step, animate, kAnimationMs);
 }
 
-void CarouselStyle::MoveSteps(int step, bool animate) {
+void CarouselStyle::MoveSteps(int step, bool animate, int duration_ms) {
     const int count = static_cast<int>(items_.size());
     if (count == 0 || step == 0) {
         return;
@@ -368,6 +368,7 @@ void CarouselStyle::MoveSteps(int step, bool animate) {
     animation_->stop();
     if (animate) {
         progress_ = 0.0;
+        animation_->setDuration(duration_ms);
         animation_->start();
     } else {
         position_ = target_position_;
@@ -380,7 +381,23 @@ void CarouselStyle::MoveSteps(int step, bool animate) {
 
 void CarouselStyle::MoveBy(int delta) {
     // Steps around the ring: past the last game comes the first again.
-    MoveSteps(delta, true);
+    MoveSteps(delta, true, kAnimationMs);
+}
+
+void CarouselStyle::RepeatBy(int delta) {
+    // A held key repeats faster than the full animation: restarting it on every repeat left the
+    // covers a game or two behind the selection the whole time. Each step gets the time until
+    // the next repeat instead (a jump when that is too short to see), so the centre cover is the
+    // selected game on every step.
+    const qint64 since_last = key_step_clock_.isValid() ? key_step_clock_.restart() : kAnimationMs;
+    if (!key_step_clock_.isValid()) {
+        key_step_clock_.start();
+    }
+    const int duration = static_cast<int>(std::min<qint64>(kAnimationMs, since_last * 3 / 4));
+    MoveSteps(delta, duration >= 16, std::max(duration, 1));
+    // No background cross fade while held: it would restart on every step and flicker between
+    // two games.
+    previous_row_ = -1;
 }
 
 void CarouselStyle::Launch(int row) {
@@ -1018,12 +1035,17 @@ void CarouselStyle::keyPressEvent(QKeyEvent* event) {
     switch (event->key()) {
     case Qt::Key_Left:
     case Qt::Key_A:
-        MoveBy(-1);
-        break;
     case Qt::Key_Right:
-    case Qt::Key_D:
-        MoveBy(1);
+    case Qt::Key_D: {
+        const int delta = event->key() == Qt::Key_Left || event->key() == Qt::Key_A ? -1 : 1;
+        if (event->isAutoRepeat()) {
+            RepeatBy(delta);
+        } else {
+            key_step_clock_.start();
+            MoveBy(delta);
+        }
         break;
+    }
     case Qt::Key_PageUp:
         MoveBy(-5);
         break;
