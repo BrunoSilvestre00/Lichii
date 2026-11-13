@@ -22,6 +22,7 @@ add_executable(tests
     core/nx2_video_ready.cpp
     core/nx2_thread_stats.cpp
     core/nx2_debug_server.cpp
+    core/nx2_zip.cpp
     core/nx2_present_pacer.cpp
     core/nx2_frame_interval.cpp
     core/ldn_lan_protocol.cpp
@@ -188,6 +189,7 @@ add_executable(tests
     core/core_timing.cpp
     core/local_redirect.cpp
     core/nextendo_redirect.cpp
+    core/filesystem_rename.cpp
     core/thread_startup_policy.cpp
     core/nup_writer.cpp
     core/nup_metadata.cpp
