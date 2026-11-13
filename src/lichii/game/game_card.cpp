@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <optional>
 #include <QColor>
 #include <QAbstractItemView>
 #include <QFileInfo>
@@ -141,6 +143,33 @@ QPixmap GameListFallbackIcon(int size, const QString& title, const QPalette& pal
 }
 
 GameCard::TextLayout GameCard::Layout(int art, bool names, bool info) {
+    // Every card of a view asks for the same layout on every paint, and packing the info parts
+    // measures text: keep the last one while nothing it depends on changes.
+    struct Key {
+        int art;
+        bool names;
+        bool info;
+        bool art_hidden;
+        bool scroll;
+        std::array<bool, 4> parts;
+        QString font;
+        bool operator==(const Key&) const = default;
+    };
+    static std::optional<Key> cached_key;
+    static TextLayout cached;
+    const Key key{art,
+                  names,
+                  info,
+                  Lichii::CardArtHidden(),
+                  Lichii::ScrollLongNames(),
+                  {UISettings::values.show_play_time.GetValue(),
+                   UISettings::values.show_add_ons.GetValue(),
+                   UISettings::values.show_size.GetValue(),
+                   UISettings::values.show_types.GetValue()},
+                  QGuiApplication::font().key()};
+    if (cached_key == key) {
+        return cached;
+    }
     TextLayout t;
     // Without art the title is the card: always show it.
     names = names || Lichii::CardArtHidden();
@@ -172,6 +201,8 @@ GameCard::TextLayout GameCard::Layout(int art, bool names, bool info) {
     const int title_lines = Lichii::ScrollLongNames() ? 1 : 2;
     t.height =
         6 + (names ? tfm.lineSpacing() * title_lines + 3 : 0) + t.meta_lines * mfm.lineSpacing();
+    cached_key = key;
+    cached = t;
     return t;
 }
 
@@ -351,6 +382,9 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
             y += line * title_lines + 3;
         }
 
+        // Read once: it formats the play time, version and size of the game.
+        const auto game = text.meta ? LibraryStyles::LibraryStyleContext::Info(index)
+                                    : LibraryStyles::GameInfo{};
         QStringList meta_parts;
         if (add_folder) {
             meta_parts.append(tr("Add a location to your library"));
@@ -358,7 +392,7 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
             meta_parts.append(tr("%n game(s)", "", index.model()->rowCount(index)));
         } else if (show_info) {
             // The parts switched on under View > Game Info.
-            meta_parts.append(LibraryStyles::LibraryStyleContext::Info(index).info_line);
+            meta_parts.append(game.info_line);
         }
         meta_parts.removeAll(QString{});
         if (text.meta && !meta_parts.isEmpty()) {
@@ -370,7 +404,6 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
             // Every part on its fixed line (TextLayout::info), so play time, version, size and
             // type sit in the same place on every card; placeholders keep the lines filled.
             QStringList lines;
-            const auto game = LibraryStyles::LibraryStyleContext::Info(index);
             if (show_info && game.is_game) {
                 lines = LibraryStyles::LibraryStyleContext::InfoLines(game, text.info, metaFont);
             } else {
