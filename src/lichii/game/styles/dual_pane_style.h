@@ -53,11 +53,16 @@ private:
     void ClampScroll();
     int RowAt(const QPoint& pos) const;
     QRect CellRect(int row) const;
+    /// The icon's shell inside its cell.
+    QRectF ShellRect(int row) const;
+    /// What the blinking selection brackets of `row` cover.
+    QRect MarkerRect(int row) const;
     QString OptionLabel() const;
 
     QPixmap Art(const QModelIndex& index, int logical_px);
     void DrawPreview(QPainter& painter, const QModelIndex& index, qreal opacity);
-    void DrawGrid(QPainter& painter);
+    /// Only the cells inside `dirty` are drawn.
+    void DrawGrid(QPainter& painter, const QRect& dirty);
 
     QAbstractItemModel* model_ = nullptr;
     std::vector<QPersistentModelIndex> items_;

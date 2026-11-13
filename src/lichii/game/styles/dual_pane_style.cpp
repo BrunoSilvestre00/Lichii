@@ -81,13 +81,16 @@ DualPaneStyle::DualPaneStyle(QWidget* parent)
     setFocusPolicy(Qt::StrongFocus);
     setMinimumSize(320, 280);
 
-    // The selection brackets blink like the concept: repaint only the selected icon.
+    // The selection brackets blink like the concept: repaint only the brackets.
     auto* blink_timer = new QTimer(this);
     blink_timer->setInterval(40);
     connect(blink_timer, &QTimer::timeout, this, [this] {
-        if (isVisible() && current_ >= 0 && cols_ > 0) {
-            update(CellRect(current_).adjusted(-cell_w_ / 2, -cell_h_ / 2, cell_w_ / 2,
-                                               cell_h_ / 2));
+        if (isVisible() && current_ >= 0 && current_ < static_cast<int>(items_.size()) &&
+            cols_ > 0) {
+            const QRect marker = MarkerRect(current_) & grid_area_;
+            if (!marker.isEmpty()) {
+                update(marker);
+            }
         }
     });
     blink_timer->start();
@@ -304,6 +307,20 @@ QRect DualPaneStyle::CellRect(int row) const {
                  cell_w_, cell_h_);
 }
 
+QRectF DualPaneStyle::ShellRect(int row) const {
+    const QRect cell = CellRect(row);
+    const qreal shell_side = icon_px_ / 0.8;
+    return QRectF(cell.left() + (cell.width() - shell_side) / 2.0,
+                  cell.top() + (cell.height() - shell_side) / 2.0, shell_side, shell_side);
+}
+
+QRect DualPaneStyle::MarkerRect(int row) const {
+    // The brackets sit 7 % outside the shell (see DrawGrid); one more pixel for the anti-aliasing.
+    const QRectF shell = ShellRect(row);
+    const qreal o = shell.width() * 0.07 + 1.0;
+    return shell.adjusted(-o, -o, o, o).toAlignedRect();
+}
+
 int DualPaneStyle::RowAt(const QPoint& pos) const {
     if (!grid_area_.contains(pos) || items_.empty()) {
         return -1;
@@ -499,7 +516,7 @@ void DualPaneStyle::DrawPreview(QPainter& painter, const QModelIndex& index, qre
     painter.restore();
 }
 
-void DualPaneStyle::DrawGrid(QPainter& painter) {
+void DualPaneStyle::DrawGrid(QPainter& painter, const QRect& dirty) {
     const QPalette pal = palette();
     const QColor accent = LibraryStyleContext::Accent(pal);
     const bool dark = IsDark(pal);
@@ -520,12 +537,12 @@ void DualPaneStyle::DrawGrid(QPainter& painter) {
             if (!index.isValid()) {
                 continue;
             }
-            const QRect cell = CellRect(row);
             const bool selected = row == current_;
-            const qreal shell_side = icon_px_ / 0.8;
-            const QRectF shell(cell.left() + (cell.width() - shell_side) / 2.0,
-                               cell.top() + (cell.height() - shell_side) / 2.0, shell_side,
-                               shell_side);
+            if (!(selected ? CellRect(row).united(MarkerRect(row)) : CellRect(row)).intersects(dirty)) {
+                continue;
+            }
+            const QRectF shell = ShellRect(row);
+            const qreal shell_side = shell.width();
             const QRect tile(static_cast<int>(std::lround(shell.left() + shell_side * 0.1)),
                              static_cast<int>(std::lround(shell.top() + shell_side * 0.1)),
                              icon_px_, icon_px_);
@@ -580,7 +597,8 @@ void DualPaneStyle::DrawGrid(QPainter& painter) {
 
     const int lines = (total + cols_ - 1) / std::max(1, cols_);
     const int content = lines * cell_h_;
-    if (content > grid_area_.height() && grid_area_.height() > 0) {
+    if (content > grid_area_.height() && grid_area_.height() > 0 &&
+        dirty.right() >= grid_pane_.right() - 8) {
         const qreal ratio = static_cast<qreal>(grid_area_.height()) / content;
         const int bar_h = std::max(24, static_cast<int>(grid_area_.height() * ratio));
         const int range = grid_area_.height() - bar_h;
@@ -594,7 +612,9 @@ void DualPaneStyle::DrawGrid(QPainter& painter) {
     }
 }
 
-void DualPaneStyle::paintEvent(QPaintEvent*) {
+void DualPaneStyle::paintEvent(QPaintEvent* event) {
+    // The blinking brackets repaint a small rect many times a second: draw only what is in it.
+    const QRect dirty = event->rect();
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
@@ -640,7 +660,8 @@ void DualPaneStyle::paintEvent(QPaintEvent*) {
     }
     painter.drawPixmap(0, 0, panes_);
 
-    {
+    const bool top_dirty = dirty.intersects(top_rect_);
+    if (top_dirty) {
         QColor sub = LibraryStyleContext::MutedText(pal);
         // Status bar: the game count in the blue pill, the date and time on the right.
         QFont f = font();
@@ -693,12 +714,16 @@ void DualPaneStyle::paintEvent(QPaintEvent*) {
         return;
     }
 
-    if (previous_.isValid() && fade_value_ < 1.0) {
-        DrawPreview(painter, QModelIndex(previous_), 1.0 - fade_value_);
+    if (top_dirty) {
+        if (previous_.isValid() && fade_value_ < 1.0) {
+            DrawPreview(painter, QModelIndex(previous_), 1.0 - fade_value_);
+        }
+        DrawPreview(painter, QModelIndex(shown_), previous_.isValid() ? fade_value_ : 1.0);
     }
-    DrawPreview(painter, QModelIndex(shown_), previous_.isValid() ? fade_value_ : 1.0);
 
-    DrawGrid(painter);
+    if (dirty.intersects(grid_pane_)) {
+        DrawGrid(painter, dirty);
+    }
 }
 
 void DualPaneStyle::resizeEvent(QResizeEvent* event) {
