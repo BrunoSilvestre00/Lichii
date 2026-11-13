@@ -156,6 +156,9 @@ jobs:
             echo complete > .circleci-build-state
             ccache --show-stats
 
+      - save-objects:
+          cache: gcc13-qt683-<< parameters.arch >>-v1
+
       - when:
           condition:
             equal: ["", << parameters.catch2_exclude >>]
@@ -193,9 +196,6 @@ jobs:
       - run:
           name: Test Linux switch discovery
           command: CXX=g++-13 python3 tools/nx2/test_switches.py
-
-      - save-objects:
-          cache: gcc13-qt683-<< parameters.arch >>-v1
 
   windows-clang-cl:
     machine:
@@ -335,6 +335,9 @@ jobs:
             echo complete > .circleci-build-state
             ccache --show-stats -v
 
+      - save-objects:
+          cache: clang-cl-ccache-qt683-windows-v1
+
       # nxformat is linked statically: lichii.exe must not need an nxformat.dll, which Windows
       # may refuse to load (Smart App Control, code integrity policies) or that may be missing.
       - run:
@@ -369,9 +372,6 @@ jobs:
             set -eo pipefail
             . /c/ci/env.sh
             ctest --test-dir build --output-on-failure --no-tests=error --parallel "$NUMBER_OF_PROCESSORS"
-
-      - save-objects:
-          cache: clang-cl-ccache-qt683-windows-v1
 
   macos-clang:
     macos:
@@ -431,12 +431,12 @@ jobs:
             echo complete > .circleci-build-state
             ccache --show-stats
 
+      - save-objects:
+          cache: clang-qt6-macos-arm64-v1
+
       - run:
           name: Run tests
           command: ctest --test-dir build --output-on-failure --no-tests=error --parallel "$(sysctl -n hw.ncpu)"
-
-      - save-objects:
-          cache: clang-qt6-macos-arm64-v1
 
 workflows:
   build-check:
