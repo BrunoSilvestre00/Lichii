@@ -8,10 +8,10 @@ Build DXVK v2.6.2 dxbc and spirv on their own, for translating Lossless.dll comp
 
 diff --git a/src/dxbc/dxbc_dxvk.h b/src/dxbc/dxbc_dxvk.h
 new file mode 100644
-index 0000000..8b8265f
+index 0000000..023282f
 --- /dev/null
 +++ b/src/dxbc/dxbc_dxvk.h
-@@ -0,0 +1,104 @@
+@@ -0,0 +1,108 @@
 +// Lichii: the parts of dxvk_pipelayout.h and dxvk_shader.h (DXVK v2.6.2) that the DXBC
 +// compiler uses, so it builds without the rest of DXVK. DxvkShader only keeps the SPIR-V.
 +
@@ -19,9 +19,13 @@ index 0000000..8b8265f
 +
 +#include <algorithm>
 +#include <array>
++#include <atomic>
 +#include <cstdint>
 +#include <cstring>
++#include <iomanip>
++#include <memory>
 +#include <optional>
++#include <ostream>
 +#include <string>
 +#include <unordered_map>
 +#include <unordered_set>
@@ -241,29 +245,49 @@ index 37fdbe9..78b7d20 100644
  
    enum class DxbcFloatControlFlag : uint32_t {
 diff --git a/src/util/log/log.h b/src/util/log/log.h
-index ddfdaad..903ac4a 100644
+index ddfdaad..ab64b65 100644
 --- a/src/util/log/log.h
 +++ b/src/util/log/log.h
-@@ -1,14 +1,12 @@
-+// Lichii: DXVK's file logger is replaced by a sink the embedding application sets.
+@@ -1,14 +1,35 @@
++// Lichii: DXVK's file logger is replaced by a sink the embedding application sets. It keeps
++// the standard headers the original and its thread.h include, which the compiler relies on.
 +
  #pragma once
  
--#include <array>
--#include <fstream>
--#include <iostream>
++#include <algorithm>
+ #include <array>
++#include <atomic>
++#include <chrono>
++#include <cmath>
++#include <condition_variable>
 +#include <cstdint>
++#include <cstring>
+ #include <fstream>
++#include <functional>
+ #include <iostream>
++#include <iterator>
++#include <limits>
++#include <mutex>
++#include <optional>
++#include <queue>
++#include <sstream>
  #include <string>
- 
--#include "../thread.h"
 -
+-#include "../thread.h"
++#include <string_view>
++#include <type_traits>
++#include <unordered_map>
++#include <unordered_set>
++#include <utility>
++#include <vector>
+ 
  namespace dxvk {
 -  
 +
    enum class LogLevel : uint32_t {
      Trace = 0,
      Debug = 1,
-@@ -17,57 +15,34 @@ namespace dxvk {
+@@ -17,57 +38,34 @@ namespace dxvk {
      Error = 4,
      None  = 5,
    };
