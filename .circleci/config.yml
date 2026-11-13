@@ -228,13 +228,17 @@ jobs:
             'QT_ROOT_DIR=C:/Qt/6.8.3/msvc2022_64' | Out-File -Append -Encoding ascii $env:GITHUB_ENV
 
       # What ilammy/msvc-dev-cmd does on GitHub: keep the variables vcvars64.bat adds or changes.
+      # The image also carries VS 18 Build Tools, whose MSVC 14.51 STL the source does not build
+      # with yet, so this takes VS 2022 like GitHub's windows-2022 runner.
       - run:
           name: Set up MSVC
           shell: powershell.exe -ExecutionPolicy Bypass
           command: |
             $ErrorActionPreference = 'Stop'
             $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-            $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            $vs = & $vswhere -latest -version '[17.0,18.0)' -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            if (-not $vs) { throw 'No Visual Studio 2022 with the x64 C++ tools' }
+            "Visual Studio: $vs"
             $before = @{}
             cmd /c set | ForEach-Object { $k, $v = $_ -split '=', 2; $before[$k] = $v }
             cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && set" | ForEach-Object {
