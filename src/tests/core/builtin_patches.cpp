@@ -76,6 +76,13 @@ constexpr std::string_view SoundGate =
 constexpr std::string_view SoundFeed = "001140BD10102E1E0068301EC0035FD6";
 constexpr u32 DynamicCallInstruction = 0x94D57D4F;
 constexpr u32 DynamicOriginalInstruction = 0x1E201828;
+constexpr size_t TurnSpeedHookOffset = sizeof(Loader::NSOHeader) + 0x261EB18;
+constexpr u32 TurnSpeedOriginalInstruction = 0x1E210801;
+constexpr u32 TurnSpeedHookInstruction = 0x14589FCA;
+// The second instruction the routine replaces; the hook guards it and leaves it in place.
+constexpr u32 TurnSpeedSecondInstruction = 0x1E280800;
+constexpr size_t TurnSpeedRoutineOffset = sizeof(Loader::NSOHeader) + 0x3C46A40;
+constexpr size_t TurnSpeedRoutineSize = 40;
 
 constexpr std::array<std::pair<Common::FS::EdenPath, const char*>, 4> TestDirectories{{
     {Common::FS::EdenPath::NANDDir, "nand"},
@@ -270,6 +277,8 @@ std::vector<u8> MakeDynamicMain() {
     std::memcpy(nso.data(), &header, sizeof(header));
     std::memcpy(nso.data() + DynamicCallOffset, &DynamicOriginalInstruction,
                 sizeof(DynamicOriginalInstruction));
+    std::memcpy(nso.data() + TurnSpeedHookOffset, &TurnSpeedOriginalInstruction, sizeof(u32));
+    std::memcpy(nso.data() + TurnSpeedHookOffset + 4, &TurnSpeedSecondInstruction, sizeof(u32));
     std::memcpy(nso.data() + WaterHookOffset, &WaterOriginalInstruction,
                 sizeof(WaterOriginalInstruction));
     std::memcpy(nso.data() + WaterMulOffset, &WaterMulOriginalInstruction,
@@ -337,6 +346,12 @@ TEST_CASE("Built-in FPS Unlock defaults on and replaces Dynamic FPS", "[patch_ma
     REQUIRE(routine(patched, UnlockRoutineSize) ==
             std::string{RoutineHead} + "E300001C4268231EC300001C4278231E4840201EC0035FD6"
                                        "1F2003D50AD7A33C0000C040");
+    REQUIRE(WordAt(patched, TurnSpeedHookOffset) == TurnSpeedHookInstruction);
+    REQUIRE(WordAt(patched, TurnSpeedHookOffset + 4) == TurnSpeedSecondInstruction);
+    REQUIRE(Common::HexToString(
+                std::span{patched}.subspan(TurnSpeedRoutineOffset, TurnSpeedRoutineSize)) ==
+            "01102E1E0021211E8A0000540018281E0140211E3360A717E10F40BD0108211E0008281E"
+            "2F60A717");
     REQUIRE(WordAt(patched) == BranchInstruction);
     REQUIRE(water_patched(patched));
     REQUIRE(sound_gate_patched(patched));
@@ -357,6 +372,9 @@ TEST_CASE("Built-in FPS Unlock defaults on and replaces Dynamic FPS", "[patch_ma
             std::string{RoutineHead} + "C300001C0309231E4020231E4D0000544840201EC0035FD6"
                                        "0AD7833F");
     REQUIRE(WordAt(patched, DynamicRoutineOffset + DynamicRoutineSize) == 0);
+    // The turn speed fix belongs to FPS Unlock only.
+    REQUIRE(WordAt(patched, TurnSpeedHookOffset) == TurnSpeedOriginalInstruction);
+    REQUIRE(WordAt(patched, TurnSpeedRoutineOffset) == 0);
     REQUIRE(water_patched(patched));
     // Dark's step stays at or above 1.0, so the sound manager keeps running every frame.
     REQUIRE(sound_gate_untouched(patched));
@@ -491,6 +509,43 @@ TEST_CASE("Built-in Dynamic FPS leaves both records alone when a user mod change
     }
     PatchManagerTestContext context{mod_word, offset};
     Settings::values.disabled_addons[OcarinaTitleId] = {std::string{MaxResolution}};
+    const auto nso = MakeDynamicMain();
+    auto expected = nso;
+    std::memcpy(expected.data() + offset, &mod_word, sizeof(mod_word));
+    REQUIRE(context.Manager().PatchNSO(nso, "main") == expected);
+}
+
+TEST_CASE("Built-in FPS Unlock validates the turn speed records before writing", "[patch_manager]") {
+    PatchManagerTestContext context;
+    Settings::values.disabled_addons[OcarinaTitleId] = {std::string{MaxResolution},
+                                                        std::string{DynamicFps}};
+    auto nso = MakeDynamicMain();
+    SECTION("Wrong turn speed original") {
+        nso[TurnSpeedHookOffset] ^= 1;
+    }
+    SECTION("Wrong second turn speed instruction") {
+        nso[TurnSpeedHookOffset + 4] ^= 1;
+    }
+    SECTION("Nonzero turn speed cave") {
+        nso[TurnSpeedRoutineOffset + TurnSpeedRoutineSize - 1] = 1;
+    }
+    REQUIRE(context.Manager().PatchNSO(nso, "main") == nso);
+}
+
+TEST_CASE("Built-in FPS Unlock leaves all records alone when a user mod changes the turn speed fix",
+          "[patch_manager]") {
+    size_t offset = TurnSpeedHookOffset;
+    SECTION("User turn speed hook takes precedence") {}
+    SECTION("User second turn speed instruction takes precedence") {
+        offset = TurnSpeedHookOffset + 4;
+    }
+    SECTION("User turn speed routine takes precedence") {
+        offset = TurnSpeedRoutineOffset;
+    }
+    constexpr u32 mod_word = 0x11223344;
+    PatchManagerTestContext context{mod_word, offset};
+    Settings::values.disabled_addons[OcarinaTitleId] = {std::string{MaxResolution},
+                                                        std::string{DynamicFps}};
     const auto nso = MakeDynamicMain();
     auto expected = nso;
     std::memcpy(expected.data() + offset, &mod_word, sizeof(mod_word));

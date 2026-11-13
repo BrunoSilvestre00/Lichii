@@ -102,6 +102,20 @@ Enabling core-speed synchronization still divides the counter by the
 configured speed limit, which alters the elapsed seconds this routine
 calculates. Correct gameplay speed with the Add-On is unverified.
 
+## FPS Unlock turn speed
+
+The turn action at `0x261E8E0` (`ExecuteASApproachStickX`; Gohma steers with it while walking)
+keeps a turn speed per 60 Hz frame at `+0x24`. It ends by clamping that speed to the change it
+applied this frame times the frame step (`fmul` at `0x261EB18` and `0x261EB1C`). The change already
+carries the step, so below a step of 1 the speed decays by step² every frame. At 150 fps Gohma then
+steered at 0.045 rad/s instead of about 1 rad/s and walked into the wall of her room.
+
+`FPS Unlock (built-in)` branches at `0x261EB18` to 40 bytes at `0x3C46A40`, in guarded zero-filled
+executable padding. Below a step of 1 the bounds become ±(applied change / step), which keeps the
+speed; at 1 and above the routine runs the game's two instructions. The hook record checks both
+replaced instructions, so a user mod at either one skips the patch. Measured live at step 0.65 with
+the fix: 0.94 rad/s median while she walks on the ceiling, matching 0.75 to 1.1 rad/s at 60 fps.
+
 ## FPS Unlock: sound manager at 60 Hz
 
 `FPS Unlock (built-in)` lowers the step below 1.0 above 60 fps (0.5 at 120 fps).
