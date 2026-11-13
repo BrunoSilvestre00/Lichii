@@ -10,6 +10,7 @@
 #include <QPointer>
 #include <QString>
 #include <QTimer>
+#include <QVariantAnimation>
 #include <vector>
 
 #include "yuzu/game/styles/library_style_view.h"
@@ -45,17 +46,20 @@ protected:
 
 private:
     struct Layout {
-        int columns = 1;
-        int margin = 24;
-        int cell_w = 1;
         int tile_w = 1;
         int tile_h = 1;
-        int row_h = 1;
-        int top = 24;
-        int view_h = 1;
+        int gap = 8;
+        int name_h = 0;
+        int rows = 1;
+        int cols = 1;
+        int per_page = 1;
+        int pages = 1;
+        int page_w = 1; // one page of columns, including the gap after the last one
+        int left = 0;   // x of the first column of page 0
+        int top = 0;    // y of the first row
         int dock_h = 1;
-        int dock_top = 1;
-        int curve = 1;
+        int dock_top = 1; // the dock edge at the sides; it dips by `dip` in the middle
+        int dip = 30;
     };
 
     Layout ComputeLayout() const;
@@ -63,9 +67,15 @@ private:
     int CurrentRow() const;
     QRect TileRect(const Layout& layout, int row) const;
     int RowAt(const QPoint& pos) const;
-    int MaxScroll(const Layout& layout) const;
+    /// Row at column `column` (counted across all pages) and line `line`, or -1.
+    int RowFor(const Layout& layout, int column, int line) const;
+    int PageOf(const Layout& layout, int row) const;
+    int ShownPage(const Layout& layout) const;
+    QRect ArrowRect(const Layout& layout, bool right) const;
     void ClampScroll();
-    void EnsureVisible(int row);
+    void EnsureVisible(int row, bool animate = true);
+    /// Moves the selection to the same spot on another page.
+    void TurnPage(int step);
     void SetCurrentRow(int row, bool notify);
     QModelIndex IndexForRow(int row) const;
     void ScheduleRebuild();
@@ -84,7 +94,9 @@ private:
     int current_hint = 0;
     QTimer clock_timer;
     QCache<QString, QPixmap> cover_cache{48 * 1024}; // cost in KiB
-    int scroll = 0;
+    qreal scroll = 0; // horizontal, in px; pages sit side by side
+    QVariantAnimation page_anim;
+    int wheel_rest = 0;
     QPixmap background;
     QSize background_size;
     qreal background_dpr = 0;
