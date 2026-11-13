@@ -37,6 +37,9 @@ namespace {
 
 /// Cover corner radius as a share of its side (the concept: 10 px on a 230 px cover).
 constexpr qreal kCoverRadius = 10.0 / 230.0;
+/// Reflection: the bottom 22 % of the art, mirrored 6 px (at 230 px) under the cover.
+constexpr qreal kReflectionShare = 0.22;
+constexpr qreal kReflectionGap = 6.0 / 230.0;
 
 bool IsGameType(GameListItemType type) {
     return type == GameListItemType::Game;
@@ -134,7 +137,7 @@ RestingTilt RestingTiltFor(bool right, qreal side) {
     const qreal blur = 30.0 * side / 230.0 * scale;
     const qreal drop = 18.0 * side / 230.0 * scale;
     tilt.shadow = QRectF(-blur, -blur + drop, w + 2 * blur, w + 2 * blur);
-    tilt.reflection = QRectF(0, side + 6.0 * side / 230.0, side, side * 0.22);
+    tilt.reflection = QRectF(0, side + kReflectionGap * side, side, side * kReflectionShare);
     tilt.bounds = QRectF(0, 0, w, w).united(tilt.shadow);
     if (tilt.valid) {
         tilt.bounds = tilt.bounds.united(tilt.transform.mapRect(tilt.reflection));
@@ -405,7 +408,11 @@ CarouselStyle::Metrics CarouselStyle::ComputeMetrics() const {
     m.title_px = std::clamp(m.side * 0.1, 15.0, 32.0);
     m.info_px = std::clamp(m.title_px * 0.5, 11.0, 15.0);
 
-    qreal block = m.side + 22.0 + 22.0;
+    // The texts start under the visible part of the reflection (6 px gap, then 22 % of the side
+    // that has faded out by 80 %), so the reflection never shows behind them.
+    const qreal under_cover =
+        std::max(22.0, m.side * (kReflectionGap + kReflectionShare * 0.8) + 10.0);
+    qreal block = m.side + under_cover + 22.0;
     if (show_names_) {
         block += m.title_px * 1.5;
     }
@@ -415,7 +422,7 @@ CarouselStyle::Metrics CarouselStyle::ComputeMetrics() const {
     const qreal top = std::max(12.0, (h - block) * 0.45);
     m.center_x = w * 0.5;
     m.center_y = top + m.side * 0.5;
-    qreal y = top + m.side + 22.0;
+    qreal y = top + m.side + under_cover;
     m.title_y = y;
     if (show_names_) {
         y += m.title_px * 1.5;
@@ -672,12 +679,15 @@ QPixmap CarouselStyle::Reflection(const QPixmap& cover) {
         reflection_cache_.clear();
     }
     const QImage source = cover.toImage().convertToFormat(QImage::Format_ARGB32_Premultiplied);
-    const int h = std::max(1, static_cast<int>(source.height() * 0.22));
+    const int h = std::max(1, static_cast<int>(source.height() * kReflectionShare));
 #if QT_VERSION >= QT_VERSION_CHECK(6, 9, 0)
     QImage part = source.copy(0, source.height() - h, source.width(), h).flipped(Qt::Vertical);
 #else
     QImage part = source.copy(0, source.height() - h, source.width(), h).mirrored(false, true);
 #endif
+    // The fade below works in device pixels: with the cover's pixel ratio still set, the painter
+    // would stretch it over ratio times the height and the reflection would end in a hard edge.
+    part.setDevicePixelRatio(1.0);
     {
         // Strongest next to the cover (28 %), gone by 80 % of the way down.
         QPainter p(&part);
@@ -783,9 +793,8 @@ void CarouselStyle::PaintCover(QPainter& painter, const Metrics& m, int row, qre
     // Reflection: the bottom 22 % of the art, mirrored 6 px under the cover, fading out.
     {
         const QPixmap mirror = Reflection(pixmap);
-        const qreal gap = 6.0 * side / 230.0;
-        painter.drawPixmap(QRectF(0, side + gap, side, side * 0.22), mirror,
-                           QRectF(mirror.rect()));
+        painter.drawPixmap(QRectF(0, side + kReflectionGap * side, side, side * kReflectionShare),
+                           mirror, QRectF(mirror.rect()));
     }
 
     if (a < 0.5) {
