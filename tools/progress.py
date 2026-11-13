@@ -50,8 +50,8 @@ TRACK_COLOR = "#30363d"
 SQUARIFY_LIMIT = 40
 TILES_PER_ROW = 12
 SOURCE = f"https://github.com/{REPOSITORY}/tree/{BRANCH}/{SERVICES.as_posix()}"
-TABLE_HEAD = ("<table><tr><th>Module</th><th>Bound</th><th>Stub handler</th><th>Unbound</th>"
-              "<th>Declared</th><th>Bound %</th></tr>")
+TABLE_HEAD = ("<table><tr><th>Module</th><th>Emulated</th><th>Stub reply</th><th>Unbound</th>"
+              "<th>Declared</th><th>Answered %</th></tr>")
 PAGE_STYLE = (
     "body{background:#0d1117;color:#c9d1d9;font:14px/1.5 -apple-system,Segoe UI,sans-serif;"
     "margin:2rem auto;max-width:60rem;padding:0 1rem}"
@@ -90,8 +90,12 @@ class Module:
         return sum(count for _, count in self.counts)
 
     @property
+    def answered(self) -> int:
+        return self.count(Handler.BOUND) + self.count(Handler.STUB)
+
+    @property
     def metric(self) -> Metric:
-        return Metric(self.count(Handler.BOUND), self.total)
+        return Metric(self.answered, self.total)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -484,10 +488,12 @@ def render_html(report: Report) -> str:
                          f"{report.compatibility.games} games on build {report.compatibility.build}: "
                          f"{report.compatibility.playable} playable, {report.compatibility.perfect} perfect.</p>")
     summary = (f"<p>Services: <strong>{services.percent}%</strong> of declared IPC commands ({services.done} of "
-               f"{services.total}) are bound to a handler. Shaders: <strong>{shaders.percent}%</strong> of IR "
-               f"opcodes ({shaders.done} of {shaders.total}) have a working SPIR-V emitter.</p>")
-    note = ('A row with <code>nullptr</code> declares a command the emulator does not handle, and a row bound '
-            "to a <code>Stub*</code> helper is bound but returns a placeholder.</p>")
+               f"{services.total}) are answered, by an emulated handler or a stub reply. Shaders: "
+               f"<strong>{shaders.percent}%</strong> of IR opcodes ({shaders.done} of {shaders.total}) have a "
+               f"working SPIR-V emitter.</p>")
+    note = ('A row with <code>nullptr</code> declares a command the emulator does not handle at all. A row bound '
+            "to a <code>Stub*</code> helper answers the call but returns a placeholder, so it is listed separately "
+            "from a real handler.</p>")
     return "\n".join([
         "<!DOCTYPE html>", '<html lang="en"><head><meta charset="utf-8">',
         "<title>Lichii progress</title>", f"<style>{PAGE_STYLE}</style></head><body>",
@@ -504,8 +510,8 @@ def site_data(report: Report) -> dict[str, object]:
     services = report.services.metric
     shaders = report.shaders.metric
     data: dict[str, object] = {
-        "services": {"bound": services.done, "total": services.total, "percent": services.percent,
-                     "modules": [{"name": module.name, "bound": module.count(Handler.BOUND),
+        "services": {"answered": services.done, "total": services.total, "percent": services.percent,
+                     "modules": [{"name": module.name, "emulated": module.count(Handler.BOUND),
                                   "stub": module.count(Handler.STUB),
                                   "unbound": module.count(Handler.UNBOUND)}
                                  for module in report.services.sorted()]},
@@ -537,7 +543,7 @@ def snapshot_metric(snapshot: object, key: str, done: str, total: str) -> Metric
     section = snapshot.get(key)
     if not isinstance(section, dict):
         return None
-    values = section.get(done), section.get(total)
+    values = section.get(done, section.get("bound")), section.get(total)
     if not all(isinstance(value, int) for value in values):
         return None
     return Metric(int(values[0]), int(values[1]))
@@ -550,7 +556,7 @@ def format_delta(before: Metric, after: Metric) -> str:
 
 def report(base: object, head: object) -> str:
     lines = []
-    for label, key, done in (("IPC commands bound", "services", "bound"),
+    for label, key, done in (("IPC commands answered", "services", "answered"),
                              ("Shader IR opcodes", "shaders", "implemented")):
         before = snapshot_metric(base, key, done, "total")
         after = snapshot_metric(head, key, done, "total")
