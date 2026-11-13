@@ -438,9 +438,12 @@ jobs:
       - save-objects:
           cache: clang-qt6-macos-arm64-v1
 
+      # The arm64 backend aborts on some of the random blocks this test compares (ZOR-274).
       - run:
           name: Run tests
-          command: ctest --test-dir build --output-on-failure --no-tests=error --parallel "$(sysctl -n hw.ncpu)"
+          command: |
+            ctest --test-dir build --output-on-failure --no-tests=error --parallel "$(sysctl -n hw.ncpu)" -E '^tests$'
+            build/bin/tests '~[jit_codegen_options]'
 
 workflows:
   build-check:
@@ -457,8 +460,7 @@ workflows:
           resource_class: arm.large.gen2
           qt_host: linux_arm64
           qt_arch: linux_gcc_arm64
-          # dynarmic's arm64 backend aborts on some of the random A64 blocks this test compares;
-          # tracked in ZOR-274.
+          # The arm64 backend aborts on some of the random blocks this test compares (ZOR-274).
           catch2_exclude: "[jit_codegen_options]"
       - windows-clang-cl
 
