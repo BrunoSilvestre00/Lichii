@@ -215,6 +215,8 @@ jobs:
 
       # The install scripts are shared with the GitHub jobs and report what they set through
       # GITHUB_ENV and GITHUB_PATH, so those point at files that a later step turns into env.sh.
+      # CMake is the windows-2022 runner's 3.31: CMake 4 passes clang-cl its depfile options as
+      # -clang:-MD, which ccache refuses, so no object would be cached.
       - run:
           name: Install LLVM, the Vulkan SDK, ccache, CMake, Ninja and Qt
           shell: powershell.exe -ExecutionPolicy Bypass
@@ -236,7 +238,7 @@ jobs:
             Expand-Archive $zip -DestinationPath C:\ci
             'C:\ci\ccache-4.14.2-windows-x86_64' | Out-File -Append -Encoding ascii $env:GITHUB_PATH
             python --version
-            python -m pip install --quiet --disable-pip-version-check cmake==4.4.4 ninja==1.13.0 aqtinstall==3.3.0
+            python -m pip install --quiet --disable-pip-version-check cmake==3.31.6 ninja==1.13.0 aqtinstall==3.3.0
             if ($LASTEXITCODE) { throw 'pip install failed' }
             python -c "import sysconfig; print(sysconfig.get_path('scripts'))" | Out-File -Append -Encoding ascii $env:GITHUB_PATH
             python -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -m qtcharts --outputdir C:\Qt
