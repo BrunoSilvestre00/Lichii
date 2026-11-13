@@ -77,19 +77,6 @@ void DrawPlaceholder(QPainter* painter, const QRectF& rect, const QString& title
     painter->drawText(rect, Qt::AlignCenter, initial);
 }
 
-void DrawGlyph(QPainter* painter, const QPointF& center, qreal radius, const QString& letter,
-               const QColor& color) {
-    painter->setPen(QPen(color, 1.4));
-    painter->setBrush(Qt::NoBrush);
-    painter->drawEllipse(center, radius, radius);
-    QFont font = painter->font();
-    font.setBold(true);
-    font.setPixelSize(std::max(8, static_cast<int>(radius * 1.2)));
-    painter->setFont(font);
-    painter->drawText(QRectF(center.x() - radius, center.y() - radius, radius * 2, radius * 2),
-                      Qt::AlignCenter, letter);
-}
-
 } // namespace
 
 CanvasStyle::CanvasStyle(QWidget* parent) : LibraryStyleView(parent) {
@@ -682,8 +669,10 @@ void CanvasStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
         const qreal item_gap = 22;
         qreal total = 0;
         for (const Hint& hint : hints) {
-            total += hint.glyphs.size() * (radius * 2 + glyph_gap) +
-                     fm.horizontalAdvance(hint.label);
+            for (const QString& glyph : hint.glyphs) {
+                total += LibraryStyleContext::GlyphWidth(glyph, radius) + glyph_gap;
+            }
+            total += fm.horizontalAdvance(hint.label);
         }
         total += item_gap * 3;
         const QRectF bar(w / 2.0 - total / 2 - 20, h - FooterBarHeight - 10, total + 40,
@@ -699,9 +688,11 @@ void CanvasStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
         qreal x = bar.left() + 20;
         const qreal cy = bar.center().y();
         for (const Hint& hint : hints) {
+            QFont glyph_font = font_hint;
+            glyph_font.setPixelSize(std::max(8, static_cast<int>(radius * 1.2)));
             for (const QString& glyph : hint.glyphs) {
-                DrawGlyph(&p, QPointF(x + radius, cy), radius, glyph, ink);
-                x += radius * 2 + glyph_gap;
+                LibraryStyleContext::PaintGlyph(&p, glyph, x, cy, radius, ink, 1.4, glyph_font);
+                x += LibraryStyleContext::GlyphWidth(glyph, radius) + glyph_gap;
             }
             p.setFont(font_hint);
             p.setPen(ink);

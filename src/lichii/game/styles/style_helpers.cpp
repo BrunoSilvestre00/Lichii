@@ -908,13 +908,60 @@ qreal HintItemGap(qreal radius) {
 }
 } // namespace
 
+bool LibraryStyleContext::IsShoulderGlyph(const QString& glyph) {
+    static const QStringList shoulders{QStringLiteral("L"),  QStringLiteral("R"),
+                                       QStringLiteral("LB"), QStringLiteral("RB"),
+                                       QStringLiteral("ZL"), QStringLiteral("ZR")};
+    return shoulders.contains(glyph);
+}
+
+qreal LibraryStyleContext::GlyphWidth(const QString& glyph, qreal radius) {
+    if (!IsShoulderGlyph(glyph)) {
+        return radius * 2;
+    }
+    return std::round(radius * (glyph.size() > 1 ? 3.3 : 2.7));
+}
+
+QRectF LibraryStyleContext::PaintGlyph(QPainter* painter, const QString& glyph, qreal left,
+                                       qreal center_y, qreal radius, const QColor& ink,
+                                       qreal pen_width, const QFont& font, bool filled,
+                                       const QColor& letter) {
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    if (filled) {
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(ink);
+    } else {
+        painter->setPen(QPen(ink, pen_width));
+        painter->setBrush(Qt::NoBrush);
+    }
+    QRectF box;
+    if (IsShoulderGlyph(glyph)) {
+        // Shoulder buttons are wide rounded bars, so they never read as the round sticks.
+        const qreal h = std::round(radius * 1.7);
+        box = QRectF(left, center_y - h / 2, GlyphWidth(glyph, radius), h);
+        const qreal corner = h * 0.32;
+        painter->drawRoundedRect(box, corner, corner);
+    } else {
+        box = QRectF(left, center_y - radius, radius * 2, radius * 2);
+        painter->drawEllipse(box);
+    }
+    painter->setFont(font);
+    painter->setPen(filled ? letter : ink);
+    painter->drawText(box, Qt::AlignCenter, glyph);
+    painter->restore();
+    return box;
+}
+
 qreal LibraryStyleContext::HintsWidth(const std::vector<ButtonHint>& hints, const QFont& font,
                                       qreal radius) {
     const QFontMetricsF fm(font);
     qreal total = 0;
     for (const ButtonHint& hint : hints) {
-        total += hint.glyphs.size() * (radius * 2 + HintGlyphGap) - HintGlyphGap + HintLabelGap +
-                 fm.horizontalAdvance(hint.label);
+        for (const QString& glyph : hint.glyphs) {
+            total += GlyphWidth(glyph, radius) + HintGlyphGap;
+        }
+        total += -HintGlyphGap + HintLabelGap + fm.horizontalAdvance(hint.label);
     }
     return total + HintItemGap(radius) * std::max<qreal>(0, static_cast<qreal>(hints.size()) - 1);
 }
@@ -931,19 +978,10 @@ void LibraryStyleContext::PaintHints(QPainter* painter, const std::vector<Button
     qreal x = left;
     for (const ButtonHint& hint : hints) {
         for (int i = 0; i < hint.glyphs.size(); ++i) {
-            const QRectF disc(x, center_y - radius, radius * 2, radius * 2);
-            if (filled) {
-                painter->setPen(Qt::NoPen);
-                painter->setBrush(ink);
-            } else {
-                painter->setPen(QPen(ink, std::max(1.2, radius * 0.15)));
-                painter->setBrush(Qt::NoBrush);
-            }
-            painter->drawEllipse(disc);
-            painter->setFont(glyph_font);
-            painter->setPen(filled ? letter : ink);
-            painter->drawText(disc, Qt::AlignCenter, hint.glyphs[i]);
-            x += radius * 2 + (i + 1 < hint.glyphs.size() ? HintGlyphGap : 0);
+            PaintGlyph(painter, hint.glyphs[i], x, center_y, radius, ink,
+                       std::max(1.2, radius * 0.15), glyph_font, filled, letter);
+            x += GlyphWidth(hint.glyphs[i], radius) +
+                 (i + 1 < hint.glyphs.size() ? HintGlyphGap : 0);
         }
         x += HintLabelGap;
         painter->setFont(font);

@@ -172,6 +172,16 @@ public:
     /// The library buttons: A Play, B Names, X `option` (when the style has one), Y Info,
     /// L R Style. Letters are Switch positions, like the controller mapping.
     static std::vector<ButtonHint> StandardHints(const QString& option = {});
+    /// True for the shoulder buttons (L, R, LB, RB, ZL, ZR): drawn as rounded bars, not discs.
+    static bool IsShoulderGlyph(const QString& glyph);
+    /// Width of one button glyph: a disc of `radius`, or a wider bar for a shoulder button.
+    static qreal GlyphWidth(const QString& glyph, qreal radius);
+    /// One button glyph from `left`, centred on `center_y`: a disc with the letter, or a rounded
+    /// bar for a shoulder button. Outlined with `pen_width`, or `filled` with the letter in
+    /// `letter`. Returns the glyph's box.
+    static QRectF PaintGlyph(QPainter* painter, const QString& glyph, qreal left, qreal center_y,
+                             qreal radius, const QColor& ink, qreal pen_width, const QFont& font,
+                             bool filled = false, const QColor& letter = {});
     /// Width of a hint row drawn with PaintHints.
     static qreal HintsWidth(const std::vector<ButtonHint>& hints, const QFont& font, qreal radius);
     /// A hint row from `left`, centred on `center_y`. `filled`: solid discs with the letter cut
