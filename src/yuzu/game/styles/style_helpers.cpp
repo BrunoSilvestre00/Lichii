@@ -10,6 +10,7 @@
 #include <QDateTime>
 #include <QFileInfo>
 #include <QFontMetrics>
+#include <QTransform>
 #include <QHash>
 #include <QImage>
 #include <QItemSelectionModel>
@@ -973,6 +974,36 @@ void LibraryStyleContext::PaintHintPill(QPainter* painter, const QRect& area,
     painter->restore();
     const QColor ink = dark ? QColor(255, 255, 255, 225) : QColor(30, 26, 24, 225);
     PaintHints(painter, hints, bar.left() + 20, bar.center().y(), font, radius, ink);
+}
+
+void LibraryStyleContext::PaintLogoTiles(QPainter* painter, const QRectF& area, qreal tile,
+                                         qreal opacity) {
+    static const QPixmap logo(QStringLiteral(":/icons/default/256x256/lichii.png"));
+    if (logo.isNull() || tile < 4 || area.isEmpty()) {
+        return;
+    }
+    const qreal step = tile * 1.7;
+    const qreal reach = std::hypot(area.width(), area.height());
+    painter->save();
+    painter->setClipRect(area, Qt::IntersectClip);
+    painter->setRenderHint(QPainter::SmoothPixmapTransform, true);
+    painter->setOpacity(painter->opacity() * opacity);
+    // The rows run on a grid slanted -18 degrees; each icon stays upright at its grid point.
+    QTransform slant;
+    slant.translate(area.center().x(), area.center().y());
+    slant.rotate(-18);
+    int row = 0;
+    for (qreal y = -reach / 2; y < reach / 2 + step; y += step, ++row) {
+        const qreal shift = (row % 2) ? step / 2 : 0;
+        for (qreal x = -reach / 2 - step + shift; x < reach / 2 + step; x += step) {
+            const QPointF c = slant.map(QPointF(x + tile / 2, y + tile / 2));
+            const QRectF target(c.x() - tile / 2, c.y() - tile / 2, tile, tile);
+            if (target.intersects(area)) {
+                painter->drawPixmap(target, logo, QRectF(logo.rect()));
+            }
+        }
+    }
+    painter->restore();
 }
 
 } // namespace LibraryStyles

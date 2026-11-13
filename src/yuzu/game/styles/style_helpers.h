@@ -184,6 +184,10 @@ public:
     static void PaintHintPill(QPainter* painter, const QRect& area,
                               const std::vector<ButtonHint>& hints, bool dark);
     static constexpr int HintPillReserve = 64;
+
+    /// The Lichii icon tiled in staggered rows on a grid slanted -18 degrees, each icon upright.
+    /// tile is the icon size in px; opacity is how strongly it shows over the background.
+    static void PaintLogoTiles(QPainter* painter, const QRectF& area, qreal tile, qreal opacity);
 };
 
 /// Minimal view used by the placeholder files until a style lands: a plain list of the titles under

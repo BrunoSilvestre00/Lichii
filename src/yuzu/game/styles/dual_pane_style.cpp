@@ -15,6 +15,7 @@
 #include <QFontMetrics>
 #include <QImage>
 #include <QKeyEvent>
+#include <QLinearGradient>
 #include <QLocale>
 #include <QMouseEvent>
 #include <QPainter>
@@ -39,8 +40,7 @@ constexpr int PanePad = 14;
 constexpr int StatusHeight = 26;
 /// Button hint line along the bottom of the top screen (concept).
 constexpr int HintHeight = 24;
-constexpr int PaneRadius = 16;
-constexpr int DotSpacing = 18;
+constexpr int ScreenRadius = 16;
 constexpr int FadeMs = 150;
 
 bool IsDark(const QPalette& palette) {
@@ -171,10 +171,7 @@ void DualPaneStyle::SetShowNames(bool show) {
         return;
     }
     show_names_ = show;
-    ComputeLayout();
-    ClampScroll();
-    EnsureVisible();
-    update();
+    update(top_rect_);
 }
 
 void DualPaneStyle::SetShowInfo(bool show) {
@@ -188,11 +185,11 @@ void DualPaneStyle::SetShowInfo(bool show) {
 QString DualPaneStyle::OptionLabel() const {
     switch (icon_level_) {
     case 0:
-        return tr("Icons: small");
+        return tr("Icon size: small");
     case 2:
-        return tr("Icons: large");
+        return tr("Icon size: large");
     default:
-        return tr("Icons: medium");
+        return tr("Icon size: medium");
     }
 }
 
@@ -276,6 +273,7 @@ void DualPaneStyle::Rebuild() {
 void DualPaneStyle::ComputeLayout() {
     const int w = width();
     const int h = height();
+    // Two screens across the whole view, the top one a bit shorter (no console frame).
     const int total_h = std::max(0, h - 3 * Margin);
     const int top_h = static_cast<int>(total_h * 0.45);
     top_rect_ = QRect(Margin, Margin, std::max(0, w - 2 * Margin), top_h);
@@ -412,18 +410,6 @@ QPixmap DualPaneStyle::Art(const QModelIndex& index, int logical_px) {
     return result;
 }
 
-void DualPaneStyle::DrawDots(QPainter& painter, const QRect& area, const QColor& color) const {
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(color);
-    const qreal r = 2.2;
-    for (int y = area.top() + DotSpacing / 2; y < area.bottom(); y += DotSpacing) {
-        const int shift = (((y - area.top()) / DotSpacing) % 2) * (DotSpacing / 2);
-        for (int x = area.left() + DotSpacing / 2 + shift; x < area.right(); x += DotSpacing) {
-            painter.drawEllipse(QPointF(x, y), r, r);
-        }
-    }
-}
-
 void DualPaneStyle::DrawPreview(QPainter& painter, const QModelIndex& index, qreal opacity) {
     if (!index.isValid() || opacity <= 0.0) {
         return;
@@ -432,81 +418,80 @@ void DualPaneStyle::DrawPreview(QPainter& painter, const QModelIndex& index, qre
     painter.save();
     painter.setOpacity(opacity);
 
+    // Concept top screen: the art centred, the name under it, play time and version below.
     const QRect content =
         top_rect_.adjusted(PanePad, StatusHeight + 4, -PanePad, -PanePad - HintHeight);
-    const int side =
-        std::max(0, std::min(content.height(), static_cast<int>(content.width() * 0.4)));
-    const QRect cover(content.left(), content.top() + (content.height() - side) / 2, side, side);
+    if (content.width() < 40 || content.height() < 40) {
+        painter.restore();
+        return;
+    }
+    const int text_w = content.width() * 9 / 10;
+    const int gap = std::max(6, content.height() / 30);
+    const QString title = TitleOf(index);
+
+    QFont title_font = font();
+    title_font.setPixelSize(std::clamp(content.height() / 9, 14, 30));
+    title_font.setBold(true);
+    const QFontMetrics tfm(title_font);
+    const int max_title_lines = LibraryStyleContext::TitleLines(2);
+    const QStringList title_lines =
+        // Names (B) shows or hides the title; the bottom screen stays icons only.
+        show_names_ ? LibraryStyleContext::NameLines(title, title_font, text_w, max_title_lines,
+                                                     PanePad / 2)
+                    : QStringList{};
+    const int title_h = static_cast<int>(title_lines.size()) * tfm.lineSpacing();
+
+    QFont info_font = font();
+    info_font.setPixelSize(std::clamp(content.height() / 16, 11, 15));
+    info_font.setBold(true);
+    const QFontMetrics ifm(info_font);
+    QStringList info;
+    if (show_info_) {
+        const GameInfo game = LibraryStyleContext::Info(index);
+        if (game.is_game) {
+            info = LibraryStyleContext::InfoLines(
+                game, LibraryStyleContext::LayoutInfo(info_font, text_w), info_font);
+        }
+    }
+    const int info_h = static_cast<int>(info.size()) * ifm.lineSpacing();
+
+    // The art keeps a full gap to whatever comes under it; the info sits closer to the title.
+    const int info_gap = title_h > 0 ? gap / 2 : gap;
+    const int text_h = (title_h > 0 ? gap + title_h : 0) + (info_h > 0 ? info_gap + info_h : 0);
+    const int side = std::clamp(content.height() - text_h, 0, content.height() * 62 / 100);
+    const int total = side + text_h;
+    int y = content.top() + std::max(0, (content.height() - total) / 2);
 
     if (side > 8) {
+        const QRect cover(content.center().x() + 1 - side / 2, y, side, side);
         painter.setPen(Qt::NoPen);
-        painter.setBrush(QColor(0, 0, 0, 40));
-        painter.drawRoundedRect(cover.translated(0, 4), side * 0.16, side * 0.16);
+        painter.setBrush(QColor(0, 0, 0, 50));
+        painter.drawRoundedRect(QRectF(cover).translated(0, side * 0.03), side * 0.16,
+                                side * 0.16);
         painter.drawPixmap(cover.topLeft(), Art(index, side));
     }
+    y += side;
 
-    const QRect text_area(cover.right() + PanePad + 6, content.top(),
-                          std::max(0, content.right() - cover.right() - PanePad - 6),
+    const QRect text_area(content.center().x() + 1 - text_w / 2, content.top(), text_w,
                           content.height());
-    if (text_area.width() > 20) {
-        const QString title = TitleOf(index);
-        QFont title_font = font();
-        title_font.setPixelSize(std::clamp(content.height() / 6, 16, 36));
-        title_font.setBold(true);
-        // Wrap between words only; shrink the font until the longest word fits on a line.
-        int longest = 0;
-        for (const QString& word : title.split(QLatin1Char(' '), Qt::SkipEmptyParts)) {
-            longest = std::max(longest, QFontMetrics(title_font).horizontalAdvance(word));
-        }
-        if (longest > text_area.width()) {
-            title_font.setPixelSize(std::max(
-                12, title_font.pixelSize() * text_area.width() / std::max(1, longest)));
-        }
-        const QFontMetrics tfm(title_font);
-        // At most two lines, then "…" (S4); one gliding line with Scroll Long Names.
-        const int max_title_lines = LibraryStyleContext::TitleLines(2);
-        const QStringList title_lines = LibraryStyleContext::NameLines(
-            title, title_font, text_area.width(), max_title_lines, PanePad / 2);
-        const int title_h = static_cast<int>(title_lines.size()) * tfm.lineSpacing();
-
-        QFont info_font = font();
-        info_font.setPixelSize(std::clamp(content.height() / 12, 11, 16));
-        const QFontMetrics ifm(info_font);
-        // The S3 info lines (fixed parts for the pane width), then the program id.
-        QStringList info;
-        if (show_info_) {
-            const GameInfo game = LibraryStyleContext::Info(index);
-            if (game.is_game) {
-                info << LibraryStyleContext::InfoLines(
-                    game, LibraryStyleContext::LayoutInfo(info_font, text_area.width()),
-                    info_font);
-                if (game.program_id != 0) {
-                    info << game.program_id_text;
-                }
-            }
-        }
-        const int info_h =
-            info.isEmpty() ? 0 : static_cast<int>(info.size()) * ifm.lineSpacing() + 10;
-
-        const int total = title_h + info_h;
-        int y = content.top() + std::max(0, (content.height() - total) / 2);
-
-        // Half the pane padding is room for a title line that only just overflows (S4).
-        painter.setClipRect(text_area.adjusted(0, 0, PanePad / 2, 0));
+    if (title_h > 0) {
+        y += gap;
+        painter.save();
+        painter.setClipRect(text_area.adjusted(-PanePad / 2, 0, PanePad / 2, 0));
         LibraryStyleContext::PaintTitle(
             &painter, QRect(text_area.left(), y, text_area.width(), title_h), title,
-            pal.text().color(), title_font, Qt::AlignLeft | Qt::AlignVCenter, max_title_lines,
+            pal.text().color(), title_font, Qt::AlignHCenter | Qt::AlignVCenter, max_title_lines,
             index == QModelIndex(shown_) ? this : nullptr, PanePad / 2);
+        painter.restore();
         y += title_h;
-        y += 10;
-
+    }
+    if (info_h > 0) {
+        y += info_gap;
         painter.setFont(info_font);
-        QColor sub = pal.text().color();
-        sub.setAlpha(170);
-        painter.setPen(sub);
+        painter.setPen(LibraryStyleContext::MutedText(pal));
         for (const QString& line : info) {
             painter.drawText(QRect(text_area.left(), y, text_area.width(), ifm.lineSpacing()),
-                             Qt::AlignLeft | Qt::AlignVCenter,
+                             Qt::AlignHCenter | Qt::AlignVCenter,
                              ifm.elidedText(line, Qt::ElideRight, text_area.width()));
             y += ifm.lineSpacing();
         }
@@ -617,20 +602,14 @@ void DualPaneStyle::paintEvent(QPaintEvent*) {
     const bool dark = IsDark(pal);
 
     const QColor pane = dark ? pal.base().color().lighter(112) : pal.base().color();
-    QColor border = pal.text().color();
-    border.setAlpha(dark ? 50 : 34);
-    QColor dots = pal.text().color();
-    dots.setAlpha(dark ? 18 : 14);
 
-    // The dotted panes are the same every frame: draw them once per size and palette.
+    // Both screens are the same every frame: draw them once per size and palette.
     const qreal dpr = devicePixelRatioF();
-    const QString pane_key = QStringLiteral("%1x%2|%3|%4|%5|%6|%7")
+    const QString pane_key = QStringLiteral("%1x%2|%3|%4|%5")
                                  .arg(width())
                                  .arg(height())
-                                 .arg(top_rect_.height())
                                  .arg(dpr)
                                  .arg(pane.rgba())
-                                 .arg(dots.rgba())
                                  .arg(pal.window().color().rgba());
     if (panes_key_ != pane_key) {
         panes_key_ = pane_key;
@@ -645,37 +624,59 @@ void DualPaneStyle::paintEvent(QPaintEvent*) {
                 continue;
             }
             QPainterPath path;
-            path.addRoundedRect(QRectF(r), PaneRadius, PaneRadius);
-            p.setPen(QPen(border, 1));
+            path.addRoundedRect(QRectF(r), ScreenRadius, ScreenRadius);
+            QColor edge = pal.text().color();
+            edge.setAlpha(dark ? 50 : 34);
+            p.setPen(QPen(edge, 1));
             p.setBrush(pane);
             p.drawPath(path);
             p.save();
             p.setClipPath(path);
-            DrawDots(p, r, dots);
+            // The Canvas background in small: the Lichii icon tiled and slanted.
+            LibraryStyleContext::PaintLogoTiles(&p, QRectF(r), std::clamp(r.height() / 9.0, 18.0, 40.0),
+                                                dark ? 0.07 : 0.10);
             p.restore();
         }
     }
     painter.drawPixmap(0, 0, panes_);
 
     {
+        QColor sub = LibraryStyleContext::MutedText(pal);
+        // Status bar: the game count in the blue pill, the date and time on the right.
         QFont f = font();
-        f.setPixelSize(12);
+        f.setPixelSize(std::clamp(top_rect_.height() / 22, 10, 13));
+        f.setBold(true);
         painter.setFont(f);
-        QColor sub = pal.text().color();
-        sub.setAlpha(160);
-        painter.setPen(sub);
-        const QRect status(top_rect_.left() + PanePad, top_rect_.top() + 6,
-                           top_rect_.width() - 2 * PanePad, StatusHeight - 6);
-        painter.drawText(status, Qt::AlignLeft | Qt::AlignVCenter,
-                         tr("%n game(s)", nullptr, static_cast<int>(items_.size())));
-        painter.drawText(status, Qt::AlignRight | Qt::AlignVCenter,
-                         QLocale().toString(QDateTime::currentDateTime(), QLocale::ShortFormat));
+        const QFontMetrics sfm(f);
+        const QRect status(top_rect_.left() + 9, top_rect_.top() + 5, top_rect_.width() - 18,
+                           StatusHeight - 8);
+        const QString count = tr("%n game(s)", nullptr, static_cast<int>(items_.size()));
+        const QRectF pill(status.left(), status.top() + 1,
+                          std::max<qreal>(sfm.horizontalAdvance(count) + 20,
+                                          std::min(status.width() * 0.3, 200.0)),
+                          status.height() - 2);
+        QLinearGradient blue(pill.topLeft(), pill.bottomLeft());
+        blue.setColorAt(0.0, QColor(0x5a, 0xa9, 0xf0));
+        blue.setColorAt(1.0, QColor(0x2f, 0x86, 0xdc));
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(blue);
+        painter.drawRoundedRect(pill, 3, 3);
+        painter.setPen(Qt::white);
+        painter.drawText(pill.adjusted(10, 0, -6, 0), Qt::AlignLeft | Qt::AlignVCenter, count);
+        const QLocale locale;
+        const QDateTime now = QDateTime::currentDateTime();
+        const QString clock = QStringLiteral("%1 (%2) %3")
+                                  .arg(locale.toString(now.date(), QLocale::ShortFormat),
+                                       locale.dayName(now.date().dayOfWeek(), QLocale::ShortFormat),
+                                       locale.toString(now.time(), QLocale::ShortFormat));
+        painter.setPen(pal.text().color());
+        painter.drawText(status, Qt::AlignRight | Qt::AlignVCenter, clock);
 
         // Button hints along the bottom of the top screen, centred.
         QFont hint_font = font();
         hint_font.setPixelSize(11);
         hint_font.setBold(true);
-        const auto hints = LibraryStyleContext::StandardHints(tr("Icons"));
+        const auto hints = LibraryStyleContext::StandardHints(tr("Size"));
         const qreal radius = 7.0;
         const qreal hints_w = LibraryStyleContext::HintsWidth(hints, hint_font, radius);
         if (hints_w <= top_rect_.width() - 2 * PanePad) {

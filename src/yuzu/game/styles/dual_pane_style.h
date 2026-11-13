@@ -58,7 +58,6 @@ private:
     QPixmap Art(const QModelIndex& index, int logical_px);
     void DrawPreview(QPainter& painter, const QModelIndex& index, qreal opacity);
     void DrawGrid(QPainter& painter);
-    void DrawDots(QPainter& painter, const QRect& area, const QColor& color) const;
 
     QAbstractItemModel* model_ = nullptr;
     std::vector<QPersistentModelIndex> items_;
@@ -85,7 +84,7 @@ private:
     QTimer clock_timer_;
     QTimer rebuild_timer_;
     QCache<QString, QPixmap> art_cache_;
-    /// Both panes with their dot pattern, rebuilt when the size or the palette changes.
+    /// The shell, both screens and their Lichii pattern, rebuilt when the size or the palette changes.
     QPixmap panes_;
     QString panes_key_;
 };

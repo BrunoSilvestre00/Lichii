@@ -1374,8 +1374,8 @@ void BoxShelfStyle::DrawFront(QPainter& p, const Metrics& m, int pos, bool selec
         p.restore();
     }
 
-    // Stickers: Info on shows them on every case; the selected one always shows them.
-    if ((m_show_info || selected) && IsGame(index)) {
+    // Stickers: like Dense Grid, Info shows them on the selected case only.
+    if (m_show_info && selected && IsGame(index)) {
         QFont f = font();
         f.setWeight(QFont::Black);
         f.setPixelSize(std::clamp(qRound(12.0 * u), 9, 16));

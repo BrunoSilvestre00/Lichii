@@ -667,7 +667,8 @@ QPixmap CartridgesStyle::CardPixmap(const QModelIndex& index, const Metrics& m, 
     if (title.isEmpty()) {
         title = index.data(Qt::DisplayRole).toString().section(QLatin1Char('\n'), 0, 0);
     }
-    const bool info = (show_info_ || selected) && is_game;
+    // Like Dense Grid: Info shows the stickers on the selected cart only.
+    const bool info = show_info_ && selected && is_game;
     const GameInfo game = is_game ? LibraryStyleContext::Info(index) : GameInfo{};
     if (!is_game) {
         // Add Folder and the like: the shared folder-with-plus art on the label.

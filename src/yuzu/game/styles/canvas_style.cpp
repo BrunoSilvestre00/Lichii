@@ -504,23 +504,8 @@ void CanvasStyle::PaintBackground(QPainter& painter, bool dark) {
         const QColor bg = dark ? pal.window().color().darker(135) : QColor(246, 233, 212);
         p.fillRect(QRect(0, 0, w, h), bg);
         // Lichii icon tiled in staggered rows, the whole pattern slanted.
-        static const QPixmap logo(QStringLiteral(":/icons/default/256x256/lichii.png"));
-        if (!logo.isNull()) {
-            const qreal tile = std::clamp(h / 6.5, 56.0, 150.0);
-            const qreal step = tile * 1.7;
-            const qreal reach = std::hypot(w, h);
-            p.setRenderHint(QPainter::SmoothPixmapTransform, true);
-            p.setOpacity(dark ? 0.07 : 0.11);
-            p.translate(w / 2.0, h / 2.0);
-            p.rotate(-18);
-            int row = 0;
-            for (qreal y = -reach / 2; y < reach / 2 + step; y += step, ++row) {
-                const qreal shift = (row % 2) ? step / 2 : 0;
-                for (qreal x = -reach / 2 - step + shift; x < reach / 2 + step; x += step) {
-                    p.drawPixmap(QRectF(x, y, tile, tile), logo, QRectF(logo.rect()));
-                }
-            }
-        }
+        LibraryStyleContext::PaintLogoTiles(&p, QRectF(0, 0, w, h),
+                                            std::clamp(h / 6.5, 56.0, 150.0), dark ? 0.07 : 0.11);
         p.end();
         background = pixmap;
         background_size = size();
