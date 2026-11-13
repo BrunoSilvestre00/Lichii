@@ -163,6 +163,11 @@ CarouselStyle::CarouselStyle(QWidget* parent) : LibraryStyleView(parent) {
         update();
     });
 
+    // Between frames: one cover per pass, so a frame is never held up for long.
+    prefetch_timer_.setSingleShot(true);
+    prefetch_timer_.setInterval(0);
+    connect(&prefetch_timer_, &QTimer::timeout, this, &CarouselStyle::Prefetch);
+
     rebuild_timer_.setSingleShot(true);
     rebuild_timer_.setInterval(30);
     connect(&rebuild_timer_, &QTimer::timeout, this, [this] {
@@ -458,6 +463,79 @@ QString CarouselStyle::TitleFor(int row) const {
     return title;
 }
 
+void CarouselStyle::TrimCaches(int lo, int hi) {
+    const int count = static_cast<int>(items_.size());
+    // Two slots of margin on each side: the next step and the prefetched covers stay.
+    const int keep_slots = hi - lo + 5;
+    if (count <= keep_slots) {
+        return;
+    }
+    if (cover_cache_.size() <= keep_slots && tilted_cache_.size() <= 2 * keep_slots) {
+        return;
+    }
+    const auto kept = [&](int row) {
+        for (int slot = lo - 2; slot <= hi + 2; ++slot) {
+            if (((slot % count) + count) % count == row) {
+                return true;
+            }
+        }
+        return false;
+    };
+    for (auto it = cover_cache_.begin(); it != cover_cache_.end();) {
+        it = kept(it.key()) ? std::next(it) : cover_cache_.erase(it);
+    }
+    for (auto it = tilted_cache_.begin(); it != tilted_cache_.end();) {
+        it = kept(static_cast<int>(it.key() / 2)) ? std::next(it) : tilted_cache_.erase(it);
+    }
+    if (reflection_cache_.size() > 2 * keep_slots) {
+        reflection_cache_.clear();
+    }
+}
+
+void CarouselStyle::Prefetch() {
+    if (items_.empty() || dirty_ || !isVisible()) {
+        return;
+    }
+    const Metrics m = ComputeMetrics();
+    const qreal dpr = devicePixelRatioF();
+    const int count = static_cast<int>(items_.size());
+    const int radius = std::min(kVisibleRadius, (count - 1) / 2);
+    const int cover_side = static_cast<int>(std::ceil(m.side));
+    const int cover_px = std::max(1, static_cast<int>(std::ceil(cover_side * dpr)));
+    const int tilt_px = std::max(1, static_cast<int>(std::ceil(m.side * dpr)));
+    const auto has_cover = [&](int row) {
+        return cover_cache_side_ == cover_px && cover_cache_.contains(row);
+    };
+    const auto has_tilt = [&](int row, bool right) {
+        return tilted_side_ == tilt_px &&
+               tilted_cache_.contains(static_cast<qint64>(row) * 2 + (right ? 1 : 0));
+    };
+    // Builds the first missing cover and comes back for the next one.
+    const auto build = [&](int row, bool right) {
+        if (!has_cover(row)) {
+            CoverPixmap(row, cover_side);
+        } else if (!flat_ && !has_tilt(row, right)) {
+            TiltedPixmap(row, right, m.side);
+        } else {
+            return false;
+        }
+        prefetch_timer_.start();
+        return true;
+    };
+    // The selection rests turned to either side once the next step moves it away.
+    if (build(current_, true) || build(current_, false)) {
+        return;
+    }
+    for (int d = 1; d <= radius + 1; ++d) {
+        for (const int sign : {1, -1}) {
+            const int row = ((current_ + sign * d) % count + count) % count;
+            if (build(row, sign > 0)) {
+                return;
+            }
+        }
+    }
+}
+
 const CarouselStyle::Tint& CarouselStyle::TintFor(int row) {
     const auto found = tint_cache_.constFind(row);
     if (found != tint_cache_.constEnd()) {
@@ -491,11 +569,7 @@ QPixmap CarouselStyle::CoverPixmap(int row, int side) {
     if (found != cover_cache_.constEnd()) {
         return *found;
     }
-    // Keep the cache small: only covers around the selection are ever painted.
-    if (cover_cache_.size() > 24) {
-        cover_cache_.clear();
-    }
-
+    // TrimCaches keeps the cache to the covers around the selection.
     bool has_art = false;
     const QPixmap art = SourceArt(row, &has_art);
 
@@ -610,9 +684,6 @@ QPixmap CarouselStyle::TiltedPixmap(int row, bool right, qreal side) {
     if (found != tilted_cache_.constEnd()) {
         return *found;
     }
-    if (tilted_cache_.size() > 24) {
-        tilted_cache_.clear();
-    }
     // Shadow, tilted cover and reflection in one pixmap, drawn the same way PaintCover draws a
     // moving cover.
     const RestingTilt tilt = RestingTiltFor(right, side);
@@ -647,14 +718,17 @@ void CarouselStyle::PaintBackground(QPainter& painter) {
     // The tinted background of each cover is built once, then cross faded while moving.
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
     const int cur = std::clamp(current_, 0, static_cast<int>(items_.size()) - 1);
+    // Drawn at the origin, not into rect(): the pixmap is the widget in device pixels (rounded
+    // up), so this is a plain copy. Fitting it into rect() scales it by a fraction of a pixel at
+    // 125 % or 150 %, which takes the slow filtered path for the whole window.
     if (progress_ < 1.0 && previous_row_ >= 0 && previous_row_ < static_cast<int>(items_.size())) {
-        painter.drawPixmap(rect(), BackgroundFor(previous_row_));
+        painter.drawPixmap(QPointF(0, 0), BackgroundFor(previous_row_));
         painter.setOpacity(progress_);
-        painter.drawPixmap(rect(), BackgroundFor(cur));
+        painter.drawPixmap(QPointF(0, 0), BackgroundFor(cur));
         painter.setOpacity(1.0);
         return;
     }
-    painter.drawPixmap(rect(), BackgroundFor(cur));
+    painter.drawPixmap(QPointF(0, 0), BackgroundFor(cur));
 }
 
 const QPixmap& CarouselStyle::ShadowFor(qreal side, bool selected) {
@@ -906,6 +980,10 @@ void CarouselStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
     for (const int slot : order) {
         const int row = ((slot % count) + count) % count;
         PaintCover(painter, m, row, slot - position_);
+    }
+    TrimCaches(lo, hi);
+    if (!prefetch_timer_.isActive()) {
+        prefetch_timer_.start();
     }
 
     PaintTexts(painter, m);

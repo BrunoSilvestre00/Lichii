@@ -87,6 +87,12 @@ private:
     /// reflection, cached.
     QPixmap TiltedPixmap(int row, bool right, qreal side);
     QString TitleFor(int row) const;
+    /// Drops cached covers that are more than two slots outside the covers of this frame.
+    void TrimCaches(int lo, int hi);
+    /// Builds one cover the next step will need (the covers just outside the visible ones and
+    /// the selection turned either way), then runs again until none is missing. Moving to the
+    /// next game then finds its covers ready instead of building them in that frame.
+    void Prefetch();
 
     void PaintBackground(QPainter& painter);
     QPixmap Reflection(const QPixmap& cover);
@@ -113,6 +119,7 @@ private:
     bool dirty_ = false;
     bool change_pending_ = false;
     QTimer rebuild_timer_;
+    QTimer prefetch_timer_;
     QVariantAnimation* animation_ = nullptr;
 
     QHash<int, QPixmap> cover_cache_;
