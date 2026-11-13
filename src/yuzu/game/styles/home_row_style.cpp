@@ -393,6 +393,26 @@ void HomeRowStyle::paintEvent(QPaintEvent* event) {
     background.setColorAt(1.0, base.darker(104));
     painter.fillRect(rect(), background);
 
+    // Footer like the concept: a hairline, then the button hints on the right as solid discs.
+    {
+        QFont hint_font = font();
+        hint_font.setPixelSize(std::clamp(height() / 40, 12, 17));
+        const qreal radius = hint_font.pixelSize() * 0.72;
+        const int foot_h = static_cast<int>(radius * 2 + 22);
+        const int side = static_cast<int>(width() * 0.03);
+        const int line_y = height() - foot_h;
+        QColor line = pal.color(QPalette::WindowText);
+        line.setAlpha(45);
+        painter.fillRect(QRect(side, line_y, width() - 2 * side, 1), line);
+        const auto hints = LibraryStyleContext::StandardHints();
+        const qreal hints_w = LibraryStyleContext::HintsWidth(hints, hint_font, radius);
+        if (hints_w <= width() - 2 * side - 16) {
+            LibraryStyleContext::PaintHints(&painter, hints, width() - side - 8 - hints_w,
+                                            line_y + foot_h / 2.0, hint_font, radius,
+                                            pal.color(QPalette::WindowText), true, base);
+        }
+    }
+
     const QColor accent = LibraryStyleContext::Accent(pal);
     const Metrics m = ComputeMetrics();
     const int count = RowCount();

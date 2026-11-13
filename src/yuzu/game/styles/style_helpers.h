@@ -4,6 +4,7 @@
 #pragma once
 
 #include <array>
+#include <vector>
 
 #include <QColor>
 #include <QFont>
@@ -23,6 +24,12 @@ class QWidget;
 namespace LibraryStyles {
 
 class LibraryStyleView;
+
+/// One controller hint: round button glyphs ("A", or "L" "R") and what they do.
+struct ButtonHint {
+    QStringList glyphs;
+    QString label;
+};
 
 /// What a style needs to know about one row of the library model. Every field is filled for game
 /// rows; the "Add games folder" row only has `is_add_folder` and `title`.
@@ -161,6 +168,22 @@ public:
     static void PaintCoverCaption(QPainter* painter, const QRect& cover_rect,
                                   const QModelIndex& index, const QFont& font, bool show_info,
                                   const QWidget* glide_in = nullptr);
+
+    /// The library buttons: A Play, B Names, X `option` (when the style has one), Y Info,
+    /// L R Style. Letters are Switch positions, like the controller mapping.
+    static std::vector<ButtonHint> StandardHints(const QString& option = {});
+    /// Width of a hint row drawn with PaintHints.
+    static qreal HintsWidth(const std::vector<ButtonHint>& hints, const QFont& font, qreal radius);
+    /// A hint row from `left`, centred on `center_y`. `filled`: solid discs with the letter cut
+    /// out in `letter` (Home Row look); otherwise outlined rings (Canvas look).
+    static void PaintHints(QPainter* painter, const std::vector<ButtonHint>& hints, qreal left,
+                           qreal center_y, const QFont& font, qreal radius, const QColor& ink,
+                           bool filled = false, const QColor& letter = {});
+    /// The Canvas hint pill, centred at the bottom of `area`: rounded translucent bar with ring
+    /// glyphs. Styles keep HintPillReserve px free under their last row.
+    static void PaintHintPill(QPainter* painter, const QRect& area,
+                              const std::vector<ButtonHint>& hints, bool dark);
+    static constexpr int HintPillReserve = 64;
 };
 
 /// Minimal view used by the placeholder files until a style lands: a plain list of the titles under

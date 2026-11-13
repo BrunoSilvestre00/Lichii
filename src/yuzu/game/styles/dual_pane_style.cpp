@@ -37,6 +37,8 @@ namespace {
 constexpr int Margin = 12;
 constexpr int PanePad = 14;
 constexpr int StatusHeight = 26;
+/// Button hint line along the bottom of the top screen (concept).
+constexpr int HintHeight = 24;
 constexpr int PaneRadius = 16;
 constexpr int DotSpacing = 18;
 constexpr int FadeMs = 150;
@@ -430,7 +432,8 @@ void DualPaneStyle::DrawPreview(QPainter& painter, const QModelIndex& index, qre
     painter.save();
     painter.setOpacity(opacity);
 
-    const QRect content = top_rect_.adjusted(PanePad, StatusHeight + 4, -PanePad, -PanePad);
+    const QRect content =
+        top_rect_.adjusted(PanePad, StatusHeight + 4, -PanePad, -PanePad - HintHeight);
     const int side =
         std::max(0, std::min(content.height(), static_cast<int>(content.width() * 0.4)));
     const QRect cover(content.left(), content.top() + (content.height() - side) / 2, side, side);
@@ -667,6 +670,19 @@ void DualPaneStyle::paintEvent(QPaintEvent*) {
                          tr("%n game(s)", nullptr, static_cast<int>(items_.size())));
         painter.drawText(status, Qt::AlignRight | Qt::AlignVCenter,
                          QLocale().toString(QDateTime::currentDateTime(), QLocale::ShortFormat));
+
+        // Button hints along the bottom of the top screen, centred.
+        QFont hint_font = font();
+        hint_font.setPixelSize(11);
+        hint_font.setBold(true);
+        const auto hints = LibraryStyleContext::StandardHints(tr("Icons"));
+        const qreal radius = 7.0;
+        const qreal hints_w = LibraryStyleContext::HintsWidth(hints, hint_font, radius);
+        if (hints_w <= top_rect_.width() - 2 * PanePad) {
+            LibraryStyleContext::PaintHints(&painter, hints, top_rect_.center().x() + 1 - hints_w / 2,
+                                            top_rect_.bottom() + 1 - PanePad / 2 - HintHeight / 2.0,
+                                            hint_font, radius, sub);
+        }
     }
 
     if (items_.empty()) {

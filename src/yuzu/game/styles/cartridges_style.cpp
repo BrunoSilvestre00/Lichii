@@ -593,7 +593,9 @@ void CartridgesStyle::UpdateScrollRange() {
         return;
     }
     const Metrics m = ComputeMetrics();
-    const qreal content_h = m.margin_top * 2 + m.rows * m.cell_h + (show_names_ ? 70.0 : 0.0);
+    // The hint pill covers the bottom; the last row scrolls clear of it.
+    const qreal content_h = m.margin_top * 2 + m.rows * m.cell_h + (show_names_ ? 70.0 : 0.0) +
+                            LibraryStyleContext::HintPillReserve;
     const int range = std::max(0, static_cast<int>(std::ceil(content_h)) - height());
     bar_->setRange(0, range);
     bar_->setPageStep(std::max(1, height()));
@@ -615,8 +617,8 @@ void CartridgesStyle::EnsureVisible(int row) {
                                         QFontMetrics(font()).lineSpacing() * 2 + 30.0);
     if (top < bar_->value()) {
         bar_->setValue(top);
-    } else if (bottom > bar_->value() + height()) {
-        bar_->setValue(bottom - height());
+    } else if (bottom > bar_->value() + height() - LibraryStyleContext::HintPillReserve) {
+        bar_->setValue(bottom - height() + LibraryStyleContext::HintPillReserve);
     }
 }
 
@@ -863,6 +865,9 @@ void CartridgesStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
         // The selected cart always names itself.
         DrawNameBubble(painter, selected, m, Place(selected, m, true));
     }
+    LibraryStyleContext::PaintHintPill(&painter, rect(),
+                                       LibraryStyleContext::StandardHints(tr("Layout")),
+                                       IsDark(palette()));
 }
 
 void CartridgesStyle::resizeEvent(QResizeEvent* event) {

@@ -339,7 +339,8 @@ void DenseGridStyle::paintEvent(QPaintEvent*) {
     painter.setPen(line);
     painter.drawLine(bar.topLeft(), bar.topRight());
 
-    const QStringList hints{tr("A Launch"), tr("B Names"), tr("Y Info"), tr("X Layout")};
+    const QStringList hints{tr("A Launch"), tr("B Names"), tr("Y Info"), tr("X Layout"),
+                            tr("L R Style")};
     const QString hint_text = hints.join(QStringLiteral("    "));
     const int hint_width = metrics.horizontalAdvance(hint_text);
     painter.setPen(LibraryStyleContext::MutedText(pal));

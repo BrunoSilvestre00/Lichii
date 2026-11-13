@@ -396,7 +396,8 @@ int CarouselStyle::HitRow(const QPoint& point) const {
 CarouselStyle::Metrics CarouselStyle::ComputeMetrics() const {
     Metrics m;
     const qreal w = width();
-    const qreal h = height();
+    // The hint pill takes the bottom; the covers, texts and dots centre above it.
+    const qreal h = std::max(1, height() - LibraryStyleContext::HintPillReserve);
     // The centre cover is the featured size (1.6x the icon size), shrunk only to fit the window.
     // Floor at the smallest icon option (32 px), so every size step still counts.
     m.side = std::max(32.0, std::min<qreal>({static_cast<qreal>(LibraryStyleContext::FeaturedArtSize()),
@@ -900,6 +901,9 @@ void CarouselStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
 
     PaintTexts(painter, m);
     PaintDots(painter, m);
+    LibraryStyleContext::PaintHintPill(
+        &painter, rect(), LibraryStyleContext::StandardHints(tr("Covers")),
+        LibraryStyleContext::IsDark(palette()));
 }
 
 void CarouselStyle::resizeEvent(QResizeEvent* event) {

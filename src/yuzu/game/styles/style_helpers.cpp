@@ -887,4 +887,92 @@ LibraryStyleView* MakePlaceholderView(QWidget* parent, const QString& style_name
     return new PlaceholderView(parent, style_name);
 }
 
+std::vector<ButtonHint> LibraryStyleContext::StandardHints(const QString& option) {
+    std::vector<ButtonHint> hints{{{QStringLiteral("A")}, Tr("Play")},
+                                  {{QStringLiteral("B")}, Tr("Names")}};
+    if (!option.isEmpty()) {
+        hints.push_back({{QStringLiteral("X")}, option});
+    }
+    hints.push_back({{QStringLiteral("Y")}, Tr("Info")});
+    hints.push_back({{QStringLiteral("L"), QStringLiteral("R")}, Tr("Style")});
+    return hints;
+}
+
+namespace {
+constexpr qreal HintGlyphGap = 4.0;
+constexpr qreal HintLabelGap = 5.0;
+
+qreal HintItemGap(qreal radius) {
+    return std::round(radius * 2.2);
+}
+} // namespace
+
+qreal LibraryStyleContext::HintsWidth(const std::vector<ButtonHint>& hints, const QFont& font,
+                                      qreal radius) {
+    const QFontMetricsF fm(font);
+    qreal total = 0;
+    for (const ButtonHint& hint : hints) {
+        total += hint.glyphs.size() * (radius * 2 + HintGlyphGap) - HintGlyphGap + HintLabelGap +
+                 fm.horizontalAdvance(hint.label);
+    }
+    return total + HintItemGap(radius) * std::max<qreal>(0, static_cast<qreal>(hints.size()) - 1);
+}
+
+void LibraryStyleContext::PaintHints(QPainter* painter, const std::vector<ButtonHint>& hints,
+                                     qreal left, qreal center_y, const QFont& font, qreal radius,
+                                     const QColor& ink, bool filled, const QColor& letter) {
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    QFont glyph_font = font;
+    glyph_font.setBold(true);
+    glyph_font.setPixelSize(std::max(7, static_cast<int>(radius * 1.15)));
+    const QFontMetricsF fm(font);
+    qreal x = left;
+    for (const ButtonHint& hint : hints) {
+        for (int i = 0; i < hint.glyphs.size(); ++i) {
+            const QRectF disc(x, center_y - radius, radius * 2, radius * 2);
+            if (filled) {
+                painter->setPen(Qt::NoPen);
+                painter->setBrush(ink);
+            } else {
+                painter->setPen(QPen(ink, std::max(1.2, radius * 0.15)));
+                painter->setBrush(Qt::NoBrush);
+            }
+            painter->drawEllipse(disc);
+            painter->setFont(glyph_font);
+            painter->setPen(filled ? letter : ink);
+            painter->drawText(disc, Qt::AlignCenter, hint.glyphs[i]);
+            x += radius * 2 + (i + 1 < hint.glyphs.size() ? HintGlyphGap : 0);
+        }
+        x += HintLabelGap;
+        painter->setFont(font);
+        painter->setPen(ink);
+        const qreal label_w = fm.horizontalAdvance(hint.label);
+        painter->drawText(QRectF(x, center_y - fm.height(), label_w + 2, fm.height() * 2),
+                          Qt::AlignLeft | Qt::AlignVCenter, hint.label);
+        x += label_w + HintItemGap(radius);
+    }
+    painter->restore();
+}
+
+void LibraryStyleContext::PaintHintPill(QPainter* painter, const QRect& area,
+                                        const std::vector<ButtonHint>& hints, bool dark) {
+    QFont font = painter->font();
+    font.setBold(true);
+    font.setPixelSize(13);
+    const qreal radius = 9.5;
+    const qreal width = HintsWidth(hints, font, radius);
+    const qreal bar_h = 40.0;
+    const QRectF bar(area.center().x() + 1 - width / 2 - 20, area.bottom() + 1 - bar_h - 10,
+                     width + 40, bar_h);
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(dark ? QColor(20, 16, 14, 190) : QColor(255, 255, 255, 205));
+    painter->drawRoundedRect(bar, bar_h / 2, bar_h / 2);
+    painter->restore();
+    const QColor ink = dark ? QColor(255, 255, 255, 225) : QColor(30, 26, 24, 225);
+    PaintHints(painter, hints, bar.left() + 20, bar.center().y(), font, radius, ink);
+}
+
 } // namespace LibraryStyles

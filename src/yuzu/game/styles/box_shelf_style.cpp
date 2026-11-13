@@ -536,7 +536,8 @@ int BoxShelfStyle::HitTest(const QPointF& point) const {
 double BoxShelfStyle::MaxScroll(const Metrics& m) const {
     const int count = ItemCount();
     const int rows = (count + m.cols - 1) / m.cols;
-    const double total = kTopMargin + rows * m.row_h + kBottomMargin;
+    // The hint pill covers the bottom; the last row scrolls clear of it.
+    const double total = kTopMargin + rows * m.row_h + kBottomMargin + LibraryStyleContext::HintPillReserve;
     return std::max(0.0, total - height());
 }
 
@@ -554,8 +555,8 @@ void BoxShelfStyle::EnsureVisible(int pos) {
     const double bottom = top + m.row_h;
     if (top < m_scroll) {
         m_scroll = top;
-    } else if (bottom > m_scroll + height()) {
-        m_scroll = bottom - height();
+    } else if (bottom > m_scroll + height() - LibraryStyleContext::HintPillReserve) {
+        m_scroll = bottom - height() + LibraryStyleContext::HintPillReserve;
     }
     ClampScroll();
 }
@@ -791,6 +792,9 @@ void BoxShelfStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
         p.setBrush(c);
         p.drawRoundedRect(QRectF(width() - 7.0, y + 2.0, 4.0, handle - 4.0), 2, 2);
     }
+
+    LibraryStyleContext::PaintHintPill(&p, rect(),
+                                       LibraryStyleContext::StandardHints(tr("Cases")), dark);
 }
 
 void BoxShelfStyle::DrawWall(QPainter& p, bool dark) {

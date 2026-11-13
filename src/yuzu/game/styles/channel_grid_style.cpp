@@ -627,16 +627,33 @@ void ChannelGridStyle::PaintDock(QPainter& p, const Layout& l) {
 
     const int clock_half = QFontMetrics(clock_font).horizontalAdvance(time_text) / 2;
 
-    // Left: the number of games.
+    // Left: the number of games, and the button hints under it when they fit.
     {
         QFont f = font();
         f.setPixelSize(std::clamp(l.dock_h * 13 / 100, 11, 16));
         p.setFont(f);
         const QRect count_rect(margin + 8, top, std::max(0, w / 2 - clock_half - margin - 24),
                                l.dock_h);
-        p.drawText(count_rect, Qt::AlignLeft | Qt::AlignVCenter,
+        QFont hint_font = font();
+        hint_font.setBold(true);
+        hint_font.setPixelSize(std::clamp(l.dock_h * 11 / 100, 10, 14));
+        const qreal radius = hint_font.pixelSize() * 0.75;
+        const auto hints = LibraryStyleContext::StandardHints();
+        const bool show_hints =
+            LibraryStyleContext::HintsWidth(hints, hint_font, radius) <= count_rect.width();
+        const int count_h = QFontMetrics(f).height();
+        const int gap = 8;
+        const int block_h = count_h + (show_hints ? gap + static_cast<int>(radius * 2) : 0);
+        const int block_top = mid_y - block_h / 2;
+        p.drawText(QRect(count_rect.left(), block_top, count_rect.width(), count_h),
+                   Qt::AlignLeft | Qt::AlignVCenter,
                    QFontMetrics(f).elidedText(tr("%n game(s)", nullptr, RowCount()),
                                               Qt::ElideRight, count_rect.width()));
+        if (show_hints) {
+            LibraryStyleContext::PaintHints(&p, hints, count_rect.left(),
+                                            block_top + count_h + gap + radius, hint_font,
+                                            radius, ink);
+        }
     }
 
     // Right: info card for the selected game.
