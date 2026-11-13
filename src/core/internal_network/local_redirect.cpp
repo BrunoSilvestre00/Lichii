@@ -125,15 +125,17 @@ struct Values {
     bool loopback_only{};
 };
 
-// The settings, or the environment while EDEN_NX2_ONLINE_SERVER is set (local_redirect.h).
+// The settings, or the environment while EDEN_NX2_ONLINE_SERVER is set (local_redirect.h). Set
+// but empty, it turns the redirect off rather than falling back to the settings.
 Values ReadValues() {
     const auto env = [](const char* name) {
         const char* value = std::getenv(name);
         return std::string{value != nullptr ? value : ""};
     };
-    if (std::string server = env("EDEN_NX2_ONLINE_SERVER"); !server.empty()) {
+    if (std::getenv("EDEN_NX2_ONLINE_SERVER") != nullptr) {
+        std::string server = env("EDEN_NX2_ONLINE_SERVER");
         return {
-            .enabled = true,
+            .enabled = !server.empty(),
             .hosts = env("EDEN_NX2_ONLINE_HOSTS"),
             .server = std::move(server),
             .ca = env("EDEN_NX2_ONLINE_CA"),

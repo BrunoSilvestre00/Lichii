@@ -33,7 +33,6 @@ std::filesystem::path ProfilesDir();
 // identity.txt) and the friends' codes from the old setting; until then, that is what a load
 // without `create` returns.
 std::optional<Profile> LoadProfile(const std::string& server, bool create);
-bool SaveProfile(const Profile& profile);
 
 // A profile as text (its file, and the backup players keep) and back.
 std::string ProfileText(const Profile& profile);
@@ -42,8 +41,6 @@ std::optional<Profile> ParseProfile(std::string_view text);
 std::string NewSecret();
 // 12-digit codes in text ("SW-1234-5678-9012, 2345 6789 0123"), in order, without duplicates.
 std::vector<std::string> ParseCodes(std::string_view text);
-// "SW-1234-5678-9012", as a Switch shows friend codes.
-std::string FormatCode(const std::string& code);
 
 // The ID token a game forwards to its online server at login while the host redirect sends it
 // to a server (Network::LocalRedirect::Server): this server's profile, made on first use, and the
@@ -52,6 +49,5 @@ std::string FormatCode(const std::string& code);
 std::string IdentityToken(std::string_view build);
 
 void AddFriend(Profile& profile, const std::string& code);
-void RemoveFriend(Profile& profile, const std::string& code);
 
 } // namespace Service::Sockets::OnlineProfile

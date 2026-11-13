@@ -107,6 +107,22 @@ bool HasProfiles() {
     return false;
 }
 
+// Writes a profile, which holds its secret, readable by the OS user only: the file is made (or
+// kept as it is) and restricted before the secret goes in.
+bool WriteOwnerOnly(const std::filesystem::path& path, const std::string& text) {
+    std::ofstream(path, std::ios::app).close();
+    std::error_code ec;
+    std::filesystem::permissions(path, std::filesystem::perms::owner_read |
+                                           std::filesystem::perms::owner_write, ec);
+    if (ec) {
+        return false;
+    }
+    std::ofstream out(path, std::ios::trunc);
+    out << text;
+    out.close();
+    return static_cast<bool>(out);
+}
+
 // Before profiles, each emulator folder had one friend code for every server
 std::optional<Profile> LegacyIdentity(const std::string& server) {
     std::ifstream in(Common::FS::GetEdenPath(Common::FS::EdenPath::EdenDir) / "online" / "identity.txt");
@@ -117,9 +133,6 @@ std::optional<Profile> LegacyIdentity(const std::string& server) {
         return std::nullopt;
     }
     profile->server = server;
-    for (const std::string& code : ParseCodes(Settings::values.online_friends.GetValue())) {
-        AddFriend(*profile, code);
-    }
     return profile;
 }
 
@@ -190,10 +203,7 @@ std::optional<Profile> LoadProfile(const std::string& server, bool create) {
                 // An old profile without a server= line: it now belongs to this server, so another
                 // server whose name reads alike gets a file of its own.
                 profile->server = server;
-                std::ofstream claim(ProfilePath(server), std::ios::trunc);
-                claim << ProfileText(*profile);
-                claim.close();
-                if (!claim) {
+                if (!WriteOwnerOnly(ProfilePath(server), ProfileText(*profile))) {
                     LOG_ERROR(Network, "Online: could not claim {} for {}",
                               ProfilePath(server).string(), server);
                     return std::nullopt;
@@ -216,6 +226,9 @@ std::optional<Profile> LoadProfile(const std::string& server, bool create) {
     if (!profile) {
         profile = Profile{server, NewCode(), NewSecret(), {}, {}};
     }
+    for (const std::string& code : ParseCodes(Settings::values.online_friends.GetValue())) {
+        AddFriend(*profile, code);
+    }
     std::error_code ec;
     std::filesystem::create_directories(ProfilesDir(), ec);
     const auto path = ProfilePath(server);
@@ -226,42 +239,12 @@ std::optional<Profile> LoadProfile(const std::string& server, bool create) {
         std::filesystem::rename(path, backup, ec);
         LOG_WARNING(Network, "Online: kept the damaged profile as {}", backup.string());
     }
-    std::ofstream out(path, std::ios::trunc);
-    out << ProfileText(*profile);
-    out.close();
-    if (!out) {
+    if (!WriteOwnerOnly(path, ProfileText(*profile))) {
         // An identity that is not saved would change at the next sign-in.
         LOG_ERROR(Network, "Online: could not save the friend code to {}", path.string());
         return std::nullopt;
     }
-    std::filesystem::permissions(path, std::filesystem::perms::owner_read |
-                                           std::filesystem::perms::owner_write, ec);
     return profile;
-}
-
-bool SaveProfile(const Profile& profile) {
-    std::scoped_lock lock{profile_mutex};
-    std::error_code ec;
-    std::filesystem::create_directories(ProfilesDir(), ec);
-    const auto path = ProfilePath(profile.server);
-    auto temp = path;
-    temp += ".new";
-    {
-        std::ofstream out(temp, std::ios::trunc);
-        out << ProfileText(profile);
-        if (!out) {
-            LOG_ERROR(Network, "Online: could not save {}", path.string());
-            return false;
-        }
-    }
-    std::filesystem::permissions(temp, std::filesystem::perms::owner_read |
-                                           std::filesystem::perms::owner_write, ec);
-    std::filesystem::rename(temp, path, ec);
-    if (ec) {
-        LOG_ERROR(Network, "Online: could not save {}: {}", path.string(), ec.message());
-        return false;
-    }
-    return true;
 }
 
 std::string ProfileText(const Profile& profile) {
@@ -334,12 +317,6 @@ std::vector<std::string> ParseCodes(std::string_view text) {
     return codes;
 }
 
-std::string FormatCode(const std::string& code) {
-    return code.size() == 12
-               ? "SW-" + code.substr(0, 4) + '-' + code.substr(4, 4) + '-' + code.substr(8)
-               : code;
-}
-
 void AddFriend(Profile& profile, const std::string& code) {
     if (code == profile.code) {
         return;
@@ -347,13 +324,6 @@ void AddFriend(Profile& profile, const std::string& code) {
     std::erase(profile.removed, code);
     if (std::find(profile.friends.begin(), profile.friends.end(), code) == profile.friends.end()) {
         profile.friends.push_back(code);
-    }
-}
-
-void RemoveFriend(Profile& profile, const std::string& code) {
-    std::erase(profile.friends, code);
-    if (std::find(profile.removed.begin(), profile.removed.end(), code) == profile.removed.end()) {
-        profile.removed.push_back(code);
     }
 }
 

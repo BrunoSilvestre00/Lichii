@@ -37,7 +37,8 @@ namespace Service::Account {
 
 // While the host redirect sends the game to a private server, answers with this emulator's
 // profile on it, which the server reads as the player's account at login
-// (sockets/online_profile.h, from Droplet). Otherwise the caller keeps its own answer.
+// (sockets/online_profile.h, from Droplet). Otherwise the caller keeps its own answer. It comes
+// before Nextendo's: the redirect sends the game's sign-in to the private server.
 static bool ReplyServerIdToken(Core::System& system, HLERequestContext& ctx) {
     const auto& id = system.GetApplicationProcessBuildID();
     size_t length = id.size();
@@ -784,7 +785,7 @@ public:
     ~EnsureTokenIdCacheAsyncInterface() = default;
 
     void LoadIdTokenCache(HLERequestContext& ctx) {
-        if (ReplyNextendoIdToken(system, ctx) || ReplyServerIdToken(system, ctx)) {
+        if (ReplyServerIdToken(system, ctx) || ReplyNextendoIdToken(system, ctx)) {
             return;
         }
         LOG_WARNING(Service_ACC, "(STUBBED) called");
@@ -870,7 +871,7 @@ private:
     }
 
     void LoadIdTokenCache(HLERequestContext& ctx) {
-        if (ReplyNextendoIdToken(system, ctx) || ReplyServerIdToken(system, ctx)) {
+        if (ReplyServerIdToken(system, ctx) || ReplyNextendoIdToken(system, ctx)) {
             return;
         }
         LOG_WARNING(Service_ACC, "(STUBBED) called");
