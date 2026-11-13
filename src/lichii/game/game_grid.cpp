@@ -105,7 +105,7 @@ void GameGrid::UpdateIconSize() {
     const int columns = std::max(1, (view_width - 16) / min_item_width);
     const int stretched_width = (view_width - 16) / columns;
 
-    QSize grid_size(stretched_width, display_icon_size + heightMargin);
+    QSize grid_size(stretched_width, display_icon_size + heightMargin + GameCard::ringRoom);
     if (gridSize() != grid_size) {
         setUpdatesEnabled(false);
 

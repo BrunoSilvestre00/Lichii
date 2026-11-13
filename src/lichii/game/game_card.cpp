@@ -401,9 +401,9 @@ QRect GameCard::getCardRect(const QStyleOptionViewItem& option, const QModelInde
         // search) shift the cells.
         card_left = option.rect.left() + (cell_width - (card_width - cardMargin)) / 2;
 
-        // fill cell vertically
+        // fill cell vertically, leaving room under the card for its ring and shadow
         card_top = option.rect.top() + cardMargin;
-        card_height = option.rect.height() - cardMargin - 1;
+        card_height = option.rect.height() - cardMargin - 1 - ringRoom;
     } else {
         // carousel mode
         card_left = option.rect.left() + cardMargin + 4;

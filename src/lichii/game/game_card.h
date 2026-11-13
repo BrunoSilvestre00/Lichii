@@ -34,6 +34,10 @@ public:
     void setSize(const QSize& newSize, const QSize& contentSize, const int padding, const int columns);
 
     static constexpr int cardMargin = 8;
+    /// Grid cells are this much taller than the card plus its margins: the selection ring and
+    /// the drop shadow reach 2 px under the card, and anything drawn outside the cell is left
+    /// behind or cut when only the cell is repainted (selection and hover changes).
+    static constexpr int ringRoom = 2;
 
     /// The text under the art, sized to what it shows. Every card of a view shares it, so the
     /// grid stays even: the title always gets two lines when names are on.
