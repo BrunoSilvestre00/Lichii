@@ -36,19 +36,6 @@ constexpr double kCaseAspect = 0.62;
 constexpr double kTopMargin = 14.0;
 constexpr double kBottomMargin = 24.0;
 
-struct Rng {
-    quint32 state = 0x9E3779B9u;
-    quint32 Next() {
-        state ^= state << 13;
-        state ^= state >> 17;
-        state ^= state << 5;
-        return state;
-    }
-    double F() {
-        return static_cast<double>(Next() & 0xFFFFFFu) / 16777216.0;
-    }
-};
-
 int ItemType(const QModelIndex& index) {
     return index.data(GameListItem::TypeRole).toInt();
 }
@@ -205,26 +192,6 @@ void DrawSticker(QPainter* p, const QPointF& right_top, const QString& text, con
     p->restore();
 }
 
-void DrawTag(QPainter* p, const QPointF& right_top, const QString& text, const QFont& font) {
-    const QFontMetrics fm(font);
-    const double w = fm.horizontalAdvance(text) + 14.0;
-    const double h = fm.height() + 6.0;
-    p->save();
-    p->translate(right_top.x() - w / 2.0 + w * 0.12, right_top.y() + h / 2.0);
-    p->rotate(-5.0);
-    const QRectF rect(-w / 2.0, -h / 2.0, w, h);
-    p->setPen(Qt::NoPen);
-    p->setBrush(QColor(0, 0, 0, 60));
-    p->drawRoundedRect(rect.translated(1.5, 2.0), h / 2.2, h / 2.2);
-    p->setBrush(QColor(255, 238, 170));
-    p->setPen(QPen(QColor(120, 90, 20, 140), 1.0));
-    p->drawRoundedRect(rect, h / 2.2, h / 2.2);
-    p->setFont(font);
-    p->setPen(QColor(64, 44, 8));
-    p->drawText(rect, Qt::AlignCenter, text);
-    p->restore();
-}
-
 } // namespace
 
 BoxShelfStyle::BoxShelfStyle(QWidget* parent) : LibraryStyleView(parent), m_pixmaps(64 * 1024) {
@@ -261,7 +228,6 @@ void BoxShelfStyle::SetModel(QAbstractItemModel* model) {
             m_current = QPersistentModelIndex();
             m_current_key.clear();
             m_pixmaps.clear();
-            m_colors.clear();
             m_gen.clear();
             update();
         });
@@ -325,7 +291,7 @@ QString BoxShelfStyle::CycleOption() {
         EnsureVisible(pos);
     }
     update();
-    return m_spines ? tr("Cases: spines") : tr("Cases: front");
+    return m_spines ? tr("Cases: spine") : tr("Cases: front");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -364,7 +330,6 @@ void BoxShelfStyle::InvalidateRange(const QModelIndex& top_left, const QModelInd
         }
         const QString key = ItemKey(idx);
         ++m_gen[key];
-        m_colors.remove(key);
     }
 }
 
@@ -451,34 +416,35 @@ BoxShelfStyle::Metrics BoxShelfStyle::ComputeMetrics() const {
         m.cols = std::max(1, static_cast<int>(usable / (m.case_w * 1.12 + 26.0)));
         m.cell_w = usable / m.cols;
         m.case_h = m.case_w / kCaseAspect;
-        // Names on: every case gets a bubble of up to two lines underneath.
-        if (m_show_names) {
-            // Matches DrawNameBubble: gap, two lines and padding, scaled with the case.
-            const double bs = std::clamp(m.case_w / 160.0, 0.65, 1.0);
-            QFont f = font();
-            f.setPixelSize(std::max(9, static_cast<int>(std::lround(13.0 * bs))));
-            f.setBold(true);
-            m.bubble_h = 22.0 * bs + QFontMetrics(f).lineSpacing() * 2 + 16.0 * bs + 6.0;
-        } else {
-            m.bubble_h = 0.0;
-        }
+        m.face_w = m.case_w;
     } else {
-        const double spine_w = std::clamp(w / 56.0, 26.0, 44.0);
-        m.case_w = spine_w;
-        m.case_h = spine_w * 7.0;
-        m.cell_w = spine_w + 5.0;
+        // Spines: the same case height as the front view, the spine ~13 % of it.
+        m.face_w = std::min<double>(LibraryStyleContext::ArtSize(), usable / 1.12);
+        m.case_h = m.face_w / kCaseAspect;
+        m.case_w = std::clamp(m.case_h * 0.13, 16.0, 64.0);
+        m.cell_w = m.case_w + std::max(3.0, m.case_w * 0.12);
         m.cols = std::max(1, static_cast<int>(usable / m.cell_w));
+        m.cell_w = usable / m.cols > m.cell_w * 1.25 ? m.cell_w : usable / m.cols;
+    }
+    // Front with names on: every case gets a bubble of up to two lines underneath. Spines:
+    // only the selected one does, but its row keeps the room.
+    if (m_show_names || m_spines) {
+        // Matches DrawNameBubble: gap, two lines and padding, scaled with the case.
+        const double bs = std::clamp(m.face_w / 160.0, 0.65, 1.0);
+        QFont f = font();
+        f.setPixelSize(std::max(9, static_cast<int>(std::lround(13.0 * bs))));
+        f.setBold(true);
+        m.bubble_h = 22.0 * bs + QFontMetrics(f).lineSpacing() * 2 + 16.0 * bs + 6.0;
+    } else {
         m.bubble_h = 0.0;
     }
-    m.left = (w - m.cols * m.cell_w) / 2.0;
-    // Front mode: the selected case grows 10 % upwards from its base and lifts, plus its ring
-    // and stickers; keep the first row clear of the top edge.
-    m.top_pad = m_spines ? 20.0 : m.case_h * 0.1 + m.case_w * 0.2 + 8.0;
-    m.top_face = std::max(8.0, m.case_w * 0.05);
-    m.plank_h = m.top_face + std::max(14.0, m.case_w * 0.09);
-    const double plank_visible = m.plank_h - m.top_face * 0.55;
-    m.row_h = m_spines ? m.top_pad + m.case_h + std::max(plank_visible, m.bubble_h + 4.0) + 16.0
-                       : m.top_pad + m.case_h + std::max(34.0, m.bubble_h) + 10.0;
+    // Spines: a short shelf (fewer games than fit in a row) is centred too.
+    const int shown_cols = m_spines ? std::clamp(ItemCount(), 1, m.cols) : m.cols;
+    m.left = (w - shown_cols * m.cell_w) / 2.0;
+    // The selected case grows 10 % upwards from its base and lifts (front) or lifts (spines),
+    // plus its ring and stickers; keep the first row clear of the top edge.
+    m.top_pad = m.case_h * 0.1 + m.face_w * 0.2 + 8.0;
+    m.row_h = m.top_pad + m.case_h + std::max(34.0, m.bubble_h) + 10.0;
     return m;
 }
 
@@ -726,13 +692,8 @@ void BoxShelfStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
     p.setRenderHint(QPainter::TextAntialiasing, true);
 
     const bool dark = IsDark();
-    if (m_spines) {
-        DrawWall(p, dark);
-    } else {
-        // The same wooden tabletop as the Cartridges style.
-        p.drawPixmap(QPointF(0, 0),
-                     LibraryStyleContext::WoodTable(size(), devicePixelRatioF(), dark));
-    }
+    // The same wooden tabletop as the Cartridges style.
+    p.drawPixmap(QPointF(0, 0), LibraryStyleContext::WoodTable(size(), devicePixelRatioF(), dark));
 
     const int count = ItemCount();
     if (count == 0) {
@@ -751,9 +712,6 @@ void BoxShelfStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
     const int selected_pos = CurrentPos();
 
     for (int row = first_row; row <= last_row; ++row) {
-        if (m_spines) {
-            DrawPlank(p, m, row, dark);
-        }
         const int begin = row * m.cols;
         const int end = std::min(count, begin + m.cols);
         for (int pos = begin; pos < end; ++pos) {
@@ -772,11 +730,8 @@ void BoxShelfStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
     if (selected_pos >= 0 && selected_pos / m.cols >= first_row - 1 &&
         selected_pos / m.cols <= last_row + 1) {
         DrawItem(p, m, selected_pos, true, dark);
-        if (!m_spines) {
-            // The selected case always names itself.
-            DrawNameBubble(p, m, ItemRect(m, selected_pos), TitleOf(IndexAtPos(selected_pos)),
-                           true);
-        }
+        // The selected case always names itself.
+        DrawNameBubble(p, m, ItemRect(m, selected_pos), TitleOf(IndexAtPos(selected_pos)), true);
     }
 
     // Slim scroll indicator.
@@ -794,191 +749,7 @@ void BoxShelfStyle::paintEvent([[maybe_unused]] QPaintEvent* event) {
     }
 
     LibraryStyleContext::PaintHintPill(&p, rect(),
-                                       LibraryStyleContext::StandardHints(tr("Cases")), dark);
-}
-
-void BoxShelfStyle::DrawWall(QPainter& p, bool dark) {
-    const QColor base = dark ? QColor(56, 40, 31) : QColor(214, 184, 146);
-    const QColor win = palette().window().color();
-    const double dpr = devicePixelRatioF();
-    const QString key = QStringLiteral("%1x%2|%3|%4")
-                            .arg(width())
-                            .arg(height())
-                            .arg(dpr)
-                            .arg(win.rgba() ^ (dark ? 1u : 0u));
-    if (m_wall_key != key) {
-        // A full window gradient on every frame is costly at high pixel ratios: render it once.
-        m_wall_key = key;
-        const QColor mixed((base.red() * 4 + win.red()) / 5, (base.green() * 4 + win.green()) / 5,
-                           (base.blue() * 4 + win.blue()) / 5);
-        m_wall = QPixmap(QSize(std::max(1, qCeil(width() * dpr)), std::max(1, qCeil(height() * dpr))));
-        m_wall.setDevicePixelRatio(dpr);
-        QPainter wall(&m_wall);
-        QLinearGradient g(0, 0, 0, height());
-        g.setColorAt(0.0, mixed.lighter(108));
-        g.setColorAt(1.0, mixed.darker(116));
-        wall.fillRect(QRect(0, 0, width(), height()), g);
-    }
-    p.drawPixmap(0, 0, m_wall);
-}
-
-QPixmap BoxShelfStyle::WoodPixmap(int w, int h, int top_face, bool dark) {
-    const double dpr = devicePixelRatioF();
-    const QString key = QStringLiteral("%1|%2|%3|%4|%5")
-                            .arg(w)
-                            .arg(h)
-                            .arg(top_face)
-                            .arg(dark ? 1 : 0)
-                            .arg(dpr);
-    const auto found = m_wood.constFind(key);
-    if (found != m_wood.constEnd()) {
-        return found.value();
-    }
-    if (m_wood.size() > 6) {
-        m_wood.clear();
-    }
-
-    QPixmap pm(QSize(std::max(1, qCeil(w * dpr)), std::max(1, qCeil(h * dpr))));
-    pm.setDevicePixelRatio(dpr);
-    pm.fill(Qt::transparent);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing, true);
-
-    const QColor base = dark ? QColor(104, 72, 44) : QColor(178, 130, 80);
-    QLinearGradient top(0, 0, 0, top_face);
-    top.setColorAt(0.0, base.lighter(128));
-    top.setColorAt(1.0, base.lighter(110));
-    p.fillRect(QRectF(0, 0, w, top_face), top);
-    QLinearGradient front(0, top_face, 0, h);
-    front.setColorAt(0.0, base);
-    front.setColorAt(1.0, base.darker(138));
-    p.fillRect(QRectF(0, top_face, w, h - top_face), front);
-
-    Rng rng;
-    const int lines = std::max(12, w / 14);
-    for (int i = 0; i < lines; ++i) {
-        const bool on_top = rng.F() < 0.3;
-        const double y0 = on_top ? 1.0 : top_face + 1.0;
-        const double y1 = on_top ? top_face - 1.0 : h - 1.0;
-        const double y = y0 + rng.F() * std::max(1.0, y1 - y0);
-        const double x0 = rng.F() * w;
-        const double len = 80.0 + rng.F() * 320.0;
-        const double wob = (rng.F() - 0.5) * 3.0;
-        QPainterPath path;
-        path.moveTo(x0, y);
-        path.cubicTo(x0 + len * 0.3, y + wob, x0 + len * 0.6, y - wob, x0 + len, y + wob * 0.5);
-        const bool light = rng.F() < 0.25;
-        const QColor c = light ? QColor(255, 232, 196, 22)
-                               : QColor(40, 22, 8, 12 + static_cast<int>(rng.F() * 34));
-        p.setPen(QPen(c, 0.7 + rng.F() * 0.9));
-        p.setBrush(Qt::NoBrush);
-        p.drawPath(path);
-    }
-    for (int i = 0; i < 3; ++i) {
-        const double x = rng.F() * w;
-        p.setPen(QPen(QColor(30, 16, 6, 70), 1.0));
-        p.drawLine(QPointF(x, top_face), QPointF(x, h));
-    }
-    p.setPen(QPen(QColor(255, 240, 210, 90), 1.0));
-    p.drawLine(QPointF(0, 0.5), QPointF(w, 0.5));
-    p.setPen(QPen(QColor(255, 235, 200, 70), 1.0));
-    p.drawLine(QPointF(0, top_face + 0.5), QPointF(w, top_face + 0.5));
-    p.setPen(QPen(QColor(20, 10, 2, 120), 1.0));
-    p.drawLine(QPointF(0, h - 0.5), QPointF(w, h - 0.5));
-    p.end();
-
-    m_wood.insert(key, pm);
-    return pm;
-}
-
-QPixmap BoxShelfStyle::ShadowPixmap(const Metrics& m, bool selected, double lift) {
-    const double dpr = devicePixelRatioF();
-    const double w = m.case_w;
-    const double h = m.case_h;
-    const QString key = QStringLiteral("%1|%2|%3|%4|%5")
-                            .arg(qRound(w * 10))
-                            .arg(qRound(h * 10))
-                            .arg(selected ? 1 : 0)
-                            .arg(qRound(lift * 10))
-                            .arg(dpr);
-    const auto found = m_shadows.constFind(key);
-    if (found != m_shadows.constEnd()) {
-        return found.value();
-    }
-    if (m_shadows.size() > 8) {
-        m_shadows.clear();
-    }
-    // The pixmap starts `pad` above and left of the case.
-    const double pad = w * 0.72;
-    QPixmap pm(QSize(std::max(1, qCeil((w + 2 * pad) * dpr)), std::max(1, qCeil((h + 2 * pad) * dpr))));
-    pm.setDevicePixelRatio(dpr);
-    pm.fill(Qt::transparent);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing, true);
-    p.translate(pad, pad);
-
-    p.save();
-    p.translate(w / 2.0, h - 1.0);
-    p.scale(1.0, selected ? 0.22 : 0.16);
-    const double shadow_r = w * (selected ? 0.72 : 0.62);
-    QRadialGradient contact(QPointF(0, 0), shadow_r);
-    contact.setColorAt(0.0, QColor(0, 0, 0, selected ? 175 : 125));
-    contact.setColorAt(1.0, QColor(0, 0, 0, 0));
-    p.setPen(Qt::NoPen);
-    p.setBrush(contact);
-    p.drawEllipse(QPointF(0, 0), shadow_r, shadow_r);
-    p.restore();
-
-    p.setPen(Qt::NoPen);
-    p.setBrush(QColor(0, 0, 0, selected ? 70 : 42));
-    p.drawRoundedRect(QRectF(selected ? 6.0 : 3.0, 3.0, w, h), w * 0.045, w * 0.045);
-    p.end();
-    m_shadows.insert(key, pm);
-    return pm;
-}
-
-void BoxShelfStyle::DrawPlank(QPainter& p, const Metrics& m, int row, bool dark) {
-    const double y =
-        kTopMargin + row * m.row_h + m.top_pad + m.case_h - m.top_face * 0.55 - m_scroll;
-    const QPixmap wood = WoodPixmap(std::max(1, width()), std::max(1, qCeil(m.plank_h)),
-                                    std::max(1, qCeil(m.top_face)), dark);
-    p.drawPixmap(QRectF(0, y, width(), m.plank_h), wood, QRectF(wood.rect()));
-
-    QLinearGradient shade(0, y + m.plank_h, 0, y + m.plank_h + 12.0);
-    shade.setColorAt(0.0, QColor(0, 0, 0, 80));
-    shade.setColorAt(1.0, QColor(0, 0, 0, 0));
-    p.fillRect(QRectF(0, y + m.plank_h, width(), 12.0), shade);
-}
-
-QColor BoxShelfStyle::SpineColor(const QModelIndex& index) {
-    const QString key = ItemKey(index);
-    const auto found = m_colors.constFind(key);
-    if (found != m_colors.constEnd()) {
-        return found.value();
-    }
-    QColor result;
-    const QPixmap cover = CoverOf(index);
-    if (cover.isNull()) {
-        result = PlaceholderColor(TitleOf(index)).darker(190);
-    } else {
-        const QImage img = cover.toImage()
-                               .scaled(8, 8, Qt::IgnoreAspectRatio, Qt::FastTransformation)
-                               .convertToFormat(QImage::Format_RGB32);
-        qint64 r = 0, g = 0, b = 0;
-        for (int y = 0; y < img.height(); ++y) {
-            const QRgb* line = reinterpret_cast<const QRgb*>(img.constScanLine(y));
-            for (int x = 0; x < img.width(); ++x) {
-                r += qRed(line[x]);
-                g += qGreen(line[x]);
-                b += qBlue(line[x]);
-            }
-        }
-        const qint64 n = std::max(1, img.width() * img.height());
-        result = QColor(static_cast<int>(r / n), static_cast<int>(g / n), static_cast<int>(b / n))
-                     .darker(190);
-    }
-    m_colors.insert(key, result);
-    return result;
+                                       LibraryStyleContext::StandardHints(m_spines ? tr("Front") : tr("Spine")), dark);
 }
 
 QString BoxShelfStyle::PixmapKey(QChar kind, const QModelIndex& index, const Metrics& m, bool dark,
@@ -987,7 +758,8 @@ QString BoxShelfStyle::PixmapKey(QChar kind, const QModelIndex& index, const Met
     const QString base = ItemKey(index);
     return QString(kind) + QLatin1Char('|') + base + QLatin1Char('|') +
            QString::number(m_gen.value(base)) + QLatin1Char('|') +
-           QString::number(qRound(m.case_w * 10)) + QLatin1Char('|') +
+           QString::number(qRound(m.case_w * 10)) + QLatin1Char('x') +
+           QString::number(qRound(m.case_h * 10)) + QLatin1Char('|') +
            QString::number(dark ? 1 : 0) + QLatin1Char('|') + QString::number(dpr);
 }
 
@@ -1086,17 +858,21 @@ QPixmap BoxShelfStyle::SpinePixmap(const QModelIndex& index, const Metrics& m, b
     p.setRenderHint(QPainter::SmoothPixmapTransform, true);
     p.setRenderHint(QPainter::TextAntialiasing, true);
 
-    const QColor base = SpineColor(index);
+    // The red spine of the turned cases in the front view; the darker red one for NX2 games.
+    const LibraryStyles::GameInfo info =
+        IsGame(index) ? LibraryStyleContext::Info(index) : LibraryStyles::GameInfo{};
+    const bool nx2 = info.is_nx2 || (info.program_id >> 56) == 0x04;
+    const QColor base = nx2 ? QColor(0xb4, 0x0d, 0x17) : QColor(0xe3, 0x14, 0x1f);
     const QString title = TitleOf(index);
     QPainterPath shape;
-    shape.addRoundedRect(QRectF(0.5, 0.5, w - 1.0, h - 1.0), 3.0, 3.0);
+    shape.addRoundedRect(QRectF(0.5, 0.5, w - 1.0, h - 1.0), std::min(3.0, w * 0.12),
+                         std::min(3.0, w * 0.12));
     p.setClipPath(shape);
 
     QLinearGradient g(0, 0, w, 0);
-    g.setColorAt(0.0, base.lighter(128));
-    g.setColorAt(0.35, base.lighter(106));
-    g.setColorAt(0.7, base);
-    g.setColorAt(1.0, base.darker(140));
+    g.setColorAt(0.0, base.darker(112));
+    g.setColorAt(0.4, base.lighter(108));
+    g.setColorAt(1.0, base.darker(118));
     p.fillRect(QRectF(0, 0, w, h), g);
 
     // Small cover thumbnail at the top, title running down the spine.
@@ -1106,12 +882,11 @@ QPixmap BoxShelfStyle::SpinePixmap(const QModelIndex& index, const Metrics& m, b
     p.setPen(QPen(QColor(255, 255, 255, 70), 1.0));
     p.drawRect(thumb);
 
-    const bool light_bg = qGray(base.rgb()) > 140;
     QFont f = font();
     f.setBold(true);
-    f.setPixelSize(std::clamp(static_cast<int>(w * 0.4), 10, 16));
+    f.setPixelSize(std::clamp(static_cast<int>(w * 0.42), 9, 22));
     p.setFont(f);
-    p.setPen(light_bg ? QColor(24, 20, 16) : QColor(250, 246, 238));
+    p.setPen(QColor(255, 255, 255));
     const double top = w + 2.0;
     const double avail = std::max(10.0, h - top - 6.0);
     p.save();
@@ -1124,77 +899,13 @@ QPixmap BoxShelfStyle::SpinePixmap(const QModelIndex& index, const Metrics& m, b
 
     p.setClipping(false);
     p.setBrush(Qt::NoBrush);
-    p.setPen(QPen(QColor(0, 0, 0, 120), 1.0));
+    p.setPen(QPen(QColor(0, 0, 0, 110), 1.0));
     p.drawPath(shape);
-    p.setPen(QPen(QColor(255, 255, 255, 80), 1.0));
-    p.drawLine(QPointF(1.5, 3.0), QPointF(1.5, h - 3.0));
     p.end();
 
     const int cost = std::max(1, pm.width() * pm.height() * 4 / 1024);
     m_pixmaps.insert(key, new QPixmap(pm), cost);
     return pm;
-}
-
-/// Name bubble under the selected case: wraps to two lines, accent outline.
-void BoxShelfStyle::DrawBubble(QPainter& p, const Metrics& m, const QRectF& base,
-                               const QString& title, bool dark) {
-    if (title.isEmpty()) {
-        return;
-    }
-    QFont f = font();
-    f.setBold(true);
-    f.setPixelSize(std::clamp(static_cast<int>(m.case_w * 0.075), 11, 15));
-    const QFontMetrics fm(f);
-    const QColor accent = LibraryStyleContext::Accent(palette());
-    const double y = base.bottom() + 4.0;
-    const double max_w = std::max(120.0, std::min(m.cell_w * 1.4, width() - 16.0));
-    // Sized to the S4 lines of the name; a gliding name (Scroll Long Names) takes the full width.
-    const int text_max = static_cast<int>(max_w - 24.0);
-    const int title_lines = LibraryStyleContext::TitleLines(2);
-    const QStringList lines = LibraryStyleContext::NameLines(title, f, text_max, title_lines, 6);
-    int text_w = 0;
-    for (const QString& line : lines) {
-        text_w = std::max(text_w, fm.horizontalAdvance(line));
-    }
-    if (title_lines == 1 && fm.horizontalAdvance(title) > text_max + 6) {
-        text_w = text_max;
-    }
-    const double text_h = fm.lineSpacing() * std::max<qsizetype>(1, lines.size());
-    const double bw = std::max(80.0, std::min(text_w, text_max) + 24.0);
-    double x = base.center().x() - bw / 2.0;
-    x = std::clamp(x, 4.0, std::max(4.0, width() - bw - 4.0));
-    const QRectF box(x, y, bw, text_h + 14.0);
-
-    p.save();
-    p.setPen(Qt::NoPen);
-    p.setBrush(QColor(0, 0, 0, 55));
-    p.drawRoundedRect(box.translated(0, 2), 11, 11);
-    p.setBrush(dark ? QColor(34, 32, 34, 236) : QColor(255, 253, 248, 240));
-    p.setPen(QPen(accent, 2.0));
-    p.drawRoundedRect(box, 11, 11);
-    p.setClipRect(box.adjusted(6, 4, -6, -4));
-    LibraryStyleContext::PaintTitle(&p, box.adjusted(12, 7, -12, -7).toAlignedRect(), title,
-                                    dark ? QColor(240, 238, 234) : QColor(40, 34, 28), f,
-                                    Qt::AlignCenter, title_lines, this, 6);
-    p.restore();
-}
-
-/// Small plain title on the shelf front under an unselected case.
-void BoxShelfStyle::DrawPlainTitle(QPainter& p, const Metrics& m, const QRectF& base,
-                                   const QString& title) {
-    if (title.isEmpty()) {
-        return;
-    }
-    QFont f = font();
-    f.setPixelSize(std::clamp(static_cast<int>(m.case_w * 0.065), 10, 13));
-    const QFontMetrics fm(f);
-    const double w = std::min(m.cell_w * 0.98, m.case_w * 1.12);
-    const QRectF box(base.center().x() - w / 2.0, base.bottom() + 3.0, w, m.bubble_h - 4.0);
-    // One line (S4), with a dark copy one pixel lower to lift it off the wood.
-    LibraryStyleContext::PaintName(&p, box.translated(0, 1).toAlignedRect(), title,
-                                   QColor(20, 10, 2, 170), f, Qt::AlignHCenter | Qt::AlignTop, 1);
-    LibraryStyleContext::PaintName(&p, box.toAlignedRect(), title, QColor(255, 244, 222), f,
-                                   Qt::AlignHCenter | Qt::AlignTop, 1);
 }
 
 void BoxShelfStyle::DrawItem(QPainter& p, const Metrics& m, int pos, bool selected, bool dark) {
@@ -1210,71 +921,74 @@ void BoxShelfStyle::DrawItem(QPainter& p, const Metrics& m, int pos, bool select
     if (base.bottom() < -60.0 || base.top() > height() + 60.0) {
         return;
     }
-    const double lift = selected ? std::max(6.0, m.case_w * 0.04) : 0.0;
-    const QRectF r = base.translated(0, -lift);
-    const double w = m.case_w;
-    const double h = m.case_h;
-    const QColor accent = LibraryStyleContext::Accent(palette());
+    // Like the front view: every case stands 6 concept px up, the selected one grows 10 % from
+    // its bottom centre. Unselected spines match the near (spine) edge of a turned front case,
+    // which the perspective makes 4 % taller.
+    const double u = m.face_w / 150.0;
+    const double k = selected ? 1.1 : 1.04;
+    const double w = m.case_w * k;
+    const double h = m.case_h * k;
+    const QRectF r(base.center().x() - w / 2.0, base.bottom() - 6.0 * u - h, w, h);
 
-    // Contact shadow on the plank and the drop shadow, one cached pixmap per size.
+    // Soft shadow like the front view's cases: a few grown, faint copies of the outline.
     {
-        const QPixmap shadow = ShadowPixmap(m, selected, lift);
-        const double pad = w * 0.72;
-        p.drawPixmap(QPointF(std::round(base.x() - pad), std::round(base.y() - pad)), shadow);
-    }
-
-    // Pixel aligned: a plain blit, no transformed (slow) pixmap drawing per case and frame.
-    const QTransform t = QTransform::fromTranslate(std::round(r.x()), std::round(r.y()));
-    QPainterPath outline;
-    outline.addRoundedRect(QRectF(0, 0, w, h), w * 0.045, w * 0.045);
-    const QPainterPath mapped = t.map(outline);
-
-    const QPixmap pix = m_spines ? SpinePixmap(index, m, dark) : CasePixmap(index, m, dark);
-    p.save();
-    p.setTransform(t, true);
-    p.drawPixmap(QRectF(0, 0, w, h), pix, QRectF(pix.rect()));
-    p.restore();
-
-    if (selected) {
+        const double radius = std::min(3.0, w * 0.12);
         p.save();
-        p.setBrush(Qt::NoBrush);
-        QColor glow = accent;
-        glow.setAlpha(80);
-        p.setPen(QPen(glow, 7.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-        p.drawPath(mapped);
-        p.setPen(QPen(accent, 3.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-        p.drawPath(mapped);
+        p.setPen(Qt::NoPen);
+        for (int i = 1; i <= 5; ++i) {
+            p.setBrush(QColor(0, 0, 0, selected ? 22 : 18));
+            p.drawRoundedRect(r.adjusted(-0.6 * i, -0.4 * i, 0.6 * i, 0.4 * i)
+                                  .translated(0, selected ? 10.0 : 5.0),
+                              radius + 0.6 * i, radius + 0.6 * i);
+        }
         p.restore();
     }
 
-    // Names: a bubble for the selected case, plain small titles for the others (front mode).
-    if (m_show_names) {
-        if (selected) {
-            DrawBubble(p, m, base, TitleOf(index), dark);
-        } else if (!m_spines) {
-            DrawPlainTitle(p, m, base, TitleOf(index));
-        }
+    // Unselected: a pixel aligned blit, no scaled (slow) pixmap drawing per case and frame.
+    const QPixmap pix = SpinePixmap(index, m, dark);
+    const QRectF target = selected ? r : QRectF(std::round(r.x()), std::round(r.y()), w, h);
+    p.drawPixmap(target, pix, QRectF(pix.rect()));
+
+    if (selected) {
+        // The front view's ring: 4 concept px out, 4 px wide.
+        const double grow = 4.0 * u;
+        const double radius = std::min(3.0, w * 0.12) + grow;
+        p.save();
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(LibraryStyleContext::Accent(palette()), std::max(2.5, 4.0 * u),
+                      Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
+        p.drawRoundedRect(target.adjusted(-grow, -grow, grow, grow), radius, radius);
+        p.restore();
     }
 
-    // Play time and version tags, top right of the case.
-    if (m_show_info && IsGame(index) && (!m_spines || selected)) {
+    // Stickers: like Dense Grid, Info shows them on the selected case only, beside its spine.
+    if (m_show_info && selected && IsGame(index)) {
         const LibraryStyles::GameInfo info = LibraryStyleContext::Info(index);
-        QStringList tags;
+        QFont f = font();
+        f.setWeight(QFont::Black);
+        f.setPixelSize(std::clamp(qRound(12.0 * u), 9, 16));
+        const double tag_h = f.pixelSize() * 1.75;
+        const QFontMetricsF tag_metrics(f);
+        double widest = 0.0;
         if (info.is_game && UISettings::values.show_play_time.GetValue()) {
-            tags << info.play_time_text;
+            widest = tag_metrics.horizontalAdvance(info.play_time_text);
         }
         if (UISettings::values.show_add_ons.GetValue() && !info.update_version.isEmpty()) {
-            tags << QStringLiteral("v") + info.update_version;
+            widest = std::max(widest, tag_metrics.horizontalAdvance(QStringLiteral("v") +
+                                                                     info.update_version));
         }
-        QFont f = font();
-        f.setBold(true);
-        f.setPixelSize(std::clamp(static_cast<int>(m.case_w * 0.065), 10, 13));
-        const QFontMetrics fm(f);
-        double ty = r.top() + 10.0;
-        const double tag_x = m_spines ? r.right() + 14.0 : r.right() - 2.0;
-        for (const QString& tag : tags) {
-            DrawTag(&p, QPointF(tag_x, ty), tag, f);
-            ty += fm.height() + 10.0;
+        widest += f.pixelSize() * 1.4;
+        QPointF anchor(r.right() + 6.0 * u + widest, r.top() + h * 0.17);
+        if (anchor.x() > width() - 6.0) {
+            anchor.setX(r.left() - 6.0 * u); // no room on the right: stick them on the left
+        }
+        if (info.is_game && UISettings::values.show_play_time.GetValue()) { // "New" if unplayed
+            DrawSticker(&p, anchor, info.play_time_text, f, QColor(0xff, 0xd3, 0x6b));
+            anchor.ry() += tag_h + 6.0 * u;
+        }
+        if (UISettings::values.show_add_ons.GetValue() && !info.update_version.isEmpty()) {
+            DrawSticker(&p, anchor, QStringLiteral("v") + info.update_version, f,
+                        QColor(0xff, 0xf3, 0xc9));
         }
     }
 }
@@ -1417,7 +1131,7 @@ void BoxShelfStyle::DrawNameBubble(QPainter& p, const Metrics& m, const QRectF& 
         return;
     }
     // Concept bubble, shrunk with small cases (down to 65 %) so names never outgrow them.
-    const double bs = std::clamp(m.case_w / 160.0, 0.65, 1.0);
+    const double bs = std::clamp(m.face_w / 160.0, 0.65, 1.0);
     QFont f = font();
     f.setPixelSize(std::max(9, static_cast<int>(std::lround(13.0 * bs))));
     f.setBold(true);
@@ -1426,8 +1140,10 @@ void BoxShelfStyle::DrawNameBubble(QPainter& p, const Metrics& m, const QRectF& 
     const double pad_y = 8.0 * bs;
     const double corner = 12.0 * bs;
     // Up to 190 px, or the case width + 20 px when every name shows, so neighbours never overlap.
-    const double max_w =
-        std::min(m_show_names ? m.case_w + 20.0 : 190.0 * bs, m.cell_w - 8.0);
+    // Spines: only the selected one has a bubble, so it may pass its neighbours.
+    const double max_w = m_spines ? std::min(190.0 * bs, width() - 12.0)
+                                  : std::min(m_show_names ? m.case_w + 20.0 : 190.0 * bs,
+                                             m.cell_w - 8.0);
     // Sized to the S4 lines of the name; a gliding name (Scroll Long Names) takes the full width.
     const int text_max = static_cast<int>(std::max(20.0, max_w - 2 * pad_x));
     const int title_lines = LibraryStyleContext::TitleLines(2);

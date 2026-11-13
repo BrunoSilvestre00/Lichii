@@ -26,7 +26,7 @@ class QWheelEvent;
 
 namespace LibraryStyles {
 
-/// "Box Shelf": games stand as cases on wooden shelves, or as spines only. Concept by inxomnyaa.
+/// "Box Shelf": games stand as cases on a wooden table, front or spine out. Concept by inxomnyaa.
 class BoxShelfStyle final : public LibraryStyleView {
     Q_OBJECT
 
@@ -58,8 +58,7 @@ private:
         double case_h = 0.0;
         double row_h = 0.0;
         double top_pad = 0.0;
-        double plank_h = 0.0;
-        double top_face = 0.0;
+        double face_w = 0.0; // front width of a case at this size (spines: as if facing you)
         double bubble_h = 0.0;
     };
 
@@ -83,26 +82,17 @@ private:
     void RebuildRows();
 
     bool IsDark() const;
-    void DrawWall(QPainter& p, bool dark);
-    void DrawPlank(QPainter& p, const Metrics& m, int row, bool dark);
     void DrawItem(QPainter& p, const Metrics& m, int pos, bool selected, bool dark);
     /// Front mode: the case turned to show its spine, the selected one facing the viewer.
     void DrawFront(QPainter& p, const Metrics& m, int pos, bool selected);
-    /// White name bubble under a case (front mode), the same one the Cartridges style uses.
+    /// White name bubble under a case, the same one the Cartridges style uses.
     void DrawNameBubble(QPainter& p, const Metrics& m, const QRectF& base, const QString& title,
                         bool selected);
-    void DrawBubble(QPainter& p, const Metrics& m, const QRectF& base, const QString& title,
-                    bool dark);
-    void DrawPlainTitle(QPainter& p, const Metrics& m, const QRectF& base, const QString& title);
 
     QString PixmapKey(QChar kind, const QModelIndex& index, const Metrics& m, bool dark,
                       double dpr) const;
     QPixmap CasePixmap(const QModelIndex& index, const Metrics& m, bool dark);
     QPixmap SpinePixmap(const QModelIndex& index, const Metrics& m, bool dark);
-    QColor SpineColor(const QModelIndex& index);
-    QPixmap WoodPixmap(int w, int h, int top_face, bool dark);
-    /// Contact and drop shadow of one case, cached per size.
-    QPixmap ShadowPixmap(const Metrics& m, bool selected, double lift);
 
     QPointer<QAbstractItemModel> m_model;
     QPersistentModelIndex m_current;
@@ -117,12 +107,7 @@ private:
     double m_scroll = 0.0;
 
     QCache<QString, QPixmap> m_pixmaps; // cost in KiB
-    QHash<QString, QColor> m_colors;
     QHash<QString, int> m_gen; // bumped when a game's data changes, part of the pixmap cache key
-    QHash<QString, QPixmap> m_wood;
-    QHash<QString, QPixmap> m_shadows;
-    QPixmap m_wall;
-    QString m_wall_key;
 };
 
 } // namespace LibraryStyles
