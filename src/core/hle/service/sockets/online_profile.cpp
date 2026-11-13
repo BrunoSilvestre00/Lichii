@@ -107,20 +107,28 @@ bool HasProfiles() {
     return false;
 }
 
-// Writes a profile, which holds its secret, readable by the OS user only: the file is made (or
-// kept as it is) and restricted before the secret goes in.
+// Writes a profile, which holds its secret, readable by the OS user only. The text goes to a new
+// file restricted before the secret is written, which then replaces the old one, so a failed write
+// leaves the old profile as it was.
 bool WriteOwnerOnly(const std::filesystem::path& path, const std::string& text) {
-    std::ofstream(path, std::ios::app).close();
+    auto temp = path;
+    temp += ".new";
     std::error_code ec;
-    std::filesystem::permissions(path, std::filesystem::perms::owner_read |
+    std::filesystem::remove(temp, ec);
+    std::ofstream(temp, std::ios::app).close();
+    std::filesystem::permissions(temp, std::filesystem::perms::owner_read |
                                            std::filesystem::perms::owner_write, ec);
     if (ec) {
         return false;
     }
-    std::ofstream out(path, std::ios::trunc);
+    std::ofstream out(temp, std::ios::trunc);
     out << text;
     out.close();
-    return static_cast<bool>(out);
+    if (!out) {
+        return false;
+    }
+    std::filesystem::rename(temp, path, ec);
+    return !ec;
 }
 
 // Before profiles, each emulator folder had one friend code for every server
@@ -203,6 +211,7 @@ std::optional<Profile> LoadProfile(const std::string& server, bool create) {
                 // An old profile without a server= line: it now belongs to this server, so another
                 // server whose name reads alike gets a file of its own.
                 profile->server = server;
+                in.close(); // Windows replaces no file that is still open
                 if (!WriteOwnerOnly(ProfilePath(server), ProfileText(*profile))) {
                     LOG_ERROR(Network, "Online: could not claim {} for {}",
                               ProfilePath(server).string(), server);

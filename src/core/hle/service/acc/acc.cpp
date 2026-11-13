@@ -31,15 +31,20 @@
 #include "core/hle/service/kernel_helpers.h"
 #include "core/hle/service/server_manager.h"
 #include "core/hle/service/sockets/online_profile.h"
+#include "core/internal_network/local_redirect.h"
 #include "core/loader/loader.h"
 
 namespace Service::Account {
 
 // While the host redirect sends the game to a private server, answers with this emulator's
 // profile on it, which the server reads as the player's account at login
-// (sockets/online_profile.h, from Droplet). Otherwise the caller keeps its own answer. It comes
-// before Nextendo's: the redirect sends the game's sign-in to the private server.
+// (sockets/online_profile.h, from Droplet). It comes before Nextendo's, and while a private
+// server is set it always answers: without its token, the game gets an empty one rather than
+// another service's. Without a private server the caller keeps its own answer.
 static bool ReplyServerIdToken(Core::System& system, HLERequestContext& ctx) {
+    if (Network::LocalRedirect::Server().empty()) {
+        return false;
+    }
     const auto& id = system.GetApplicationProcessBuildID();
     size_t length = id.size();
     while (length > 0 && id[length - 1] == 0) {
@@ -49,15 +54,12 @@ static bool ReplyServerIdToken(Core::System& system, HLERequestContext& ctx) {
     for (size_t i = 0; i < length; ++i) {
         build += fmt::format("{:02x}", id[i]);
     }
-    const std::string token = Sockets::OnlineProfile::IdentityToken(build);
-    if (token.empty()) {
-        return false;
-    }
+    std::string token = Sockets::OnlineProfile::IdentityToken(build);
     const size_t capacity = ctx.GetWriteBufferSize();
     if (token.size() >= capacity) {
         LOG_ERROR(Service_ACC, "Server id token ({} bytes) does not fit the {}-byte buffer",
                   token.size(), capacity);
-        return false;
+        token.clear();
     }
     // Titles read the token as a C string, so the rest of their buffer is zeroed.
     std::vector<u8> out(capacity, 0);
