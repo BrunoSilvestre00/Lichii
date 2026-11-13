@@ -381,9 +381,6 @@ struct BufferCacheTestAccess {
         cache.maxwell3d = &channel.maxwell3d;
         cache.gpu_memory = &channel.gpu_memory;
     }
-    static void Delete(Cache& cache, BufferId id) {
-        cache.DeleteBuffer(id);
-    }
     static void BumpDeletionEpoch(Cache& cache) {
         ++cache.buffer_deletions;
     }
