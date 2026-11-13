@@ -86,7 +86,8 @@ steered at 0.045 rad/s instead of about 1 rad/s and walked into the wall of her 
 
 `FPS Unlock (built-in)` branches at `0x261EB18` to 40 bytes at `0x3C46A40`, in guarded zero-filled
 executable padding. Below a step of 1 the bounds become ±(applied change / step), which keeps the
-speed; at 1 and above the routine runs the game's two instructions. Measured live at step 0.65 with
+speed; at 1 and above the routine runs the game's two instructions. The hook record checks both
+replaced instructions, so a user mod at either one skips the patch. Measured live at step 0.65 with
 the fix: 0.94 rad/s median while she walks on the ceiling, matching 0.75 to 1.1 rad/s at 60 fps.
 
 ## Tests
