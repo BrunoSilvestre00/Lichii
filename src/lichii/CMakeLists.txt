@@ -263,6 +263,27 @@ add_executable(lichii
     game/carousel.h game/carousel.cpp
 )
 
+# Library styles (alternative game library layouts). The framework files come first; then one line
+# per style, sorted by style id. A new style adds its own line in sorted order and nothing else.
+target_sources(lichii PRIVATE
+    game/styles/library_style_filter.cpp game/styles/library_style_filter.h
+    game/styles/library_style_registry.h
+    game/styles/library_style_view.cpp game/styles/library_style_view.h
+    game/styles/style_helpers.cpp game/styles/style_helpers.h
+
+    # --- styles: begin (sorted by id, one line each) ---
+    game/styles/box_shelf_style.cpp game/styles/box_shelf_style.h
+    game/styles/canvas_style.cpp game/styles/canvas_style.h
+    game/styles/carousel_style.cpp game/styles/carousel_style.h
+    game/styles/cartridges_style.cpp game/styles/cartridges_style.h
+    game/styles/channel_grid_style.cpp game/styles/channel_grid_style.h
+    game/styles/dense_grid_style.cpp game/styles/dense_grid_style.h
+    game/styles/dual_pane_style.cpp game/styles/dual_pane_style.h
+    game/styles/home_row_style.cpp game/styles/home_row_style.h
+    game/styles/ris_style.cpp game/styles/ris_style.h
+    # --- styles: end ---
+)
+
 set_target_properties(lichii PROPERTIES OUTPUT_NAME "lichii")
 
 # Shipped next to the executable: the NX2 switches a GUI launch cannot set another way. Read at

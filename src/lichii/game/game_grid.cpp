@@ -92,25 +92,22 @@ void GameGrid::UpdateIconSize() {
         UISettings::values.show_game_name.GetValue() || !rootIndex().isValid();
     const u32 display_icon_size = Lichii::CardIconDisplaySize(show_game_name);
 
-    int heightMargin = 0;
-    int widthMargin = 72;
-
-    if (show_game_name) {
-        heightMargin = 92;
-    } else {
-        widthMargin = 24;
-        heightMargin = 24;
-    }
+    // Square artwork, see GameCard::HeightMargin.
+    const int widthMargin = Lichii::CardWidthMargin;
+    const int heightMargin =
+        GameCard::HeightMargin(static_cast<int>(Lichii::CardWidthBase()), show_game_name,
+                               Lichii::ShowAnyGameInfo());
 
     const int view_width = viewport()->width();
 
-    const double spacing = 0.01;
-    const int min_item_width = display_icon_size + widthMargin;
+    const int min_item_width = static_cast<int>(Lichii::CardWidthBase()) + widthMargin;
 
-    int columns = std::max(1, (view_width - 16) / min_item_width);
-    int stretched_width = ((view_width) - (spacing * (columns - 1))) / columns;
+    // Leave the same 16 pixels free that the column count assumes: cells filling the viewport
+    // to the pixel make the list view wrap one column early.
+    const int columns = std::max(1, (view_width - 16) / min_item_width);
+    const int stretched_width = (view_width - 16) / columns;
 
-    QSize grid_size(stretched_width, display_icon_size + heightMargin);
+    QSize grid_size(stretched_width, display_icon_size + heightMargin + GameCard::ringRoom);
     if (gridSize() != grid_size) {
         setUpdatesEnabled(false);
 

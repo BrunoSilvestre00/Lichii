@@ -2,108 +2,36 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <optional>
 #include <QColor>
+#include <QAbstractItemView>
 #include <QFileInfo>
 #include <QFont>
+#include <QGuiApplication>
 #include <QImage>
 #include <QPainter>
 #include <QPainterPath>
 #include <QRectF>
-#include <QSvgRenderer>
 #include <QStringList>
 #include <QWidget>
 #include "game_card.h"
+#include "lichii/game/common.h"
 #include "qt_common/config/uisettings.h"
 #include "qt_common/game_list/game_list_p.h"
 #include "qt_common/game_list/model.h"
+#include "lichii/game/styles/style_helpers.h"
 
 namespace {
 
-const QImage& Switch2LogoImage() {
-    static const QImage logo = [] {
-        QImage image(512, 512, QImage::Format_ARGB32_Premultiplied);
-        image.fill(Qt::transparent);
-        QSvgRenderer renderer(QStringLiteral(":/img/switch2_logo.svg"));
-        if (renderer.isValid()) {
-            QPainter image_painter(&image);
-            renderer.render(&image_painter, QRectF(image.rect()));
-        } else {
-            image = {};
-        }
-        return image;
-    }();
-    return logo;
-}
-
-void DrawSwitch2Placeholder(QPainter* painter, const QRect& bounds) {
-    const QImage& switch2_logo = Switch2LogoImage();
-    if (!switch2_logo.isNull()) {
-        painter->fillRect(bounds, QColor(230, 0, 18));
-        const int side = std::min(bounds.width(), bounds.height());
-        const QRectF logo_rect(bounds.center().x() - side / 2.0,
-                               bounds.center().y() - side / 2.0, side, side);
-        painter->drawImage(logo_rect, switch2_logo);
-        return;
+/// Title of a game row for its placeholder art: the metadata title, else the file name.
+QString PlaceholderTitle(const QModelIndex& index) {
+    const QString title = index.data(GameListItemPath::TitleRole).toString();
+    if (!title.isEmpty()) {
+        return title;
     }
-
-    const QRectF rect(bounds);
-    const QColor red(226, 0, 20);
-    painter->fillRect(rect, red);
-
-    const qreal width = rect.width();
-    const qreal height = rect.height();
-    const qreal left = rect.left();
-    const qreal top = rect.top();
-    const qreal body_width = width * 0.15;
-    const qreal body_height = height * 0.39;
-    const qreal body_top = top + height * 0.14;
-    const qreal inner = std::max(2.0, width * 0.012);
-
-    painter->setPen(Qt::NoPen);
-    painter->setBrush(Qt::white);
-    const QRectF left_controller(left + width * 0.09, body_top, body_width, body_height);
-    const QRectF right_controller(left + width * 0.28, body_top, body_width, body_height);
-    painter->drawRoundedRect(left_controller, width * 0.035, width * 0.035);
-    painter->drawRoundedRect(right_controller, width * 0.035, width * 0.035);
-
-    painter->setBrush(red);
-    painter->drawRoundedRect(left_controller.adjusted(inner, inner, -inner, -inner),
-                             width * 0.025, width * 0.025);
-    painter->drawRoundedRect(right_controller.adjusted(inner, inner, -inner, -inner),
-                             width * 0.025, width * 0.025);
-
-    painter->setBrush(Qt::white);
-    const qreal button_size = width * 0.035;
-    painter->drawEllipse(QRectF(left_controller.center().x() - button_size / 2,
-                                body_top + body_height * 0.30, button_size, button_size));
-    painter->drawEllipse(QRectF(right_controller.center().x() - button_size / 2,
-                                body_top + body_height * 0.58, button_size, button_size));
-
-    QFont number_font(QStringLiteral("Arial"));
-    number_font.setPixelSize(std::max(18, static_cast<int>(height * 0.48)));
-    number_font.setWeight(QFont::Black);
-    painter->setFont(number_font);
-    painter->drawText(QRectF(left + width * 0.47, top + height * 0.04, width * 0.45,
-                             height * 0.53),
-                      Qt::AlignCenter, QStringLiteral("2"));
-
-    QFont brand_font(QStringLiteral("Arial"));
-    brand_font.setPixelSize(std::max(8, static_cast<int>(height * 0.085)));
-    brand_font.setWeight(QFont::DemiBold);
-    brand_font.setLetterSpacing(QFont::AbsoluteSpacing, std::max(1.0, width * 0.008));
-    painter->setFont(brand_font);
-    painter->drawText(QRectF(left + width * 0.08, top + height * 0.62, width * 0.84,
-                             height * 0.14),
-                      Qt::AlignCenter, QStringLiteral("NINTENDO"));
-
-    QFont switch_font(QStringLiteral("Arial"));
-    switch_font.setPixelSize(std::max(12, static_cast<int>(height * 0.16)));
-    switch_font.setWeight(QFont::Bold);
-    painter->setFont(switch_font);
-    painter->drawText(QRectF(left + width * 0.08, top + height * 0.74, width * 0.84,
-                             height * 0.21),
-                      Qt::AlignCenter, QStringLiteral("SWITCH"));
+    return QFileInfo(index.data(GameListItemPath::FullPathRole).toString()).completeBaseName();
 }
 
 void DrawAddFolderArtwork(QPainter* painter, const QRect& bounds, const QColor& accent, bool dark) {
@@ -204,13 +132,87 @@ bool IsGameDirectory(GameListItemType type) {
 
 }
 
-QPixmap GameListFallbackIcon(int size) {
+QPixmap GameListFallbackIcon(int size, const QString& title, const QPalette& palette) {
     QPixmap pixmap(size, size);
     pixmap.fill(Qt::transparent);
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing, true);
-    DrawSwitch2Placeholder(&painter, pixmap.rect());
+    LibraryStyles::LibraryStyleContext::PaintPlaceholderArt(&painter, pixmap.rect(), title,
+                                                            palette);
     return pixmap;
+}
+
+GameCard::TextLayout GameCard::Layout(int art, bool names, bool info) {
+    // Every card of a view asks for the same layout on every paint, and packing the info parts
+    // measures text: keep the last one while nothing it depends on changes.
+    struct Key {
+        int art;
+        bool names;
+        bool info;
+        bool art_hidden;
+        bool scroll;
+        std::array<bool, 4> parts;
+        QString font;
+        bool operator==(const Key&) const = default;
+    };
+    static std::optional<Key> cached_key;
+    static TextLayout cached;
+    const Key key{art,
+                  names,
+                  info,
+                  Lichii::CardArtHidden(),
+                  Lichii::ScrollLongNames(),
+                  {UISettings::values.show_play_time.GetValue(),
+                   UISettings::values.show_add_ons.GetValue(),
+                   UISettings::values.show_size.GetValue(),
+                   UISettings::values.show_types.GetValue()},
+                  QGuiApplication::font().key()};
+    if (cached_key == key) {
+        return cached;
+    }
+    TextLayout t;
+    // Without art the title is the card: always show it.
+    names = names || Lichii::CardArtHidden();
+    t.names = names;
+    t.meta = info;
+    if (!names && !info) {
+        return t;
+    }
+    const QFont base = QGuiApplication::font();
+    t.title_px = std::clamp(static_cast<int>(std::sqrt(static_cast<double>(art)) * 1.15), 11, 16);
+    t.meta_px = std::clamp(t.title_px - 3, 10, 12);
+    t.pad = std::clamp(art / 10, 5, 12);
+    QFont title_font = base;
+    title_font.setBold(true);
+    title_font.setPixelSize(t.title_px);
+    QFont meta_font = base;
+    meta_font.setPixelSize(t.meta_px);
+    const QFontMetrics tfm(title_font);
+    const QFontMetrics mfm(meta_font);
+    // The card is the art plus 16 px wide (Lichii::CardWidthMargin minus cardMargin); split the
+    // line at its dot when a long one won't fit.
+    const int text_w = art + Lichii::CardWidthMargin - cardMargin - 2 * t.pad;
+    // Each part on a fixed line for the whole view, packed once for the card width (the same
+    // code as the library styles).
+    t.info = info ? LibraryStyles::LibraryStyleContext::LayoutInfo(meta_font, text_w)
+                  : LibraryStyles::InfoLayout{};
+    t.meta_lines = t.info.lines;
+    // No bottom padding of its own: the card's inset under the text already gives the room.
+    const int title_lines = Lichii::ScrollLongNames() ? 1 : 2;
+    t.height =
+        6 + (names ? tfm.lineSpacing() * title_lines + 3 : 0) + t.meta_lines * mfm.lineSpacing();
+    cached_key = key;
+    cached = t;
+    return t;
+}
+
+int GameCard::HeightMargin(int art, bool names, bool info) {
+    // GameCard::paint draws the artwork 11 px shorter than the cell; a text block adds its
+    // height plus the 8 px card inset (cardMargin + 2 under it, minus the 2 px art border).
+    const TextLayout t = Layout(art, names, info);
+    // Hidden art (icon size None): drop the 14 px the artwork would take beyond the icon size.
+    const int art_extra = Lichii::CardArtHidden() ? 11 : 25;
+    return art_extra + (t.height > 0 ? t.height + cardMargin : 0);
 }
 
 GameCard::GameCard(QObject* parent) : QStyledItemDelegate{parent} {
@@ -277,18 +279,25 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
     const bool show_game_name = UISettings::values.show_game_name.GetValue() ||
                                 (folder_cards && (game_folder || add_folder));
     const int inset = cardMargin + 2;
-    const int titleHeight = show_game_name ? 74 : 0;
+    const bool show_info = Lichii::ShowAnyGameInfo();
+    const TextLayout text = Layout(static_cast<int>(Lichii::CardWidthBase()),
+                                   show_game_name, show_info);
+    const int titleHeight = text.height;
+    const bool art_hidden = Lichii::CardArtHidden();
     const QRect artworkRect(cardRect.left() + 1, cardRect.top() + 1,
                             std::max(1, cardRect.width() - 2),
-                            std::max(1, cardRect.height() - titleHeight -
-                                             (show_game_name ? inset : 2)));
+                            art_hidden ? 0
+                                       : std::max(1, cardRect.height() - titleHeight -
+                                                         (titleHeight > 0 ? inset : 2)));
     QPainterPath artwork_clip;
     artwork_clip.addRoundedRect(artworkRect, radius - 1, radius - 1);
     painter->save();
     painter->setClipPath(artwork_clip);
     painter->setRenderHint(QPainter::SmoothPixmapTransform, true);
 
-    if (add_folder) {
+    if (art_hidden) {
+        // Icon size None: text only.
+    } else if (add_folder) {
         const QColor accent = selected ? palette.highlightedText().color()
                                        : palette.highlight().color();
         DrawAddFolderArtwork(painter, artworkRect, accent, dark);
@@ -296,27 +305,37 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
         const QColor accent = selected ? palette.highlightedText().color()
                                        : palette.highlight().color();
         DrawGameFolderArtwork(painter, artworkRect, accent, dark);
-    } else if (has_icon) {
-        // Fall back to the small icon when no card artwork is available, so the card is never
-        // left blank for a game that does have an icon.
-        const QPixmap artwork =
-            icon_pixmap.isNull() ? index.data(Qt::DecorationRole).value<QPixmap>() : icon_pixmap;
-        if (!artwork.isNull()) {
-            QSize scaled = artwork.size();
-            scaled.scale(artworkRect.size(), Qt::KeepAspectRatioByExpanding);
-            const QRect imageRect(artworkRect.center().x() - scaled.width() / 2,
-                                  artworkRect.center().y() - scaled.height() / 2, scaled.width(),
-                                  scaled.height());
-            painter->drawPixmap(imageRect, artwork);
-        }
-    } else if (!has_icon) {
-        DrawSwitch2Placeholder(painter, artworkRect);
+    } else if (const QPixmap artwork =
+                   // Fall back to the small icon when no card artwork is available.
+                   !has_icon ? QPixmap{}
+                   : icon_pixmap.isNull() ? index.data(Qt::DecorationRole).value<QPixmap>()
+                                          : icon_pixmap;
+               !artwork.isNull()) {
+        QSize scaled = artwork.size();
+        scaled.scale(artworkRect.size(), Qt::KeepAspectRatioByExpanding);
+        const QRect imageRect(artworkRect.center().x() - scaled.width() / 2,
+                              artworkRect.center().y() - scaled.height() / 2, scaled.width(),
+                              scaled.height());
+        painter->drawPixmap(imageRect, artwork);
+    } else {
+        LibraryStyles::LibraryStyleContext::PaintPlaceholderArt(painter, artworkRect,
+                                                                PlaceholderTitle(index), palette);
     }
     painter->restore();
 
-    if (show_game_name) {
-        QRect textRect = cardRect.adjusted(12, 0, -12, -inset);
-        textRect.setTop(cardRect.bottom() - inset - titleHeight + 2);
+    // Accent ring around the selected card, drawn over the art so it is never hidden.
+    if (selected) {
+        QPen ring(LibraryStyles::LibraryStyleContext::Accent(palette), 2.5);
+        painter->setPen(ring);
+        painter->setBrush(Qt::NoBrush);
+        painter->drawRoundedRect(QRectF(cardRect).adjusted(-0.75, -0.75, 0.75, 0.75), radius + 0.75,
+                                 radius + 0.75);
+    }
+
+    if (text.height > 0) {
+        const QRect textRect(cardRect.left() + text.pad, artworkRect.bottom() + 1 + 6,
+                             cardRect.width() - 2 * text.pad, titleHeight - 12);
+        int y = textRect.top();
 
         QString title;
         if (add_folder) {
@@ -339,44 +358,63 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
             title = full.isEmpty()
                         ? index.data(Qt::DisplayRole).toString().section(QLatin1Char('\n'), 0, 0)
                         : full;
+            if (title.isEmpty()) {
+                // No metadata title: show the file name, like the library styles do.
+                title = PlaceholderTitle(index);
+            }
         }
 
-        painter->setPen(titleColor);
-        QFont titleFont = option.font;
-        titleFont.setBold(true);
-        titleFont.setPixelSize(std::clamp(
-            static_cast<int>(std::sqrt(static_cast<double>(icon_size)) * 1.15), 12, 16));
-        painter->setFont(titleFont);
-        QRect titleRect = textRect;
-        titleRect.setBottom(textRect.top() + titleHeight - 24);
-        painter->drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextWordWrap, title);
+        if (text.names) {
+            QFont titleFont = option.font;
+            titleFont.setBold(true);
+            titleFont.setPixelSize(text.title_px);
+            const QFontMetrics tfm(titleFont);
+            const int line = tfm.lineSpacing();
+            const int overflow = std::max(0, text.pad - 2);
+            // Two lines at most, cut with "..."; one with Scroll Long Names, where the selected
+            // card's long name glides to its end and back. Never runs into the info line below.
+            const int title_lines = LibraryStyles::LibraryStyleContext::TitleLines(2);
+            const auto* view = qobject_cast<const QAbstractItemView*>(option.widget);
+            LibraryStyles::LibraryStyleContext::PaintTitle(
+                painter, QRect(textRect.left(), y, textRect.width(), line * title_lines), title,
+                titleColor, titleFont, Qt::AlignLeft | Qt::AlignTop, title_lines,
+                selected && view != nullptr ? view->viewport() : nullptr, overflow);
+            y += line * title_lines + 3;
+        }
 
+        // Read once: it formats the play time, version and size of the game.
+        const auto game = text.meta ? LibraryStyles::LibraryStyleContext::Info(index)
+                                    : LibraryStyles::GameInfo{};
         QStringList meta_parts;
         if (add_folder) {
             meta_parts.append(tr("Add a location to your library"));
         } else if (game_folder) {
             meta_parts.append(tr("%n game(s)", "", index.model()->rowCount(index)));
-        } else {
-            const QString size_text = index.sibling(index.row(), GameListModel::COLUMN_SIZE)
-                                          .data(Qt::DisplayRole)
-                                          .toString();
-            if (!size_text.isEmpty()) {
-                meta_parts.append(size_text);
-            }
-            const QString file_type = index.data(GameListItemPath::FileTypeRole).toString();
-            if (!file_type.isEmpty()) {
-                meta_parts.append(file_type);
-            }
+        } else if (show_info) {
+            // The parts switched on under View > Game Info.
+            meta_parts.append(game.info_line);
         }
-        if (!meta_parts.isEmpty()) {
-            const QString meta = meta_parts.join(QStringLiteral(" \u2022 "));
-            painter->setPen(subtitleColor);
+        meta_parts.removeAll(QString{});
+        if (text.meta && !meta_parts.isEmpty()) {
             QFont metaFont = option.font;
-            metaFont.setPixelSize(11);
+            metaFont.setPixelSize(text.meta_px);
+            const QFontMetrics mfm(metaFont);
+            painter->setPen(subtitleColor);
             painter->setFont(metaFont);
-            QRect metaRect = textRect;
-            metaRect.setTop(textRect.bottom() - 18);
-            painter->drawText(metaRect, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine, meta);
+            // Every part on its fixed line (TextLayout::info), so play time, version, size and
+            // type sit in the same place on every card; placeholders keep the lines filled.
+            QStringList lines;
+            if (show_info && game.is_game) {
+                lines = LibraryStyles::LibraryStyleContext::InfoLines(game, text.info, metaFont);
+            } else {
+                lines << meta_parts.join(QStringLiteral(" \u00B7 "));
+            }
+            for (const QString& line : lines) {
+                painter->drawText(QRect(textRect.left(), y, textRect.width(), mfm.lineSpacing()),
+                                  Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine,
+                                  mfm.elidedText(line, Qt::ElideRight, textRect.width()));
+                y += mfm.lineSpacing();
+            }
         }
     }
 
@@ -391,22 +429,14 @@ QRect GameCard::getCardRect(const QStyleOptionViewItem& option, const QModelInde
     int card_left, card_top, card_height;
 
     if (m_columns >= 1) {
-        // grid mode
+        // grid mode: the cells share the row width, the card keeps its own width centered in
+        // its cell. The column is not derived from the row: hidden rows (the favorites row, a
+        // search) shift the cells.
+        card_left = option.rect.left() + (cell_width - (card_width - cardMargin)) / 2;
 
-        // center everything in-line, such that the leftmost and rightmost cards
-        // have ~ equal padding to the edge of the viewport
-        // spacing between each card is larger, but equal to each other
-        const int column = index.row() % m_columns;
-
-        const int row_width = m_columns * cell_width;
-        const int total_gap = row_width - cardMargin * 2 - m_columns * card_width;
-        const int gap = (m_columns > 1) ? (total_gap / (m_columns - 1)) : 0;
-        card_left =
-            option.rect.left() - column * cell_width + cardMargin + column * (card_width + gap) + 4;
-
-        // fill cell vertically
+        // fill cell vertically, leaving room under the card for its ring and shadow
         card_top = option.rect.top() + cardMargin;
-        card_height = option.rect.height() - cardMargin - 1;
+        card_height = option.rect.height() - cardMargin - 1 - ringRoom;
     } else {
         // carousel mode
         card_left = option.rect.left() + cardMargin + 4;

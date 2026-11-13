@@ -80,11 +80,21 @@ const Themes themes{{
     {"Midnight Blue Colorful", "colorful_midnight_blue"},
     {"Lichii Dark", "lichii"},
     {"Lichii Modern", "lichii_modern"},
+    {"RIS (PantACRO4life)", "ris"},
 }};
 
 bool IsLichiiTheme() {
     const auto& theme = UISettings::values.theme;
-    return theme == std::string("lichii") || theme == std::string("lichii_modern");
+    return theme == std::string("lichii") || theme == std::string("lichii_modern") ||
+           IsRisTheme();
+}
+
+bool IsRisTheme() {
+    return UISettings::values.theme == std::string("ris");
+}
+
+const char* LichiiIconFolder() {
+    return IsRisTheme() ? "ris" : "lichii";
 }
 
 bool IsDarkTheme() {
