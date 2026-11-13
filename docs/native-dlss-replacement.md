@@ -98,6 +98,25 @@ the game keeps its own pass whenever DLSS is off, unavailable or fails to start.
   stays created and takes over if the files are missing or don't check out, AMD's runtime offers
   no FSR 4 for the GPU, the context can't be created or a dispatch fails. The log says which, and
   shows `Ocarina FSR 4 evaluated` while it runs.
+- FSR 4 on Linux (RADV, off by default): "Use FSR 4 (fsr4-vk community Vulkan port) in place of
+  FSR 3.1" feeds the same inputs to [fsr4-vk](https://github.com/Astyyyyy/fsr4-vk) (GPL-3.0), a
+  community Vulkan port of FSR 4.1.1 built from AMD's weights and shaders. It is not AMD's
+  official FSR 4. The release workflow builds it with `tools/fsr4-vk/build.sh`, which pins the
+  fsr4-vk commit and the SHA-256 of AMD's signed `amd_fidelityfx_upscaler_dx12.dll` of FidelityFX
+  SDK 2.3.0 it extracts them from (listed under MIT in the SDK's `license.md`). Both x86-64 Linux
+  packages carry `usr/lib/amd_fidelityfx_upscaler_vk.so` and, in `usr/share/licenses/fsr4-vk`,
+  fsr4-vk's licences and AMD's SDK licence. The aarch64 packages don't: fsr4-vk's shader
+  conversion fails its own asset check on arm64 hosts. A build without it loads the library from the user
+  folder's `fidelityfx` folder. The setting is shown for RDNA 2 and newer Radeons on RADV
+  (`VideoCommon::IsFsr4PortGpu`). At boot `VideoCommon::CheckFsr4Port` checks what fsr4-vk's
+  shaders use on the created device (descriptor buffers, synchronization2, 32-lane compute
+  subgroups, 8/16-bit arithmetic with integer dot products, linear compute derivatives) and picks
+  the network: FP8 with FP16/FP8 cooperative matrices, `shaderFloat8` and the matrix conversions
+  of `VK_NV_cooperative_matrix2` (RADV exposes it only with its `radv_cooperative_matrix2_nv`
+  option), INT8 otherwise. Lichii asks fsr4-vk for that model by version. The extra device
+  features are enabled only while the setting is on with RADV. Anything missing, a missing
+  library or a failed context or dispatch leaves FSR 3.1 running, and the log names the active
+  upscaler and why. Ported from #915's loader; untested on AMD hardware so far.
 - #644 (`82494c4820`, `74a2d20c90`, `4352c06bbf`) supplies the effects capture, used by FSR only
   (DLSS gets no bias mask and runs as before). FSR uses its R16F current/history bias as both
   reactive and transparency/composition masks; missing capture uses zero masks, not stale
@@ -108,14 +127,14 @@ the game keeps its own pass whenever DLSS is off, unavailable or fails to start.
 - FXAA and SMAA are skipped on frames either temporal backend drew.
 - Any unexpected input, a busy frame slot, a rescaled image (resolution scale other than 1x) or
   a failed evaluation leaves the game's pass to run. The log names the reason when such a
-  stretch of frames starts, as `Ocarina temporal: the game's upscale draws frame N (reason)`;
+  stretch of frames starts, as `Ocarina temporal: the game's upscale draws from frame N (reason)`;
   "no scene camera this frame" says which camera check failed. When the replacement draws
   again it logs `Ocarina temporal: <backend> replaces the game's upscale again from frame N,
   after M frames (S s)`. Frames that present the game's 1440p image instead of the 4K one log
-  `presents the game's 1440p image, not the 4K ... image (reason)` and a matching `presented
+  `the game's 1440p image is presented, not the 4K ... image (reason)` and a matching `presented
   again` line, and the status bar logs when it hides the DLSS mode for lack of a new
-  evaluation. Each of these logs at most one stretch a second; the rest are counted in the next
-  line.
+  evaluation. Each of these logs at most one line a second: a stretch that starts sooner is logged from
+  its first frame once a second has passed, and shorter ones are counted in the next line.
   `EDEN_NX2_DLSS_CONTRACT_TRACE=1` logs every FSR evaluation and scheduler writeback;
   otherwise periodic evaluation/writeback messages avoid a per-frame logging cost.
 

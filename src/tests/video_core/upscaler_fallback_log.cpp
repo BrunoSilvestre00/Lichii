@@ -18,6 +18,7 @@ TEST_CASE("Upscaler fallback log reports each stretch's start, reason and length
     CHECK_FALSE(log.Replaced(1, t0));
     const auto first = log.Fallback(10, t0, camera);
     REQUIRE(first);
+    CHECK(first->frame == 10);
     CHECK(first->unlogged == 0);
     CHECK_FALSE(log.Fallback(11, t0 + 16ms, camera));
     // Another reason in the same stretch waits for the next second.
@@ -39,4 +40,16 @@ TEST_CASE("Upscaler fallback log reports each stretch's start, reason and length
     const auto next_end = log.Replaced(760, t0 + 13s);
     REQUIRE(next_end);
     CHECK(next_end->frames == 60);
+
+    // A stretch that starts within a second of the last line is logged once the second has
+    // passed, from its first frame, and its end covers the whole stretch.
+    CHECK_FALSE(log.Fallback(800, t0 + 13s + 200ms, camera));
+    const auto late = log.Fallback(850, t0 + 14s, camera);
+    REQUIRE(late);
+    CHECK(late->frame == 800);
+    CHECK(late->unlogged == 0);
+    const auto late_end = log.Replaced(1094, t0 + 18s + 100ms);
+    REQUIRE(late_end);
+    CHECK(late_end->frames == 294);
+    CHECK(late_end->seconds > 4.8f);
 }
