@@ -292,8 +292,10 @@ constexpr std::array<u8, 4> GROUND_VELOCITY_NOP{
 // its turn speed, kept per 60 Hz frame, to the change it applied times the frame step. The change
 // already carries the step, so below a step of 1 the speed decays by step^2 every frame. The routine
 // divides by the step there instead and runs the game's two instructions at a step of 1 and above.
-constexpr std::array<u8, 4> TURN_SPEED_ORIGINAL{0x01, 0x08, 0x21, 0x1E};
-constexpr std::array<u8, 4> TURN_SPEED_HOOK{0xCA, 0x9F, 0x58, 0x14};
+// The routine replaces both fmul (0x261EB18 and 0x261EB1C) and returns to 0x261EB20, so the hook
+// guards both; the second instruction stays in place, unreached.
+constexpr std::array<u8, 8> TURN_SPEED_ORIGINAL{0x01, 0x08, 0x21, 0x1E, 0x00, 0x08, 0x28, 0x1E};
+constexpr std::array<u8, 8> TURN_SPEED_HOOK{0xCA, 0x9F, 0x58, 0x14, 0x00, 0x08, 0x28, 0x1E};
 // fmov s1, #1.0 ; fcmp s8, s1 ; b.ge +0x10 ; fdiv s0, s0, s8 ; fneg s1, s0 ; b 0x261EB20 ;
 // ldr s1, [sp, #0xc] ; fmul s1, s0, s1 ; fmul s0, s0, s8 ; b 0x261EB20
 constexpr std::array<u8, 40> TURN_SPEED_ROUTINE{
