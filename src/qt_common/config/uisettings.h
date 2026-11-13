@@ -126,6 +126,7 @@ struct Values {
     // The last What's new release shown, and whether to show the next one on launch
     Setting<u32> whats_new_version{linkage, 0, "whats_new_version", Category::Ui};
     Setting<bool> show_whats_new{linkage, true, "show_whats_new", Category::Ui};
+    Setting<bool> show_low_ram_warning{linkage, true, "show_low_ram_warning", Category::Ui};
     Setting<bool> pause_when_in_background{linkage,
                                            false,
                                            "pauseWhenInBackground",
@@ -243,7 +244,7 @@ struct Values {
                                                   "has_selected_game_library_style",
                                                   Category::UiGameList};
     Setting<bool> show_game_name{linkage, true, "show_game_name", Category::UiGameList};
-    /// Id of the library style (yuzu/game/styles) shown in place of the Modern grid; empty keeps
+    /// Id of the library style (lichii/game/styles) shown in place of the Modern grid; empty keeps
     /// the Modern grid. Only used while game_list_mode is the grid view.
     Setting<std::string> library_layout{linkage, {}, "library_layout", Category::UiGameList};
     /// Info panel of the library styles (play time, update version).
