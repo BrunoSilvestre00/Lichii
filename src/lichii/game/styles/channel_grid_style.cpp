@@ -40,6 +40,7 @@ namespace LibraryStyles {
 namespace {
 
 constexpr int NameHeight = 26;
+constexpr int InfoHeight = 20;
 constexpr int PageMs = 260;
 
 /// TV-screen tile: rounded corners, the sides and the top and bottom bulging slightly.
@@ -112,6 +113,18 @@ ChannelGridStyle::ChannelGridStyle(QWidget* parent) : LibraryStyleView(parent) {
         ScheduleClock();
     });
     ScheduleClock();
+    glow_clock.start();
+    glow_timer.setInterval(33);
+    connect(&glow_timer, &QTimer::timeout, this, [this] {
+        const int row = CurrentRow();
+        if (!isVisible() || row < 0) {
+            return;
+        }
+        const Layout l = ComputeLayout();
+        // The tile grows 4 %, the glow reaches about 44 px past it.
+        update(TileRect(l, row).adjusted(-60, -60, 60, 60));
+    });
+    glow_timer.start();
     page_anim.setDuration(PageMs);
     page_anim.setEasingCurve(QEasingCurve::OutCubic);
     connect(&page_anim, &QVariantAnimation::valueChanged, this, [this](const QVariant& value) {
@@ -244,6 +257,7 @@ void ChannelGridStyle::SetShowNames(bool show) {
 
 void ChannelGridStyle::SetShowInfo(bool show) {
     show_info = show;
+    ClampScroll(); // the info line under the names changes the tile height
     update();
 }
 
@@ -262,9 +276,11 @@ ChannelGridStyle::Layout ChannelGridStyle::ComputeLayout() const {
     // the tiles then grow to fill the height. The list goes on to the right, a page at a time.
     const int wanted_h = std::max(16, LibraryStyleContext::ArtSize());
     l.gap = std::max(6, wanted_h / 16);
-    l.name_h = show_names ? NameHeight : 0;
-    l.rows = std::max(1, static_cast<int>(std::lround(static_cast<double>(grid_h + l.gap) /
-                                                      (wanted_h + l.name_h + l.gap))));
+    // Every row keeps room for a name and an info line, whether they are shown or not, so turning
+    // names or info on or off never moves, resizes or adds tiles; it only shows or hides the text.
+    l.name_h = NameHeight + InfoHeight;
+    // As many rows as fit at Game Icon Size or bigger (rounding down), then the tiles grow to fill.
+    l.rows = std::max(1, (grid_h + l.gap) / (wanted_h + l.name_h + l.gap));
     l.tile_h = std::max(16, (grid_h + l.gap) / l.rows - l.gap - l.name_h);
     l.tile_w = l.tile_h * 16 / 10;
     const int peek = std::max(28, l.tile_w / 4); // the next page shows at the edges
@@ -598,21 +614,38 @@ void ChannelGridStyle::PaintTile(QPainter& p, const Layout& l, int row, bool sel
     const QModelIndex index = IndexForRow(row);
     const QPalette pal = palette();
     const bool dark = IsDark(pal);
-    const QRectF tile = TileRect(l, row);
+    const QRectF cell = TileRect(l, row);
+    // Concept: the selected channel is 4 % larger, from its centre.
+    const QRectF tile =
+        selected ? QRectF(cell.center().x() - cell.width() * 0.52,
+                          cell.center().y() - cell.height() * 0.52, cell.width() * 1.04,
+                          cell.height() * 1.04)
+                 : cell;
     const QPainterPath shape = CrtPath(tile);
     const QColor accent = LibraryStyleContext::Accent(pal);
+    // Pulse phase 0..1..0 every 1.6 s, eased like CSS ease-in-out.
+    const qreal pulse =
+        0.5 - 0.5 * std::cos(2.0 * M_PI * static_cast<qreal>(glow_clock.elapsed() % 1600) / 1600.0);
 
     p.setPen(Qt::NoPen);
     p.setBrush(QColor(0, 0, 0, dark ? 55 : 22));
     p.drawPath(shape.translated(0, 3));
 
-    // Glow for the selected tile, under the frame so only the outside shows.
+    // Glow for the selected tile, under the frame so only the outside shows. Concept:
+    // 0 0 26px 6px at 55 %, pulsing to 0 0 34px 10px at 35 %.
     if (selected) {
+        const qreal spread = 3.0 + 3.0 * pulse;
+        const qreal blur = 16.0 + 6.0 * pulse;
+        const qreal strength = 0.55 - 0.20 * pulse;
         p.setBrush(Qt::NoBrush);
-        for (int i = 8; i >= 1; --i) {
+        constexpr int steps = 10;
+        for (int i = steps; i >= 1; --i) {
+            // Rings overlap, so alphas add up near the tile: keep each one faint.
+            const qreal reach = spread + blur * i / steps;
+            const qreal fall = 1.0 - static_cast<qreal>(i - 1) / steps;
             QColor glow = accent;
-            glow.setAlpha(10 + (8 - i) * 7);
-            p.setPen(QPen(glow, 2.0 * i));
+            glow.setAlphaF(std::clamp(strength * fall * fall * 0.14, 0.0, 1.0));
+            p.setPen(QPen(glow, 2.0 * reach));
             p.drawPath(shape);
         }
     }
@@ -637,20 +670,42 @@ void ChannelGridStyle::PaintTile(QPainter& p, const Layout& l, int row, bool sel
     p.drawPath(CrtPath(art));
 
     if (selected) {
-        p.setPen(QPen(accent, 3.0));
+        // 4 px ring, lightening towards white at the top of the pulse.
+        const QColor light(255, 255, 255);
+        const qreal k = 0.45 * pulse;
+        const QColor ring = QColor::fromRgbF(accent.redF() + (light.redF() - accent.redF()) * k,
+                                             accent.greenF() + (light.greenF() - accent.greenF()) * k,
+                                             accent.blueF() + (light.blueF() - accent.blueF()) * k);
+        p.setPen(QPen(ring, 4.0));
         p.drawPath(shape);
     }
 
+    int text_top = static_cast<int>(cell.bottom()) + 4;
     if (show_names) {
         QFont f = font();
         f.setPixelSize(std::clamp(l.tile_w / 20, 11, 15));
         f.setBold(selected);
         // One line (S4); the selected tile's long name glides with Scroll Long Names.
-        const QRectF text(tile.left() + 4, tile.bottom() + 4, tile.width() - 8, l.name_h - 4);
+        const QRectF text(tile.left() + 4, text_top, tile.width() - 8, NameHeight - 4);
         LibraryStyleContext::PaintTitle(&p, text.toAlignedRect(), TitleOf(index),
                                         pal.windowText().color(), f,
                                         Qt::AlignHCenter | Qt::AlignTop, 1,
                                         selected ? this : nullptr, 4);
+        text_top += QFontMetrics(f).lineSpacing() + 1;
+    }
+    if (show_info && IsGame(index)) {
+        // Concept: 11.5 px bold under 13 px names, in the muted balloon colour.
+        QFont f = font();
+        f.setBold(true);
+        f.setPixelSize(std::clamp(l.tile_w / 22, 10, 14));
+        const GameInfo info = LibraryStyleContext::Info(index);
+        const int text_w = tile.width() - 8;
+        // Packed the same way under every tile (S3).
+        const QStringList lines = LibraryStyleContext::InfoLines(
+            info, LibraryStyleContext::LayoutInfo(f, text_w, 1), f);
+        LibraryStyleContext::PaintInfoLines(
+            &p, QRect(tile.left() + 4, text_top, text_w, InfoHeight - 2), lines,
+            LibraryStyleContext::MutedText(pal), f, Qt::AlignHCenter | Qt::AlignTop);
     }
 }
 

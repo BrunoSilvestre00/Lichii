@@ -5,6 +5,7 @@
 
 #include <QCache>
 #include <QColor>
+#include <QElapsedTimer>
 #include <QPersistentModelIndex>
 #include <QPixmap>
 #include <QPointer>
@@ -93,6 +94,9 @@ private:
     bool rebuild_pending = false;
     int current_hint = 0;
     QTimer clock_timer;
+    /// The selected tile's glow pulses (concept: 1.6 s ease-in-out); repaints only that tile.
+    QTimer glow_timer;
+    QElapsedTimer glow_clock;
     QCache<QString, QPixmap> cover_cache{48 * 1024}; // cost in KiB
     qreal scroll = 0; // horizontal, in px; pages sit side by side
     QVariantAnimation page_anim;
