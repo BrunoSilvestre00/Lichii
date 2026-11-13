@@ -15,8 +15,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     concurrency:
-      group: progress-comment-${{ github.event.workflow_run.id }}
-      cancel-in-progress: true
+      group: progress-comment-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: false
     steps:
       - name: Download the report
         uses: actions/download-artifact@v7

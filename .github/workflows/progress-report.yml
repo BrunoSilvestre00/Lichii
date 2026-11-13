@@ -2,12 +2,7 @@ name: progress-report
 
 on:
   pull_request:
-    paths:
-      - src/core/hle/service/**
-      - src/shader_recompiler/frontend/ir/opcodes.inc
-      - src/shader_recompiler/backend/spirv/**
-      - tools/progress.py
-      - .github/workflows/progress-report.yml
+    branches: [nx2]
 
 permissions:
   contents: read

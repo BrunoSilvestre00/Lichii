@@ -5,8 +5,7 @@ on:
     branches: [nx2]
     paths:
       - src/core/hle/service/**
-      - src/shader_recompiler/frontend/ir/opcodes.inc
-      - src/shader_recompiler/backend/spirv/**
+      - src/shader_recompiler/**
       - tools/progress.py
       - tools/progress_history.py
       - .github/workflows/progress-pages.yml

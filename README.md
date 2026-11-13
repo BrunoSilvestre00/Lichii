@@ -58,7 +58,7 @@ Do not upload game files, keys, firmware or private account information.
 
 [![progress map](https://zortos293.github.io/Lichii/progress.svg)](https://zortos293.github.io/Lichii/progress.html)
 
-[Progress history](https://zortos293.github.io/Lichii/history.html) - measured at every commit on `nx2`.
+[Progress history](https://zortos293.github.io/Lichii/history.html) - the 60 most recent first-parent commits on `nx2`.
 
 <sub>* IPC commands: share of the commands declared in the `FunctionInfo` tables of [src/core/hle/service](src/core/hle/service) that are bound to a handler. A row bound to a `Stub*` helper counts as bound, because it answers the call, but it returns a placeholder rather than emulating the command. The declared total grows as more services are described.</sub>
 

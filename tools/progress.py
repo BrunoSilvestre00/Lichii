@@ -215,7 +215,8 @@ def emitter_bodies(root: Path) -> dict[str, list[str]]:
 def has_no_work(body: str) -> bool:
     if "NotImplementedException" not in body:
         return False
-    return not CODE_NOISE.sub("", THROW.sub("", body))
+    code = LINE_COMMENT.sub("", BLOCK_COMMENT.sub("", body))
+    return not CODE_NOISE.sub("", THROW.sub("", code))
 
 
 def shader_sections(root: Path) -> list[tuple[str, list[str]]]:
@@ -383,15 +384,10 @@ def tile(group: Group, x: float, y: float, w: float, h: float) -> list[str]:
 
 def treemap(title: str, groups: Sequence[Group], left: float, top: float) -> list[str]:
     ordered = sorted(groups, key=lambda group: -group.total)
-    shown = list(ordered)
-    while len(shown) > 1:
-        layout = squarify([group.total for group in shown], left, top + HEADER, PANEL_WIDTH, MAP_HEIGHT)
-        if all(tile_label(group.name, w, h) for group, (_, _, w, h) in zip(shown, layout)):
-            break
-        shown.pop()
-    parts = [panel_heading(title, Metric(sum(g.done for g in ordered), sum(g.total for g in ordered)), left, top)]
-    for group, (x, y, w, h) in zip(shown, squarify([group.total for group in shown], left, top + HEADER,
-                                                   PANEL_WIDTH, MAP_HEIGHT)):
+    total = Metric(sum(group.done for group in ordered), sum(group.total for group in ordered))
+    parts = [panel_heading(title, total, left, top)]
+    layout = squarify([group.total for group in ordered], left, top + HEADER, PANEL_WIDTH, MAP_HEIGHT)
+    for group, (x, y, w, h) in zip(ordered, layout):
         parts += tile(group, x, y, w, h)
     return parts
 
@@ -558,7 +554,9 @@ def report(base: object, head: object) -> str:
                              ("Shader IR opcodes", "shaders", "implemented")):
         before = snapshot_metric(base, key, done, "total")
         after = snapshot_metric(head, key, done, "total")
-        if before is None or after is None or before.done == after.done:
+        if before is None or after is None:
+            continue
+        if (before.done, before.total) == (after.done, after.total):
             continue
         lines.append(f"| {label} | {before.done}/{before.total} | {after.done}/{after.total} | "
                      f"{after.done - before.done:+d} |")

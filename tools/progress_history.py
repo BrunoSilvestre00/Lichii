@@ -8,7 +8,7 @@ import json
 import subprocess
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from html import escape
 from pathlib import Path
 
@@ -120,7 +120,9 @@ def render(points: list[dict[str, object]]) -> str:
     height = TITLE + PANEL + GAP
     width = WIDTH
     plot_width, plot_height = width - LEFT - RIGHT, PANEL
-    parts = [f'<text x="0" y="18" fill="{TEXT}" font-size="15">Measured at every commit on {progress.BRANCH}</text>',
+    caption = f"{len(points)} most recent first-parent commits on {progress.BRANCH}"
+    parts = ['<title>Lichii progress history</title>',
+             f'<text x="0" y="18" fill="{TEXT}" font-size="15">{escape(caption)}</text>',
              *legend(LEFT, TITLE - 6),
              *axis(points, LEFT, TITLE, plot_height)]
     for key, _, color in SERIES:
@@ -134,8 +136,19 @@ def render(points: list[dict[str, object]]) -> str:
     return "\n".join([svg_open(width, height), frame, *parts, "</svg>"])
 
 
+def point_rows(points: list[dict[str, object]]) -> Iterator[str]:
+    for point in reversed(points):
+        yield (f'<tr><td><code>{escape(str(point["sha"]))}</code></td>'
+               f'<td>{point["services"]}%</td><td>{point["shaders"]}%</td></tr>')
+
+
 def page(points: list[dict[str, object]]) -> str:
-    body = render(points) if len(points) >= 2 else "<p>Not enough commits measured yet to draw a history chart.</p>"
+    if len(points) < 2:
+        body = "<p>Not enough commits measured yet to draw a history chart.</p>"
+    else:
+        body = "\n".join([render(points), "<h2>Per commit</h2>",
+                          "<table><tr><th>Commit</th><th>Services bound</th><th>Shaders</th></tr>",
+                          *point_rows(points), "</table>"])
     return "\n".join([
         "<!DOCTYPE html>", '<html lang="en"><head><meta charset="utf-8">',
         "<title>Lichii progress history</title>", f"<style>{PAGE_STYLE}</style></head><body>",
