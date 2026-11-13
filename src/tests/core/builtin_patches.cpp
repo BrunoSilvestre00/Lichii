@@ -47,6 +47,11 @@ constexpr size_t DynamicRoutineSize = 120;
 constexpr size_t UnlockRoutineSize = 128;
 constexpr u32 DynamicCallInstruction = 0x94D57D4F;
 constexpr u32 DynamicOriginalInstruction = 0x1E201828;
+constexpr size_t TurnSpeedHookOffset = sizeof(Loader::NSOHeader) + 0x261EB18;
+constexpr u32 TurnSpeedOriginalInstruction = 0x1E210801;
+constexpr u32 TurnSpeedHookInstruction = 0x14589FCA;
+constexpr size_t TurnSpeedRoutineOffset = sizeof(Loader::NSOHeader) + 0x3C46A40;
+constexpr size_t TurnSpeedRoutineSize = 40;
 
 constexpr std::array<std::pair<Common::FS::EdenPath, const char*>, 4> TestDirectories{{
     {Common::FS::EdenPath::NANDDir, "nand"},
@@ -241,6 +246,7 @@ std::vector<u8> MakeDynamicMain() {
     std::memcpy(nso.data(), &header, sizeof(header));
     std::memcpy(nso.data() + DynamicCallOffset, &DynamicOriginalInstruction,
                 sizeof(DynamicOriginalInstruction));
+    std::memcpy(nso.data() + TurnSpeedHookOffset, &TurnSpeedOriginalInstruction, sizeof(u32));
     return nso;
 }
 
@@ -275,6 +281,11 @@ TEST_CASE("Built-in FPS Unlock defaults on and replaces Dynamic FPS", "[patch_ma
     REQUIRE(routine(patched, UnlockRoutineSize) ==
             std::string{RoutineHead} + "E300001C4268231EC300001C4278231E4840201EC0035FD6"
                                        "1F2003D50AD7A33C0000C040");
+    REQUIRE(WordAt(patched, TurnSpeedHookOffset) == TurnSpeedHookInstruction);
+    REQUIRE(Common::HexToString(
+                std::span{patched}.subspan(TurnSpeedRoutineOffset, TurnSpeedRoutineSize)) ==
+            "01102E1E0021211E8A0000540018281E0140211E3360A717E10F40BD0108211E0008281E"
+            "2F60A717");
     REQUIRE(WordAt(patched) == BranchInstruction);
 
     // Unchecking only Dynamic FPS keeps FPS Unlock.
@@ -293,6 +304,9 @@ TEST_CASE("Built-in FPS Unlock defaults on and replaces Dynamic FPS", "[patch_ma
             std::string{RoutineHead} + "C300001C0309231E4020231E4D0000544840201EC0035FD6"
                                        "0AD7833F");
     REQUIRE(WordAt(patched, DynamicRoutineOffset + DynamicRoutineSize) == 0);
+    // The turn speed fix belongs to FPS Unlock only.
+    REQUIRE(WordAt(patched, TurnSpeedHookOffset) == TurnSpeedOriginalInstruction);
+    REQUIRE(WordAt(patched, TurnSpeedRoutineOffset) == 0);
 
     // Both unchecked: hook and code cave stay untouched.
     Settings::values.disabled_addons[OcarinaTitleId] = {std::string{FpsUnlock},
@@ -388,6 +402,37 @@ TEST_CASE("Built-in Dynamic FPS leaves both records alone when a user mod change
     }
     PatchManagerTestContext context{mod_word, offset};
     Settings::values.disabled_addons[OcarinaTitleId] = {std::string{MaxResolution}};
+    const auto nso = MakeDynamicMain();
+    auto expected = nso;
+    std::memcpy(expected.data() + offset, &mod_word, sizeof(mod_word));
+    REQUIRE(context.Manager().PatchNSO(nso, "main") == expected);
+}
+
+TEST_CASE("Built-in FPS Unlock validates the turn speed records before writing", "[patch_manager]") {
+    PatchManagerTestContext context;
+    Settings::values.disabled_addons[OcarinaTitleId] = {std::string{MaxResolution},
+                                                        std::string{DynamicFps}};
+    auto nso = MakeDynamicMain();
+    SECTION("Wrong turn speed original") {
+        nso[TurnSpeedHookOffset] ^= 1;
+    }
+    SECTION("Nonzero turn speed cave") {
+        nso[TurnSpeedRoutineOffset + TurnSpeedRoutineSize - 1] = 1;
+    }
+    REQUIRE(context.Manager().PatchNSO(nso, "main") == nso);
+}
+
+TEST_CASE("Built-in FPS Unlock leaves all records alone when a user mod changes the turn speed fix",
+          "[patch_manager]") {
+    size_t offset = TurnSpeedHookOffset;
+    SECTION("User turn speed hook takes precedence") {}
+    SECTION("User turn speed routine takes precedence") {
+        offset = TurnSpeedRoutineOffset;
+    }
+    constexpr u32 mod_word = 0x11223344;
+    PatchManagerTestContext context{mod_word, offset};
+    Settings::values.disabled_addons[OcarinaTitleId] = {std::string{MaxResolution},
+                                                        std::string{DynamicFps}};
     const auto nso = MakeDynamicMain();
     auto expected = nso;
     std::memcpy(expected.data() + offset, &mod_word, sizeof(mod_word));
