@@ -126,8 +126,13 @@ void ConfigureVibration::VibrateController(Core::HID::ControllerTriggerType type
 
     const bool old_vibration_enabled = player.vibration_enabled;
     const int old_vibration_strength = player.vibration_strength;
+    // (the trigger rumble shown in the dialog, not yet applied)
+    const u8 old_trigger_rumble = Settings::values.trigger_rumble_strength.GetValue();
     player.vibration_enabled = true;
     player.vibration_strength = vibration_strength;
+    Settings::values.trigger_rumble_strength.SetValue(
+        ui->checkBoxTriggerRumble->isChecked() ? static_cast<u8>(ui->spinTriggerRumble->value())
+                                               : u8{0});
 
     const Core::HID::VibrationValue vibration{
         .low_amplitude = 1.0f,
@@ -141,6 +146,7 @@ void ConfigureVibration::VibrateController(Core::HID::ControllerTriggerType type
     // Restore previous values
     player.vibration_enabled = old_vibration_enabled;
     player.vibration_strength = old_vibration_strength;
+    Settings::values.trigger_rumble_strength.SetValue(old_trigger_rumble);
 }
 
 void ConfigureVibration::StopVibrations() {
