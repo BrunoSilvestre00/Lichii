@@ -11,9 +11,9 @@ version: 2.1
 # the free plan's 30,000, so macOS only runs when a pipeline is triggered with macos: true.
 #
 # Each job saves its cache after every build that stopped early, so a cold build continues where
-# it stopped, and after the first complete build of the day. Caches live three days, which keeps storage near the free plan's 2 GB.
-# Every run restores the newest one; ccache keys objects by content, so a cache from another
-# branch still helps.
+# it stopped, and after the first complete build of the day. Caches live three days, which keeps
+# storage near the free plan's 2 GB. Every run restores the newest one; ccache keys objects by
+# content, so a cache from another branch still helps.
 
 parameters:
   macos:
