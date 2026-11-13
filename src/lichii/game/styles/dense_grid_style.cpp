@@ -146,7 +146,7 @@ void DenseGridStyle::SetShowNames(bool show) {
 
 void DenseGridStyle::SetShowInfo(bool show) {
     show_info = show;
-    update();
+    Relayout(); // names under tiles: the info line under the selected tile needs its room
 }
 
 QString DenseGridStyle::CycleOption() {
@@ -204,19 +204,47 @@ int DenseGridStyle::TileSize() const {
 }
 
 QFont DenseGridStyle::TileFont() const {
-    // Small tiles get small text: about 11 px on a 128 px tile, never above the UI font.
+    // The Tinfoil concept: 12 px names on a 120 px tile, growing with the tile.
     QFont f = font();
-    const int ui_px = QFontInfo(f).pixelSize();
-    f.setPixelSize(std::clamp(TileSize() / 12, 9, std::max(9, ui_px)));
+    f.setPixelSize(std::clamp(qRound(12.0 * TileSize() / 120.0), 10, 18));
     return f;
+}
+
+QFont DenseGridStyle::InfoFont() const {
+    // 11 px info under 12 px names in the concept.
+    QFont f = font();
+    f.setPixelSize(std::max(9, qRound(TileFont().pixelSize() * 11.0 / 12.0)));
+    return f;
+}
+
+int DenseGridStyle::TextTop() const {
+    // Visually even gaps: the space a line box leaves above the capitals (first line) and
+    // below the baseline (last line) is not the same, so shift the text by the difference.
+    const QFontMetrics first(show_names ? TileFont() : InfoFont());
+    const QFontMetrics last(show_info ? InfoFont() : TileFont());
+    const int above = first.ascent() - first.capHeight();
+    const int below = last.lineSpacing() - last.ascent();
+    return std::max(0, Gap + below - above);
+}
+
+bool DenseGridStyle::TextBelow() const {
+    return !names_on_tiles && (show_names || show_info);
 }
 
 int DenseGridStyle::CellHeight() const {
     const int tile = TileSize();
-    if (!show_names || names_on_tiles) {
-        return tile;
+    if (!TextBelow()) {
+        return tile; // the caption sits on the art
     }
-    return tile + 4 + QFontMetrics(TileFont()).lineSpacing() * LibraryStyleContext::TitleLines(2);
+    // The text, then the row gap: as much space under the text as between the art and it.
+    int height = tile + TextTop();
+    if (show_names) {
+        height += QFontMetrics(TileFont()).lineSpacing() * LibraryStyleContext::TitleLines(3);
+    }
+    if (show_info) {
+        height += (show_names ? 2 : 0) + QFontMetrics(InfoFont()).lineSpacing();
+    }
+    return height;
 }
 
 QRect DenseGridStyle::GridArea() const {
@@ -313,17 +341,50 @@ void DenseGridStyle::paintEvent(QPaintEvent*) {
         const qreal ratio = devicePixelRatioF();
         painter.drawPixmap(tile, CachedCover(cover_cache, index, tile.size() * ratio, pal,
                                              static_cast<int>(Radius * ratio)));
-        if (show_names && names_on_tiles) {
-            LibraryStyleContext::PaintCoverCaption(&painter, tile, index, tile_font,
-                                                   show_info && i == current,
-                                                   i == current ? this : nullptr);
-        } else if (show_names) {
-            const int lines = LibraryStyleContext::TitleLines(2);
-            const QRect name(tile.left(), tile.bottom() + 4, tile.width(),
-                             tile_metrics.lineSpacing() * lines);
-            LibraryStyleContext::PaintTitle(&painter, name, TitleOf(index), pal.text().color(),
-                                            tile_font, Qt::AlignHCenter | Qt::AlignTop, lines,
-                                            i == current ? this : nullptr);
+        const bool selected = i == current;
+        if (names_on_tiles) {
+            // Concept overlay: the selected tile always shows it, Names / Info on every tile.
+            const bool name = show_names || selected;
+            const bool info = show_info || selected;
+            if (name || info) {
+                LibraryStyleContext::PaintCoverCaption(&painter, tile, index, tile_font,
+                                                       InfoFont(), name, info,
+                                                       selected ? this : nullptr);
+            }
+        } else if (TextBelow()) {
+            // Names under the tiles: the name (accent when selected), then its info line.
+            int text_top = tile.bottom() + 1 + TextTop();
+            // A little inset so names of neighbouring tiles never run together.
+            const QRect column = tile.adjusted(3, 0, -3, 0);
+            if (show_names) {
+                const int lines = LibraryStyleContext::TitleLines(3);
+                const QRect name(column.left(), text_top, column.width(),
+                                 tile_metrics.lineSpacing() * lines);
+                LibraryStyleContext::PaintTitle(
+                    &painter, name, TitleOf(index),
+                    selected ? LibraryStyleContext::Accent(pal) : pal.text().color(), tile_font,
+                    Qt::AlignHCenter | Qt::AlignTop, lines, selected ? this : nullptr);
+                const int used = std::max<int>(
+                    1, LibraryStyleContext::NameLines(TitleOf(index), tile_font, column.width(),
+                                                      lines)
+                           .size());
+                text_top += tile_metrics.lineSpacing() * used + 2;
+            }
+            if (show_info && index.data(GameListItem::TypeRole).value<GameListItemType>() ==
+                                 GameListItemType::Game) {
+                const QFont info_font = InfoFont();
+                const GameInfo info = LibraryStyleContext::Info(index);
+                // Packed the same way on every tile (S3).
+                const QStringList info_lines = LibraryStyleContext::InfoLines(
+                    info, LibraryStyleContext::LayoutInfo(info_font, column.width(), 1),
+                    info_font);
+                LibraryStyleContext::PaintInfoLines(
+                    &painter,
+                    QRect(column.left(), text_top, column.width(),
+                          QFontMetrics(info_font).lineSpacing()),
+                    info_lines, LibraryStyleContext::MutedText(pal), info_font,
+                    Qt::AlignHCenter | Qt::AlignTop);
+            }
         }
         if (i == current) {
             LibraryStyleContext::PaintSelection(&painter, tile, pal, Radius, 3);

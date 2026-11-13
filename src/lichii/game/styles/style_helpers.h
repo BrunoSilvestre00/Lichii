@@ -163,10 +163,11 @@ public:
     /// Rounded panel with the title on top and the info line under it.
     static void PaintInfoPanel(QPainter* painter, const QRect& rect, const QModelIndex& index,
                                const QPalette& palette, const QFont& font);
-    /// Dark gradient at the bottom of a cover with the title and info lines on it, for styles
-    /// that show names on top of the art. `glide_in`: see PaintTitle.
+    /// Solid band at the bottom of a cover with the name and one info line on it (the Tinfoil
+    /// concept), for styles that show names on top of the art. `glide_in`: see PaintTitle.
     static void PaintCoverCaption(QPainter* painter, const QRect& cover_rect,
-                                  const QModelIndex& index, const QFont& font, bool show_info,
+                                  const QModelIndex& index, const QFont& font,
+                                  const QFont& info_font, bool show_name, bool show_info,
                                   const QWidget* glide_in = nullptr);
 
     /// The library buttons: A Play, B Names, X `option` (when the style has one), Y Info,

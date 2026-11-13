@@ -53,6 +53,11 @@ private:
     int TileSize() const;
     int CellHeight() const;
     QFont TileFont() const;
+    QFont InfoFont() const;
+    /// Names under the tiles with something to show there.
+    bool TextBelow() const;
+    /// Space between the art and the text under it.
+    int TextTop() const;
 
     QPointer<QAbstractItemModel> model;
     QList<QPersistentModelIndex> entries;
