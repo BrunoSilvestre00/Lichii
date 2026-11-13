@@ -138,6 +138,8 @@ GameList::GameList(FileSys::VirtualFilesystem vfs_, FileSys::ManualContentProvid
 
     connect(carousel_view, &QListView::activated, this, &GameList::ValidateEntry);
     connect(carousel_view, &QListView::customContextMenuRequested, this, &GameList::PopupContextMenu);
+    connect(tree_view->header(), &QHeaderView::sortIndicatorChanged, carousel_view,
+            &GameCarousel::SetSort);
 
     connect(controller_navigation, &ControllerNavigation::TriggerKeyboardEvent, this,
             [this](Qt::Key key) {
@@ -321,7 +323,6 @@ void GameList::ResetViewMode() {
         layout->removeWidget(m_currentView);
 
     const bool newTreeMode = mode == Settings::GameListMode::TreeView;
-    const bool newFlatMode = mode == Settings::GameListMode::CarouselView;
 
     switch (mode) {
     case Settings::GameListMode::TreeView:
@@ -369,14 +370,9 @@ void GameList::ResetViewMode() {
                           QScrollerProperties::OvershootAlwaysOff);
     scroller->setScrollerProperties(props);
 
+    // Every view reads the loaded library as it is (the Carousel through its own flat row), so
+    // switching views never scans the library again.
     m_isTreeMode = newTreeMode;
-    if (m_isFlat != newFlatMode) {
-        m_isFlat = newFlatMode;
-        item_model->SetFlat(newFlatMode);
-        if (!UISettings::values.game_dirs.empty()) {
-            item_model->PopulateAsync(UISettings::values.game_dirs);
-        }
-    }
 
     if (mode == Settings::GameListMode::GridView) {
         grid_view->setRootIndex(QModelIndex{});
@@ -803,22 +799,8 @@ void GameList::OnPopulatingCompleted(const QStringList& watch_list) {
     m_currentView->setEnabled(true);
 
     int children_total = 0;
-    if (m_isTreeMode) {
-        for (int i = 1; i < item_model->rowCount() - 1; ++i) {
-            children_total += item_model->item(i, 0)->rowCount();
-        }
-    } else if (game_list_mode == Settings::GameListMode::GridView) {
-        for (int i = 1; i < item_model->rowCount() - 1; ++i) {
-            children_total += item_model->item(i, 0)->rowCount();
-        }
-    } else {
-        for (int i = 0; i < item_model->rowCount(); ++i) {
-            const auto* item = item_model->item(i, 0);
-            if (item->data(GameListItem::TypeRole).value<GameListItemType>() ==
-                GameListItemType::Game) {
-                ++children_total;
-            }
-        }
+    for (int i = 1; i < item_model->rowCount() - 1; ++i) {
+        children_total += item_model->item(i, 0)->rowCount();
     }
 
     search_field->setFilterResult(children_total, children_total);
@@ -830,12 +812,9 @@ void GameList::OnPopulatingCompleted(const QStringList& watch_list) {
     const auto sort_order = tree_view->header()->sortIndicatorOrder();
     if (m_isTreeMode) {
         item_model->sort(sort_column, sort_order);
-    } else if (game_list_mode != Settings::GameListMode::GridView) {
-        const QList<QStandardItem*> add_folder_row =
-            item_model->takeRow(item_model->rowCount() - 1);
-        item_model->sort(sort_column, sort_order);
-        item_model->appendRow(add_folder_row);
     }
+    // The Carousel sorts its row of all games itself.
+    carousel_view->SetSort(sort_column, sort_order);
 
     // A repopulate (a directory removed, deep scan toggled) replaces the rows: apply the search
     // text the user still has typed to them.

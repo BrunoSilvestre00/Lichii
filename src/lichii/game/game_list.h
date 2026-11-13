@@ -210,7 +210,6 @@ private:
     Core::System& system;
 
     bool m_isTreeMode = true;
-    bool m_isFlat = false;
     bool m_populating = false;
     int grid_root_dir_index_to_restore = -1;
     /// The first load after start opens the folder of the last played game (see
