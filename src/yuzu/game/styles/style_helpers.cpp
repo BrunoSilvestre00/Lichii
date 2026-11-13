@@ -18,6 +18,7 @@
 #include <QLinearGradient>
 #include <QListView>
 #include <QPainter>
+#include <QGuiApplication>
 #include <QPainterPath>
 #include <QRadialGradient>
 #include <QRegularExpression>
@@ -799,41 +800,51 @@ void LibraryStyleContext::PaintInfoPanel(QPainter* painter, const QRect& rect,
 
 void LibraryStyleContext::PaintCoverCaption(QPainter* painter, const QRect& cover_rect,
                                             const QModelIndex& index, const QFont& font,
+                                            const QFont& info_font, bool show_name,
                                             bool show_info, const QWidget* glide_in) {
     if (cover_rect.isEmpty() || !index.isValid()) {
         return;
     }
     const GameInfo info = Info(index);
-    const QFontMetrics metrics(font);
-    // Up to two info lines, packed the same way on every tile (S3).
-    const QStringList info_lines =
-        show_info ? InfoLines(info, LayoutInfo(font, cover_rect.width() - 16, 2), font)
-                  : QStringList{};
-    const int title_lines = TitleLines(2);
-    const int lines = title_lines + static_cast<int>(info_lines.size());
-    const int caption_height = std::min(cover_rect.height(), metrics.lineSpacing() * lines + 16);
-    const QRect caption(cover_rect.left(), cover_rect.bottom() - caption_height + 1,
-                        cover_rect.width(), caption_height);
-
-    painter->save();
-    QLinearGradient shade(caption.topLeft(), caption.bottomLeft());
-    shade.setColorAt(0.0, QColor(0, 0, 0, 0));
-    shade.setColorAt(0.45, QColor(0, 0, 0, 150));
-    shade.setColorAt(1.0, QColor(0, 0, 0, 200));
-    painter->fillRect(caption, shade);
-
-    const QRect text = caption.adjusted(8, 6, -8, -6);
+    // Tinfoil concept: a solid band along the bottom, bold name over one muted info line, both
+    // left aligned, padding 5 x 6 px on a 120 px tile.
+    const double k = std::clamp(cover_rect.width() / 120.0, 0.8, 1.6);
+    const int pad_x = qRound(6 * k);
+    const int pad_y = qRound(5 * k);
     QFont title_font = font;
     title_font.setBold(true);
-    const int info_height = metrics.lineSpacing() * static_cast<int>(info_lines.size());
-    PaintTitle(painter, text.adjusted(0, 0, 0, -info_height), info.title, Qt::white, title_font,
-               Qt::AlignHCenter | Qt::AlignBottom, title_lines, glide_in);
-    if (info_height > 0) {
-        PaintInfoLines(painter,
-                       QRect(text.left(), text.bottom() - info_height + 1, text.width(),
-                             info_height),
-                       info_lines, QColor(255, 255, 255, 210), font,
-                       Qt::AlignHCenter | Qt::AlignVCenter);
+    const QFontMetrics title_metrics(title_font);
+    const QFontMetrics info_metrics(info_font);
+    const int text_w = cover_rect.width() - 2 * pad_x;
+    const QStringList info_lines =
+        show_info && info.is_game
+            ? InfoLines(info, LayoutInfo(info_font, text_w, 1), info_font)
+            : QStringList{};
+    const int name_h = show_name ? title_metrics.lineSpacing() : 0;
+    const int info_h = info_metrics.lineSpacing() * static_cast<int>(info_lines.size());
+    if (name_h + info_h == 0) {
+        return;
+    }
+    const int band_h = std::min(cover_rect.height(), name_h + info_h + 2 * pad_y);
+    const QRect band(cover_rect.left(), cover_rect.bottom() - band_h + 1, cover_rect.width(),
+                     band_h);
+    const bool dark = QGuiApplication::palette().window().color().lightness() < 128;
+
+    painter->save();
+    QPainterPath clip;
+    clip.addRoundedRect(QRectF(cover_rect), 4, 4);
+    painter->setClipPath(clip, Qt::IntersectClip);
+    painter->fillRect(band, dark ? QColor(10, 10, 14, 209) : QColor(255, 255, 255, 230));
+    const QColor name_color = dark ? QColor(0xe9, 0xe9, 0xec) : QColor(0x1e, 0x1e, 0x22);
+    const QColor info_color = dark ? QColor(0xa9, 0xa9, 0xb2) : QColor(0x6c, 0x6c, 0x76);
+    const QRect text = band.adjusted(pad_x, pad_y, -pad_x, -pad_y);
+    if (show_name) {
+        PaintTitle(painter, QRect(text.left(), text.top(), text.width(), name_h), info.title,
+                   name_color, title_font, Qt::AlignLeft | Qt::AlignVCenter, 1, glide_in);
+    }
+    if (info_h > 0) {
+        PaintInfoLines(painter, QRect(text.left(), text.top() + name_h, text.width(), info_h),
+                       info_lines, info_color, info_font, Qt::AlignLeft | Qt::AlignVCenter);
     }
     painter->restore();
 }
