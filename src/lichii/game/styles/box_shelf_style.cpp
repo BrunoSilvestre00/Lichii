@@ -873,7 +873,18 @@ QPixmap BoxShelfStyle::SpinePixmap(const QModelIndex& index, const Metrics& m, b
     g.setColorAt(0.0, base.darker(112));
     g.setColorAt(0.4, base.lighter(108));
     g.setColorAt(1.0, base.darker(118));
-    p.fillRect(QRectF(0, 0, w, h), g);
+    if (nx2) {
+        p.fillRect(QRectF(0, 0, w, h), g);
+    } else {
+        // Clear case: pale plastic, the red sheet inside stops short of both ends (concept).
+        QLinearGradient clear(0, 0, w, 0);
+        clear.setColorAt(0.0, QColor(0xd6, 0xd8, 0xde));
+        clear.setColorAt(0.4, QColor(0xee, 0xf0, 0xf3));
+        clear.setColorAt(1.0, QColor(0xd6, 0xd8, 0xde));
+        p.fillRect(QRectF(0, 0, w, h), clear);
+        const double inset = std::max(2.0, 3.0 * m.face_w / 150.0);
+        p.fillRect(QRectF(0, inset, w - 1.0, h - 2 * inset), g);
+    }
 
     // Small cover thumbnail at the top, title running down the spine.
     const QRectF thumb(3.0, 3.0, w - 6.0, w - 6.0);
@@ -1061,8 +1072,9 @@ void BoxShelfStyle::DrawFront(QPainter& p, const Metrics& m, int pos, bool selec
                 sheet.setColorAt(0.0, QColor(0xc8, 0x10, 0x1b));
                 sheet.setColorAt(0.4, QColor(0xe3, 0x14, 0x1f));
                 sheet.setColorAt(1.0, QColor(0xc8, 0x10, 0x1b));
-                // Full height: a clear stub under the sheet read as the spine poking out.
-                p.fillRect(QRectF(0, 0, depth - 1.0, h), sheet);
+                // Concept: the sheet stops 3 px short of the ends, so clear plastic shows at
+                // the top and bottom of the spine.
+                p.fillRect(QRectF(0, 3.0 * u, depth - 1.0, h - 6.0 * u), sheet);
             }
             p.restore();
         }
