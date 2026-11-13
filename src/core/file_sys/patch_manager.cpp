@@ -19,6 +19,7 @@
 #endif
 
 #include "core/core.h"
+#include "core/ocarina_photo_mode.h"
 #include "core/file_sys/common_funcs.h"
 #include "core/file_sys/content_archive.h"
 #include "core/file_sys/control_metadata.h"
@@ -209,6 +210,12 @@ constexpr std::array FPS_UNLOCK_RECORDS{
     BuiltinPatchRecord{0x3C46280, SOUND_FEED, {}, true},
 };
 
+constexpr std::array PHOTO_MODE_RECORDS{
+    BuiltinPatchRecord{Core::OcarinaPhotoMode::SiteOffset, Core::OcarinaPhotoMode::SiteBranch,
+                       Core::OcarinaPhotoMode::SiteOriginal},
+    BuiltinPatchRecord{Core::OcarinaPhotoMode::CaveOffset, Core::OcarinaPhotoMode::Cave, {}, true},
+};
+
 constexpr std::array BUILTIN_PATCHES{
     // Ocarina of Time takes its "dynamic resolution disabled" path, so the 3D renders at full scale
     // instead of following the GPU-time controller down to its 480p floor.
@@ -275,6 +282,16 @@ constexpr std::array BUILTIN_PATCHES{
         .build_id = "E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348",
         .records = RENDER_ULTRA_RECORDS,
         .dlss_quality = Settings::NvidiaDlssQuality::UltraPerformance,
+    },
+    // Photo mode (core/ocarina_photo_mode.h): the emulator's free camera replaces the game's.
+    BuiltinPatch{
+        .name = "Photo Mode (built-in)",
+        .title_id = 0x0400486024DEC000,
+        .module = "main",
+        .build_id = "E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348",
+        .records = PHOTO_MODE_RECORDS,
+        .state_offset = Core::OcarinaPhotoMode::StateOffset,
+        .state_size = Core::OcarinaPhotoMode::StateSize,
     },
 };
 
