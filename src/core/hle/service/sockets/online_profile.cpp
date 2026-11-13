@@ -5,6 +5,7 @@
 #include <optional>
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -12,6 +13,7 @@
 #include <random>
 #include <sstream>
 
+#include "common/fs/file_lock.h"
 #include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "common/settings.h"
@@ -196,6 +198,16 @@ std::filesystem::path ProfilesDir() {
 
 std::optional<Profile> LoadProfile(const std::string& server, bool create) {
     std::scoped_lock lock{profile_mutex};
+    // Emulator instances share the profiles: one at a time reads, makes and writes them, so two
+    // can't each make a friend code for the same server or replace each other's file mid-write.
+    std::error_code ec;
+    std::filesystem::create_directories(ProfilesDir(), ec);
+    const Common::FS::FileLock file_lock{ProfilesDir() / ".lock", std::chrono::seconds{5}};
+    if (!file_lock.Held()) {
+        LOG_ERROR(Network, "Online: the profiles in {} are busy in another instance",
+                  ProfilesDir().string());
+        return std::nullopt;
+    }
     bool damaged = false;
     std::ifstream in(ProfilePath(server));
     if (in) {
@@ -238,8 +250,6 @@ std::optional<Profile> LoadProfile(const std::string& server, bool create) {
     for (const std::string& code : ParseCodes(Settings::values.online_friends.GetValue())) {
         AddFriend(*profile, code);
     }
-    std::error_code ec;
-    std::filesystem::create_directories(ProfilesDir(), ec);
     const auto path = ProfilePath(server);
     if (damaged) {
         // Keep the old friend code, secret and friends for hand repair.
