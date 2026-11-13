@@ -272,7 +272,7 @@ static bool IsMapped(Kernel::KProcess* process, u64 vaddr) {
     if ((vaddr >> page_table.GetAddressSpaceBits()) != 0) {
         return false;
     }
-    return page_table.entries[vaddr >> Memory::YUZU_PAGEBITS].Type() != Common::PageType::Unmapped;
+    return page_table.entries[vaddr >> Memory::LICHII_PAGEBITS].Type() != Common::PageType::Unmapped;
 }
 
 static bool IsRasterizerCached(Kernel::KProcess* process, u64 vaddr) {
@@ -280,7 +280,7 @@ static bool IsRasterizerCached(Kernel::KProcess* process, u64 vaddr) {
     if ((vaddr >> page_table.GetAddressSpaceBits()) != 0) {
         return false;
     }
-    return page_table.entries[vaddr >> Memory::YUZU_PAGEBITS].Type() ==
+    return page_table.entries[vaddr >> Memory::LICHII_PAGEBITS].Type() ==
            Common::PageType::RasterizerCachedMemory;
 }
 
@@ -700,11 +700,11 @@ HaltReason ArmHypervisor::HandleGuestException(Kernel::KThread* thread) {
             for (size_t i = 0; i < m_step_page_count; ++i) {
                 const u64 step_page = m_step_pages[i];
                 if (is_write) {
-                    memory.InvalidateNCE(step_page, Memory::YUZU_PAGESIZE);
+                    memory.InvalidateNCE(step_page, Memory::LICHII_PAGESIZE);
                 } else {
-                    memory.DownloadRasterizerRegion(step_page, Memory::YUZU_PAGESIZE);
+                    memory.DownloadRasterizerRegion(step_page, Memory::LICHII_PAGESIZE);
                 }
-                m_vm.ProtectAccess(step_page, Memory::YUZU_PAGESIZE,
+                m_vm.ProtectAccess(step_page, Memory::LICHII_PAGESIZE,
                                    is_write ? Common::MemoryPermission::ReadWrite
                                             : Common::MemoryPermission::Read);
             }
