@@ -26,7 +26,8 @@ BRANCH = "nx2"
 TABLE = re.compile(r"FunctionInfo\s+\w+\s*\[\s*\]\s*=\s*\{")
 ROW = re.compile(r'\{\s*(?:0x[0-9a-fA-F]+|\d+)\s*,\s*(.*?)\s*,\s*"((?:[^"\\]|\\.)*)"\s*\}')
 EMITTER = re.compile(r"\b(?:Id|void)\s+Emit(\w+)\s*\([^;{}]*\)\s*\{")
-OPCODE = re.compile(r"^OPCODE\((\w+)", re.MULTILINE)
+SECTION = re.compile(r"^//\s*(.+?)\s*$", re.MULTILINE)
+OPCODE_LINE = re.compile(r"^OPCODE\((\w+)", re.MULTILINE)
 THROW = re.compile(r"throw\s+NotImplementedException\s*\([^;]*\)\s*;")
 STUB_HANDLER = re.compile(r"::Stub\w*")
 CODE_NOISE = re.compile(r"[\s{}();]|\(void\)\s*\w+")
@@ -34,18 +35,20 @@ BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 LINE_COMMENT = re.compile(r"//[^\n]*")
 
 WIDTH = 960
-COLUMN = WIDTH // 2
-ROW_HEIGHT = 24
-BAR_X = 116
-BAR_WIDTH = 232
-LABEL_X = BAR_X + BAR_WIDTH + 8
-PANEL_HEIGHT = 34
 GAP = 10
+PANEL_WIDTH = (WIDTH - GAP) / 2
+MAP_HEIGHT = 280.0
+HEADER = 30.0
+GRID_ROW = 30.0
 DONE_COLOR = "#2ea043"
 TODO_COLOR = "#6e7681"
 BORDER = "#0d1117"
 TEXT = "#ffffff"
 MUTED = "#8b949e"
+WARN_COLOR = "#d29922"
+TRACK_COLOR = "#30363d"
+SQUARIFY_LIMIT = 40
+TILES_PER_ROW = 12
 SOURCE = f"https://github.com/{REPOSITORY}/tree/{BRANCH}/{SERVICES.as_posix()}"
 TABLE_HEAD = ("<table><tr><th>Module</th><th>Bound</th><th>Stub handler</th><th>Unbound</th>"
               "<th>Declared</th><th>Bound %</th></tr>")
@@ -105,13 +108,29 @@ class Services:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class Shaders:
-    implemented: int
-    missing: int
+class Group:
+    name: str
+    done: int
+    total: int
 
     @property
     def metric(self) -> Metric:
-        return Metric(self.implemented, self.implemented + self.missing)
+        return Metric(self.done, self.total)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class Shaders:
+    groups: tuple[Group, ...]
+    throws: tuple[tuple[str, int], ...]
+
+    @property
+    def metric(self) -> Metric:
+        return Metric(sum(group.done for group in self.groups),
+                      sum(group.total for group in self.groups))
+
+    @property
+    def missing(self) -> int:
+        return self.metric.total - self.metric.done
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -199,12 +218,43 @@ def has_no_work(body: str) -> bool:
     return not CODE_NOISE.sub("", THROW.sub("", body))
 
 
+def shader_sections(root: Path) -> list[tuple[str, list[str]]]:
+    sections: list[tuple[str, list[str]]] = []
+    current = ""
+    for line in (root / OPCODES).read_text(encoding="utf-8", errors="ignore").splitlines():
+        heading = SECTION.match(line)
+        if heading and not line.startswith("// SPDX") and not line.startswith("//     opcode"):
+            current = heading.group(1)
+            continue
+        opcode = OPCODE_LINE.match(line)
+        if not opcode:
+            continue
+        if not sections or sections[-1][0] != current:
+            sections.append((current, []))
+        sections[-1][1].append(opcode.group(1))
+    return [(name, names) for name, names in sections if names]
+
+
+def throw_areas(root: Path) -> tuple[tuple[str, int], ...]:
+    counts: dict[str, int] = {}
+    for path in sorted((root / "src/shader_recompiler").rglob("*.cpp")):
+        found = path.read_text(encoding="utf-8", errors="ignore").count("NotImplementedException")
+        if not found:
+            continue
+        relative = path.relative_to(root / "src/shader_recompiler")
+        area = relative.parts[0] if len(relative.parts) > 1 else relative.stem
+        counts[area] = counts.get(area, 0) + found
+    return tuple(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
+
+
 def scan_shaders(root: Path) -> Shaders:
-    text = (root / OPCODES).read_text(encoding="utf-8", errors="ignore")
-    opcodes = OPCODE.findall(text)
     bodies = emitter_bodies(root)
-    missing = sum(1 for name in opcodes if not bodies.get(name) or all(map(has_no_work, bodies[name])))
-    return Shaders(len(opcodes) - missing, missing)
+    groups = []
+    for name, opcodes in shader_sections(root):
+        missing = sum(1 for opcode in opcodes
+                      if not bodies.get(opcode) or all(map(has_no_work, bodies[opcode])))
+        groups.append(Group(name, len(opcodes) - missing, len(opcodes)))
+    return Shaders(tuple(groups), throw_areas(root))
 
 
 def parse_compatibility(payload: object) -> Compatibility | None:
@@ -242,14 +292,6 @@ def svg_open(width: float, height: float) -> str:
             f'width="{width}" height="{height}">')
 
 
-def heading(text: str, top: float) -> str:
-    return f'<text x="0" y="{top + 12}" fill="{TEXT}" font-size="13">{escape(text)}</text>'
-
-
-def detail_text(text: str, y: float) -> str:
-    return f'<text x="0" y="{y}" fill="{MUTED}" font-size="10" font-family="monospace">{escape(text)}</text>'
-
-
 def badge(label: str, value: str, percent: float) -> str:
     left, right = 10 + 7 * len(label), 10 + 7 * len(value)
     return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{left + right}" height="20" role="img" '
@@ -259,51 +301,172 @@ def badge(label: str, value: str, percent: float) -> str:
             f'<text x="{left / 2}" y="14">{label}</text><text x="{left + right / 2}" y="14">{value}</text></g></svg>')
 
 
-def bar(x: float, y: float, width: float, fraction: float, height: float = 12) -> list[str]:
-    filled = round(width * max(0.0, min(1.0, fraction)), 2)
-    return [f'<rect x="{x}" y="{y}" width="{width}" height="{height}" fill="{TODO_COLOR}" rx="2"/>',
-            f'<rect x="{x}" y="{y}" width="{filled}" height="{height}" fill="{DONE_COLOR}" rx="2"/>']
+def worst_ratio(row: Sequence[float], side: float) -> float:
+    area = sum(row)
+    return max(max(side * side * value / area ** 2, area ** 2 / (side * side * value)) for value in row)
 
 
-def module_row(module: Module, x: float, y: float) -> list[str]:
-    metric = module.metric
-    label = f'<text x="{x}" y="{y + 10}" fill="{TEXT}" font-size="11" font-family="monospace">{escape(module.name)}</text>'
-    counts = f'<text x="{x + LABEL_X}" y="{y + 10}" fill="{MUTED}" font-size="10" font-family="monospace">'
-    return [label, *bar(x + BAR_X, y, BAR_WIDTH, metric.percent / 100),
-            f"{counts}{module.count(Handler.BOUND)}/{module.total}</text>"]
+def place(row: Sequence[float], x: float, y: float, w: float, h: float,
+          rects: list[tuple[float, float, float, float]]) -> tuple[float, float, float, float]:
+    thickness = sum(row) / min(w, h)
+    offset = 0.0
+    for area in row:
+        length = area / thickness
+        if w >= h:
+            rects.append((x, y + offset, thickness, length))
+        else:
+            rects.append((x + offset, y, length, thickness))
+        offset += length
+    if w >= h:
+        return x + thickness, y, w - thickness, h
+    return x, y + thickness, w, h - thickness
 
 
-def services_panel(modules: Sequence[Module], top: float) -> tuple[list[str], float]:
-    columns = [modules[index::2] for index in range(2)]
-    height = PANEL_HEIGHT + ROW_HEIGHT * max((len(column) for column in columns), default=0)
-    parts = [heading("IPC commands bound to a handler, by module", top)]
-    for column_index, column in enumerate(columns):
-        for row_index, module in enumerate(column):
-            parts += module_row(module, column_index * COLUMN, top + PANEL_HEIGHT + row_index * ROW_HEIGHT)
-    return parts, top + height
+def squarify(values: Sequence[float], x: float, y: float, w: float, h: float) -> list[tuple[float, float, float, float]]:
+    total = sum(values)
+    if not total or w <= 0 or h <= 0:
+        return []
+    areas = [value * w * h / total for value in values]
+    rects: list[tuple[float, float, float, float]] = []
+    row: list[float] = []
+    while areas:
+        side = min(w, h)
+        if not row or worst_ratio([*row, areas[0]], side) <= worst_ratio(row, side):
+            row.append(areas.pop(0))
+            continue
+        x, y, w, h = place(row, x, y, w, h, rects)
+        row = []
+    if row:
+        place(row, x, y, w, h, rects)
+    return rects
 
 
-def shaders_panel(shaders: Shaders, top: float) -> tuple[list[str], float]:
-    metric = shaders.metric
-    detail = f"{metric.done} of {metric.total} ({metric.percent}%), {shaders.missing} throw NotImplementedException"
-    return [heading("Shader IR opcodes with a working SPIR-V emitter", top),
-            *bar(0, top + 22, WIDTH, metric.percent / 100, 14),
-            detail_text(detail, top + 50)], top + 62
+def cells(count: int, x: float, y: float, w: float, h: float) -> list[tuple[float, float, float, float]]:
+    if not count or w <= 0 or h <= 0:
+        return []
+    rows = max(1, min(count, round((count * h / w) ** 0.5)))
+    cells_out = []
+    for row in range(rows):
+        in_row = count // rows + (row < count % rows)
+        width = w / in_row
+        cells_out += [(x + column * width, y + row * h / rows, width, h / rows) for column in range(in_row)]
+    return cells_out
 
 
-def compatibility_panel(compatibility: Compatibility, top: float) -> tuple[list[str], float]:
-    detail = (f"{compatibility.reports} reports across {compatibility.games} games on build "
-              f"{compatibility.build}, {compatibility.playable} playable, {compatibility.perfect} perfect")
-    return [heading("Community compatibility reports", top), detail_text(detail, top + 32)], top + 46
+def rect(x: float, y: float, w: float, h: float, color: str, stroke: float = 0.5) -> str:
+    return (f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" '
+            f'fill="{color}" stroke="{BORDER}" stroke-width="{stroke}"/>')
+
+
+def tile_label(text: str, w: float, h: float) -> str:
+    room = int((w - 10) / 7)
+    label = text[:room] if room > 0 else ""
+    return label if (label == text or len(label) >= 3) and h > 22 else ""
+
+
+def tile(group: Group, x: float, y: float, w: float, h: float) -> list[str]:
+    metric = group.metric
+    suffix = "" if group.name else "unnamed section"
+    title = (f'<g><title>{escape(group.name)}: {metric.done}/{metric.total} '
+             f'({metric.percent}%){escape(suffix)}</title>')
+    parts = [title]
+    for index, cell in enumerate(cells(group.total, x + 1, y + 1, w - 2, h - 2)):
+        parts.append(rect(*cell, DONE_COLOR if index < group.done else TODO_COLOR))
+    parts.append(rect(x, y, w, h, "none", 2))
+    label = tile_label(group.name, w, h)
+    if label:
+        parts.append(f'<text x="{x + 5:.2f}" y="{y + 16:.2f}" font-family="sans-serif" font-size="12" '
+                     f'fill="{TEXT}" stroke="{BORDER}" stroke-width="3" paint-order="stroke">{escape(label)}</text>')
+    parts.append("</g>")
+    return parts
+
+
+def treemap(title: str, groups: Sequence[Group], left: float, top: float) -> list[str]:
+    ordered = sorted(groups, key=lambda group: -group.total)
+    shown = list(ordered)
+    while len(shown) > 1:
+        layout = squarify([group.total for group in shown], left, top + HEADER, PANEL_WIDTH, MAP_HEIGHT)
+        if all(tile_label(group.name, w, h) for group, (_, _, w, h) in zip(shown, layout)):
+            break
+        shown.pop()
+    parts = [panel_heading(title, Metric(sum(g.done for g in ordered), sum(g.total for g in ordered)), left, top)]
+    for group, (x, y, w, h) in zip(shown, squarify([group.total for group in shown], left, top + HEADER,
+                                                   PANEL_WIDTH, MAP_HEIGHT)):
+        parts += tile(group, x, y, w, h)
+    return parts
+
+
+def tile_grid(title: str, groups: Sequence[Group], top: float) -> tuple[list[str], float]:
+    ordered = sorted(groups, key=lambda group: group.name.lower())
+    width = (2 * PANEL_WIDTH + GAP) / TILES_PER_ROW
+    parts = [panel_heading(title, Metric(sum(g.done for g in ordered), sum(g.total for g in ordered)), 0, top)]
+    for index, group in enumerate(ordered):
+        parts += tile(group, index % TILES_PER_ROW * width, top + HEADER + index // TILES_PER_ROW * GRID_ROW,
+                      width, GRID_ROW)
+    return parts, HEADER + -(-len(ordered) // TILES_PER_ROW) * GRID_ROW
+
+
+def panel_heading(title: str, metric: Metric, x: float, y: float) -> str:
+    return (f'<text x="{x + 4:.2f}" y="{y + 21:.2f}" font-family="sans-serif" font-size="16" fill="{TEXT}" '
+            f'stroke="{BORDER}" stroke-width="3" paint-order="stroke">'
+            f'{escape(title)}: {metric.percent}% ({metric.done}/{metric.total})</text>')
+
+
+def bar_row(label: str, count: int, total: int, scale: int, left: float, y: float, color: str) -> list[str]:
+    width = 240.0
+    fraction = count / scale if scale else 0.0
+    caption = f'{count}{f"/{total}" if total else ""}'
+    name = f'<text x="{left:.2f}" y="{y + 11:.2f}" font-family="sans-serif" font-size="12" fill="{TEXT}">{escape(label)}</text>'
+    value = (f'<text x="{left + 150 + width + 8:.2f}" y="{y + 11:.2f}" font-family="sans-serif" font-size="12" '
+             f'fill="{MUTED}">{caption}</text>')
+    return [name, rect(left + 150, y, width, 12, TRACK_COLOR, 0),
+            rect(left + 150, y, width * min(1.0, fraction), 12, color, 0), value]
+
+
+def services_tiers(services: Services) -> list[tuple[str, list[Group]]]:
+    groups = [Group(module.name, module.metric.done, module.total) for module in services.sorted()]
+    large, medium = groups[:4], groups[4:18]
+    small = groups[18:]
+    return [("Large system services", large), ("Medium system services", medium),
+            ("Small system services", small)]
+
+
+def still_needed_panel(shaders: Shaders, left: float, top: float) -> list[str]:
+    scale = max((count for _, count in shaders.throws), default=0)
+    title = (f'<text x="{left + 4:.2f}" y="{top + 21:.2f}" font-family="sans-serif" font-size="16" fill="{TEXT}" '
+             f'stroke="{BORDER}" stroke-width="3" paint-order="stroke">NotImplementedException sites by area</text>')
+    parts = [title]
+    y = top + HEADER
+    for name, count in shaders.throws:
+        parts += bar_row(name, count, 0, scale, left, y, WARN_COLOR)
+        y += 20
+    return parts
 
 
 def render_svg(report: Report) -> str:
-    parts, top = services_panel(report.services.sorted(), 0)
-    block, top = shaders_panel(report.shaders, top + GAP)
-    parts += block
+    tiers = services_tiers(report.services)
+    parts: list[str] = []
+    top = 0.0
+    for index, (title, groups) in enumerate(tiers[:2]):
+        if groups:
+            parts += treemap(title, groups, index * (PANEL_WIDTH + GAP), top)
+    top += HEADER + MAP_HEIGHT + GAP
+    if tiers[2][1]:
+        grid, height = tile_grid(tiers[2][0], tiers[2][1], top)
+        parts += grid
+        top += height + GAP
+    parts += treemap("Shader IR opcodes decoded", report.shaders.groups, 0, top)
+    parts += still_needed_panel(report.shaders, PANEL_WIDTH + GAP, top)
+    top += HEADER + MAP_HEIGHT + GAP
     if report.compatibility:
-        block, top = compatibility_panel(report.compatibility, top + GAP)
-        parts += block
+        parts.append(panel_heading("Community compatibility reports",
+                                   Metric(report.compatibility.playable, report.compatibility.reports), 0, top))
+        top += HEADER
+        detail = (f"{report.compatibility.reports} reports across {report.compatibility.games} games on build "
+                  f"{report.compatibility.build}, {report.compatibility.perfect} perfect")
+        parts.append(f'<text x="4" y="{top + 12:.2f}" font-family="sans-serif" font-size="12" '
+                     f'fill="{MUTED}">{escape(detail)}</text>')
+        top += 20
     height = round(top)
     frame = f'<rect width="{WIDTH}" height="{height}" fill="{BORDER}"/>'
     return "\n".join([svg_open(WIDTH, height), frame, *parts, "</svg>"])
@@ -350,7 +513,10 @@ def site_data(report: Report) -> dict[str, object]:
                                   "stub": module.count(Handler.STUB),
                                   "unbound": module.count(Handler.UNBOUND)}
                                  for module in report.services.sorted()]},
-        "shaders": {"implemented": shaders.done, "total": shaders.total, "percent": shaders.percent},
+        "shaders": {"implemented": shaders.done, "total": shaders.total, "percent": shaders.percent,
+                    "sections": [{"name": group.name, "done": group.done, "total": group.total}
+                                 for group in report.shaders.groups],
+                    "throw_areas": dict(report.shaders.throws)},
     }
     if report.compatibility:
         data["compatibility"] = dataclasses.asdict(report.compatibility)
