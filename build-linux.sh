@@ -35,7 +35,7 @@
 #   -h, --help         Show this help
 #
 # Extra CMake arguments can be passed via EXTRA_CMAKE_ARGS, e.g.
-#   EXTRA_CMAKE_ARGS="-DYUZU_TESTS=OFF" ./build-linux.sh
+#   EXTRA_CMAKE_ARGS="-DLICHII_TESTS=OFF" ./build-linux.sh
 #
 # Dependency lists come from the project's docs/Deps.md (nx2 branch). Where
 # this script adds a package that Deps.md does not list, it is marked
@@ -167,11 +167,11 @@ detect_distro() {
 #          when available, a warning if not
 declare -a REQ=() REC=() QT_REQ=() QT_REC=()
 
-# The build below passes YUZU_TESTS=OFF, so Catch2 is only needed when
+# The build below passes LICHII_TESTS=OFF, so Catch2 is only needed when
 # EXTRA_CMAKE_ARGS turns a test suite back on (EXTRA_CMAKE_ARGS is appended
 # last, so it overrides the OFF). Both -DX=ON and -DX:BOOL=ON are recognised.
 tests_enabled() {
-    [[ "${EXTRA_CMAKE_ARGS:-}" =~ -D(YUZU_TESTS|DYNARMIC_TESTS)(:[A-Za-z]+)?=(ON|on|TRUE|true|YES|yes|Y|y|1)([[:space:]]|$) ]]
+    [[ "${EXTRA_CMAKE_ARGS:-}" =~ -D(LICHII_TESTS|DYNARMIC_TESTS)(:[A-Za-z]+)?=(ON|on|TRUE|true|YES|yes|Y|y|1)([[:space:]]|$) ]]
 }
 
 # define_packages - fill REQ/REC/QT_REQ/QT_REC for the detected FAMILY (and Qt/test options).
@@ -565,7 +565,7 @@ if [[ -z "$BUNDLE_VULKAN" ]]; then
     [[ "$FAMILY" == debian ]] && BUNDLE_VULKAN=0 || BUNDLE_VULKAN=1
 fi
 
-# YUZU_BUILD_PRESET only knows generic/v3/zen2/zen4/native, so keep it on
+# LICHII_BUILD_PRESET only knows generic/v3/zen2/zen4/native, so keep it on
 # "custom" (no -march injected) and pass the arch flags ourselves.
 CMAKE_ARGS=(
     -S "$SRC_DIR"
@@ -574,12 +574,12 @@ CMAKE_ARGS=(
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
     -DCMAKE_C_COMPILER="$(command -v "$CC")"
     -DCMAKE_CXX_COMPILER="$(command -v "$CXX")"
-    -DYUZU_BUILD_PRESET=custom
+    -DLICHII_BUILD_PRESET=custom
     -DCMAKE_C_FLAGS="$ARCH_FLAGS"
     -DCMAKE_CXX_FLAGS="$ARCH_FLAGS"
     -DENABLE_QT="$ENABLE_QT"
     -DENABLE_WERROR="$WERROR"
-    -DYUZU_TESTS=OFF
+    -DLICHII_TESTS=OFF
 )
 CMAKE_ARGS+=("${LINK_ARGS[@]+"${LINK_ARGS[@]}"}")
 

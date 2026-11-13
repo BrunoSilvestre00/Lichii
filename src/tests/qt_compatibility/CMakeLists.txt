@@ -11,8 +11,8 @@ add_executable(compatibility_report_tests
     compatibility_report.cpp
     ../../lichii/compatibility_report.cpp
     ../../lichii/compatibility_report.h
-    ../../yuzu/compatibility_report.cpp
-    ../../yuzu/compatibility_report.h
+    ../../lichii/compatibility_report.cpp
+    ../../lichii/compatibility_report.h
     ../../qt_common/util/open.cpp
     ../../qt_common/util/open.h
 )
