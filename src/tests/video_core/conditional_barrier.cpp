@@ -38,9 +38,10 @@ public:
     void Dump(u64, u64) override {}
 };
 
-enum class Guard { Uniform, Invocation };
+enum class Guard { Uniform, Invocation, ShuffleBounds };
+enum class Leave { Never, InvocationBreak, InvocationReturn };
 
-// if (guard) { i = 0; do { BAR.SYNC; if (invocation_break && tid == i) break; } while (++i < n); }
+// if (guard) { i = 0; do { BAR.SYNC; if (tid == i) break or return; } while (++i < n); }
 // with n = c[3][4]. Mario Kart World's loading compute shaders 5f7463314fdbfc35 and
 // 674f08299f626801 guard their loop with the invocation id.
 struct BarrierLoop {
@@ -48,18 +49,19 @@ struct BarrierLoop {
     std::deque<IR::Block> blocks;
     IR::Program program;
 
-    BarrierLoop(Guard guard, bool invocation_break) {
+    BarrierLoop(Guard guard, Leave leave) {
         IR::Block& entry{Block()};
         IR::Block& header{Block()};
         IR::Block& body{Block()};
         IR::Block& skip{Block()};
         IR::Block& next{Block()};
+        IR::Block& exit{Block()};
         IR::Block& loop_merge{Block()};
         IR::Block& merge{Block()};
         entry.AddBranch(&header);
         entry.AddBranch(&merge);
         header.AddBranch(&body);
-        body.AddBranch(&loop_merge);
+        body.AddBranch(leave == Leave::InvocationReturn ? &exit : &loop_merge);
         body.AddBranch(&skip);
         skip.AddBranch(&next);
         next.AddBranch(&header);
@@ -69,8 +71,15 @@ struct BarrierLoop {
         IR::IREmitter start{entry};
         const IR::U32 tid{start.LocalInvocationIdX()};
         const IR::U32 count{start.GetCbuf(start.Imm32(3), start.Imm32(4))};
-        const IR::U1 guard_cond{start.ConditionRef(
-            start.INotEqual(guard == Guard::Invocation ? tid : count, start.Imm32(0)))};
+        IR::U1 guard_value{
+            start.INotEqual(guard == Guard::Invocation ? tid : count, start.Imm32(0))};
+        if (guard == Guard::ShuffleBounds) {
+            // Uniform operands, but lane 31 has no lane above it to read.
+            const IR::U32 shuffled{
+                start.ShuffleDown(start.Imm32(1), start.Imm32(1), start.Imm32(31), start.Imm32(0))};
+            guard_value = start.GetInBoundsFromOp(shuffled);
+        }
+        const IR::U1 guard_cond{start.ConditionRef(guard_value)};
 
         header.AppendNewInst(IR::Opcode::Phi, {});
         IR::Inst* const index{&header.back()};
@@ -78,8 +87,10 @@ struct BarrierLoop {
 
         IR::IREmitter loop{body};
         loop.Barrier();
-        const IR::U1 break_cond{loop.ConditionRef(
-            invocation_break ? loop.IEqual(tid, IR::U32{IR::Value{index}}) : loop.Imm1(false))};
+        const IR::U1 leave_cond{loop.ConditionRef(leave == Leave::Never
+                                                      ? loop.Imm1(false)
+                                                      : loop.IEqual(tid, IR::U32{index}))};
+        IR::IREmitter{exit}.Epilogue();
 
         IR::IREmitter step{next};
         const IR::U32 incremented{step.IAdd(IR::U32{IR::Value{index}}, step.Imm32(1))};
@@ -89,7 +100,8 @@ struct BarrierLoop {
 
         program.stage = Shader::Stage::Compute;
         program.workgroup_size = {64, 1, 1};
-        program.post_order_blocks = {&merge, &loop_merge, &next, &skip, &body, &header, &entry};
+        program.post_order_blocks = {&merge, &loop_merge, &next, &skip,
+                                     &exit,  &body,       &header, &entry};
         for (IR::Block& block : blocks) {
             program.blocks.push_back(&block);
         }
@@ -99,7 +111,19 @@ struct BarrierLoop {
             {.data{.block = &header}, .type = NodeType::Block},
             {.data{.loop{&body, &next, &loop_merge}}, .type = NodeType::Loop},
             {.data{.block = &body}, .type = NodeType::Block},
-            {.data{.break_node{break_cond, &loop_merge, &skip}}, .type = NodeType::Break},
+        };
+        if (leave == Leave::InvocationReturn) {
+            program.syntax_list.insert(program.syntax_list.end(), {
+                {.data{.if_node{leave_cond, &exit, &skip}}, .type = NodeType::If},
+                {.data{.block = &exit}, .type = NodeType::Block},
+                {.type = NodeType::Return},
+                {.data{.end_if{&skip}}, .type = NodeType::EndIf},
+            });
+        } else {
+            program.syntax_list.push_back(
+                {.data{.break_node{leave_cond, &loop_merge, &skip}}, .type = NodeType::Break});
+        }
+        program.syntax_list.insert(program.syntax_list.end(), {
             {.data{.block = &skip}, .type = NodeType::Block},
             {.data{.block = &next}, .type = NodeType::Block},
             {.data{.repeat{repeat_cond, &header, &loop_merge}}, .type = NodeType::Repeat},
@@ -107,7 +131,7 @@ struct BarrierLoop {
             {.data{.end_if{&merge}}, .type = NodeType::EndIf},
             {.data{.block = &merge}, .type = NodeType::Block},
             {.type = NodeType::Return},
-        };
+        });
         Shader::Optimization::ConditionalBarrierPass(program);
         TestEnvironment env;
         Shader::Optimization::CollectShaderInfoPass(env, program);
@@ -144,7 +168,7 @@ struct BarrierLoop {
 
 TEST_CASE("Barriers in loops only some invocations enter keep only their memory ordering",
           "[shader][barrier]") {
-    BarrierLoop shader{Guard::Invocation, false};
+    BarrierLoop shader{Guard::Invocation, Leave::Never};
     CHECK(shader.Count(IR::Opcode::Barrier) == 0);
     CHECK(shader.Count(IR::Opcode::WorkgroupMemoryBarrier) == 1);
     CHECK(shader.program.info.demoted_conditional_barrier);
@@ -155,15 +179,30 @@ TEST_CASE("Barriers in loops only some invocations enter keep only their memory 
 TEST_CASE("Barriers in loops invocations leave on different iterations keep only their memory "
           "ordering",
           "[shader][barrier]") {
-    BarrierLoop shader{Guard::Uniform, true};
+    BarrierLoop shader{Guard::Uniform, Leave::InvocationBreak};
     CHECK(shader.Count(IR::Opcode::Barrier) == 0);
     CHECK(shader.Count(IR::Opcode::WorkgroupMemoryBarrier) == 1);
     CHECK(shader.program.info.demoted_conditional_barrier);
 }
 
+TEST_CASE("Barriers in loops some invocations return from keep only their memory ordering",
+          "[shader][barrier]") {
+    BarrierLoop shader{Guard::Uniform, Leave::InvocationReturn};
+    CHECK(shader.Count(IR::Opcode::Barrier) == 0);
+    CHECK(shader.Count(IR::Opcode::WorkgroupMemoryBarrier) == 1);
+    CHECK(shader.CountSpirv(spv::Op::OpControlBarrier) == 0);
+}
+
+TEST_CASE("Barriers guarded by a shuffle's lane bounds keep only their memory ordering",
+          "[shader][barrier]") {
+    BarrierLoop shader{Guard::ShuffleBounds, Leave::Never};
+    CHECK(shader.Count(IR::Opcode::Barrier) == 0);
+    CHECK(shader.Count(IR::Opcode::WorkgroupMemoryBarrier) == 1);
+}
+
 TEST_CASE("Barriers under control flow the whole workgroup takes stay execution barriers",
           "[shader][barrier]") {
-    BarrierLoop shader{Guard::Uniform, false};
+    BarrierLoop shader{Guard::Uniform, Leave::Never};
     CHECK(shader.Count(IR::Opcode::Barrier) == 1);
     CHECK(shader.Count(IR::Opcode::WorkgroupMemoryBarrier) == 0);
     CHECK_FALSE(shader.program.info.demoted_conditional_barrier);

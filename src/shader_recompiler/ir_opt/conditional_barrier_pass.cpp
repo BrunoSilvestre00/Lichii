@@ -35,6 +35,7 @@ bool IsDivergentSource(const IR::Inst& inst) {
     case IR::Opcode::DPdyFine:
     case IR::Opcode::DPdxCoarse:
     case IR::Opcode::DPdyCoarse:
+    case IR::Opcode::GetInBoundsFromOp:
         return true;
     case IR::Opcode::ConditionRef:
         return false;
@@ -161,7 +162,17 @@ private:
                 break;
             }
             case NodeType::Return:
-                exited |= divergent_flow;
+                if (!divergent_flow) {
+                    break;
+                }
+                // The invocations still in an enclosing loop run its next iterations without the
+                // ones that returned.
+                exited = true;
+                for (const Construct& construct : stack) {
+                    if (syntax_list[construct.node].type == NodeType::Loop) {
+                        changed |= MarkLoop(construct.node);
+                    }
+                }
                 break;
             case NodeType::Unreachable:
                 break;
