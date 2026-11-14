@@ -1919,7 +1919,6 @@ void MainWindow::ConnectMenuEvents() {
 
     connect_menu(ui->action_Desktop, &MainWindow::OnCreateHomeMenuDesktopShortcut);
     connect_menu(ui->action_Application_Menu, &MainWindow::OnCreateHomeMenuApplicationMenuShortcut);
-    connect_menu(ui->action_Capture_Screenshot, &MainWindow::OnCaptureScreenshot);
     connect_menu(ui->action_Report_Bug, &MainWindow::OnReportBug);
     // A lambda: triggered(bool checked) must not reach ask_where.
     connect_menu(ui->action_Capture_Screenshot, [this] { OnCaptureScreenshot(); });
