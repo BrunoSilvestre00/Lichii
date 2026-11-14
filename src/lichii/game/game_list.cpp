@@ -51,6 +51,9 @@
 #include "lichii/game/game_list.h"
 #include "lichii/game/game_tree.h"
 #include "lichii/game/search_field.h"
+#include "lichii/game/styles/library_style_filter.h"
+#include "lichii/game/styles/library_style_registry.h"
+#include "lichii/game/styles/library_style_view.h"
 #include "lichii/main_window.h"
 #include "lichii/shader_warm_dialog.h"
 #include "lichii/util/controller_navigation.h"
@@ -78,6 +81,8 @@ GameList::GameList(FileSys::VirtualFilesystem vfs_, FileSys::ManualContentProvid
     setLayout(layout);
 
     item_model = new GameListModel(vfs, provider, play_time_manager, system, this);
+    style_model = new LibraryStyles::FilterModel(this);
+    style_model->setSourceModel(item_model);
 
     SetupViews();
 
@@ -105,6 +110,8 @@ GameList::GameList(FileSys::VirtualFilesystem vfs_, FileSys::ManualContentProvid
             &GameList::ReturnToGameDirectories);
 
     controller_navigation = new ControllerNavigation(system.HIDCore(), this);
+    controller_navigation->SetLibraryButtonsEnabled(true);
+    controller_navigation->SetDirectionRepeatEnabled(true);
 
     SetupScrollAnimation();
 
@@ -133,18 +140,13 @@ GameList::GameList(FileSys::VirtualFilesystem vfs_, FileSys::ManualContentProvid
 
     connect(carousel_view, &QListView::activated, this, &GameList::ValidateEntry);
     connect(carousel_view, &QListView::customContextMenuRequested, this, &GameList::PopupContextMenu);
+    connect(tree_view->header(), &QHeaderView::sortIndicatorChanged, carousel_view,
+            &GameCarousel::SetSort);
 
     connect(controller_navigation, &ControllerNavigation::TriggerKeyboardEvent, this,
-            [this](Qt::Key key) {
-                if (system.IsPoweredOn()) {
-                    return;
-                }
-                if (!this->isActiveWindow()) {
-                    return;
-                }
-                QKeyEvent* event = new QKeyEvent(QEvent::KeyPress, key, Qt::NoModifier);
-                QCoreApplication::postEvent(m_currentView, event);
-            });
+            [this](Qt::Key key) { OnControllerKey(key, false); });
+    connect(controller_navigation, &ControllerNavigation::RepeatKeyboardEvent, this,
+            [this](Qt::Key key) { OnControllerKey(key, true); });
 
     connect(item_model, &GameListModel::PopulatingCompleted, this,
             &GameList::OnPopulatingCompleted);
@@ -240,8 +242,16 @@ void GameList::OnPopulate() {
     } else {
         grid_root_dir_index_to_restore = -1;
     }
+    // removeRows() below runs while the grid's root is the opened folder and its current index is
+    // that folder's row; Qt's single selection then walks parents looking for the root and never
+    // stops. Reset both first; OnPopulatingCompleted() opens the folder again.
+    grid_view->setCurrentIndex(QModelIndex{});
+    grid_view->setRootIndex(QModelIndex{});
     m_populating = true;
     m_currentView->setEnabled(false);
+    if (style_view != nullptr) {
+        style_view->setEnabled(false);
+    }
 
     switch (game_list_mode) {
     case Settings::GameListMode::TreeView:
@@ -288,7 +298,6 @@ void GameList::ResetViewMode() {
         layout->removeWidget(m_currentView);
 
     const bool newTreeMode = mode == Settings::GameListMode::TreeView;
-    const bool newFlatMode = mode == Settings::GameListMode::CarouselView;
 
     switch (mode) {
     case Settings::GameListMode::TreeView:
@@ -336,6 +345,8 @@ void GameList::ResetViewMode() {
                           QScrollerProperties::OvershootAlwaysOff);
     scroller->setScrollerProperties(props);
 
+    // Every view reads the loaded library as it is (the Carousel through its own flat row), so
+    // switching views never scans the library again.
     m_isTreeMode = newTreeMode;
     if (m_isFlat != newFlatMode) {
         m_isFlat = newFlatMode;
@@ -371,10 +382,269 @@ void GameList::ResetViewMode() {
         emit ShowList(game_list_mode == Settings::GameListMode::GridView ||
                       !item_model->IsEmpty());
     }
+
+    // A library style replaces the Modern grid: the grid keeps its state underneath, hidden, so
+    // going back to it needs nothing else.
+    ActivateStyle(LibraryStyles::Active());
+}
+
+void GameList::UpdateStyleToggles() {
+    if (style_view == nullptr) {
+        return;
+    }
+    style_view->SetShowNames(UISettings::values.show_game_name.GetValue());
+    style_view->SetShowInfo(Lichii::ShowAnyGameInfo());
+}
+
+void GameList::ActivateStyle(const LibraryStyles::StyleInfo* info) {
+    if (style_view != nullptr) {
+        layout->removeWidget(style_view);
+    }
+    if (info == nullptr || (style_view != nullptr && style_id != info->id)) {
+        if (style_view != nullptr) {
+            // The old view lives until the event loop deletes it: cut it off now so a rebuild it
+            // still has queued neither reports a selection nor works on the model.
+            style_view->disconnect(this);
+            style_model->disconnect(style_view);
+            style_view->hide();
+            style_view->deleteLater();
+            style_view = nullptr;
+        }
+        style_id.clear();
+    }
+    if (info == nullptr) {
+        return;
+    }
+
+    if (style_view == nullptr) {
+        if (style_selected_path.isEmpty() && grid_view->currentIndex().isValid()) {
+            style_selected_path =
+                grid_view->currentIndex().data(GameListItemPath::FullPathRole).toString();
+        }
+        style_view = info->factory(this);
+        if (style_view == nullptr) {
+            return;
+        }
+        style_id = info->id;
+        style_view->setObjectName(QStringLiteral("libraryStyleView"));
+        style_view->setProperty("modernLibrary", true);
+        style_view->setProperty("libraryStyle", QString::fromUtf8(info->id));
+        style_view->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        style_view->SetModel(style_model);
+        // A view may pick its first entry in SetModel without emitting CurrentChanged.
+        if (style_selected_path.isEmpty()) {
+            style_selected_path =
+                style_view->CurrentIndex().data(GameListItemPath::FullPathRole).toString();
+        }
+
+        connect(style_view, &LibraryStyles::LibraryStyleView::LaunchRequested, this,
+                &GameList::OnStyleLaunch);
+        connect(style_view, &LibraryStyles::LibraryStyleView::ContextMenuRequested, this,
+                &GameList::OnStyleContextMenu);
+        connect(style_view, &LibraryStyles::LibraryStyleView::CurrentChanged, this,
+                [this](const QModelIndex& index) {
+                    // While populating, views fall back to their first entry: keep the choice.
+                    if (m_populating) {
+                        return;
+                    }
+                    if (index.data(GameListItem::TypeRole).value<GameListItemType>() ==
+                        GameListItemType::Game) {
+                        style_selected_path =
+                            index.data(GameListItemPath::FullPathRole).toString();
+                    }
+                });
+
+        // The shared keys are read before the view sees them, on the view and on every widget
+        // inside it (children added later get the filter through ChildAdded).
+        style_view->installEventFilter(this);
+        for (QWidget* child : style_view->findChildren<QWidget*>()) {
+            child->installEventFilter(this);
+        }
+    }
+
+    grid_view->setVisible(false);
+    grid_view->setEnabled(false);
+    folder_navigation->hide();
+    layout->insertWidget(layout->indexOf(m_currentView) + 1, style_view);
+    style_view->setVisible(true);
+    style_view->setEnabled(!m_populating);
+    UpdateStyleToggles();
+    RestoreStyleSelection();
+    // The grid that had focus is disabled now; without this, keys go nowhere until a click.
+    FocusStyleView();
+}
+
+void GameList::FocusStyleView() {
+    if (style_view == nullptr || !style_view->isEnabled() || !style_view->isVisible()) {
+        return;
+    }
+    const QWidget* focus = QApplication::focusWidget();
+    if (focus != nullptr && search_field->isAncestorOf(focus)) {
+        return; // Typing a search; don't steal the cursor.
+    }
+    style_view->setFocus(Qt::OtherFocusReason);
+}
+
+bool GameList::IsStyleObject(const QObject* object) const {
+    if (style_view == nullptr || object == nullptr) {
+        return false;
+    }
+    if (object == style_view) {
+        return true;
+    }
+    return object->isWidgetType() &&
+           style_view->isAncestorOf(static_cast<const QWidget*>(object));
+}
+
+void GameList::OnControllerKey(Qt::Key key, bool auto_repeat) {
+    if (system.IsPoweredOn()) {
+        return;
+    }
+    if (!this->isActiveWindow()) {
+        return;
+    }
+    if (style_view != nullptr && style_view->isVisible()) {
+        // B toggles the names in the styles; there is no folder level to leave.
+        const Qt::Key style_key = key == Qt::Key_Escape ? Qt::Key_B : key;
+        QWidget* target = style_view->focusWidget();
+        if (target == nullptr || !IsStyleObject(target)) {
+            target = style_view;
+        }
+        QCoreApplication::postEvent(target, new QKeyEvent(QEvent::KeyPress, style_key,
+                                                          Qt::NoModifier, QString(), auto_repeat));
+        return;
+    }
+    if (key == Qt::Key_BracketLeft || key == Qt::Key_BracketRight) {
+        // L / R switch the view here too, so they cycle through every view.
+        emit CycleStyleRequested(key == Qt::Key_BracketLeft ? -1 : 1);
+        return;
+    }
+    if (key == Qt::Key_X || key == Qt::Key_Y) {
+        // Library style buttons only.
+        return;
+    }
+    QKeyEvent* event =
+        new QKeyEvent(QEvent::KeyPress, key, Qt::NoModifier, QString(), auto_repeat);
+    QCoreApplication::postEvent(m_currentView, event);
+}
+
+bool GameList::HandleStyleKey(QObject* target, const QKeyEvent* event) {
+    const int key = event->key();
+    const Qt::KeyboardModifiers modifiers =
+        event->modifiers() & ~Qt::KeyboardModifiers(Qt::KeypadModifier);
+    if (modifiers == Qt::ControlModifier) {
+        if (key == Qt::Key_BracketLeft || key == Qt::Key_BracketRight) {
+            emit CycleStyleRequested(key == Qt::Key_BracketLeft ? -1 : 1);
+            return true;
+        }
+        return false;
+    }
+    if (modifiers != Qt::NoModifier) {
+        return false;
+    }
+
+    // Handled right away, as the arrow keys are, and still marked as a repeat while held:
+    // the views step held keys differently.
+    const auto send_arrow = [target, event](Qt::Key arrow) {
+        QKeyEvent arrow_event(QEvent::KeyPress, arrow, Qt::NoModifier, QString(),
+                              event->isAutoRepeat());
+        QCoreApplication::sendEvent(target, &arrow_event);
+    };
+    switch (key) {
+    case Qt::Key_Return:
+    case Qt::Key_Enter:
+        OnStyleLaunch(style_view->CurrentIndex());
+        return true;
+    case Qt::Key_W:
+        send_arrow(Qt::Key_Up);
+        return true;
+    case Qt::Key_A:
+        send_arrow(Qt::Key_Left);
+        return true;
+    case Qt::Key_S:
+        send_arrow(Qt::Key_Down);
+        return true;
+    case Qt::Key_D:
+        send_arrow(Qt::Key_Right);
+        return true;
+    case Qt::Key_I:
+    case Qt::Key_Y:
+        emit ToggleInfoRequested();
+        return true;
+    case Qt::Key_B:
+        emit ToggleNamesRequested();
+        return true;
+    case Qt::Key_R:
+    case Qt::Key_X: {
+        const QString label = style_view->CycleOption();
+        if (!label.isEmpty()) {
+            emit StyleOptionChanged(label);
+        }
+        return true;
+    }
+    case Qt::Key_BracketLeft:
+        emit CycleStyleRequested(-1);
+        return true;
+    case Qt::Key_BracketRight:
+        emit CycleStyleRequested(1);
+        return true;
+    default:
+        return false;
+    }
+}
+
+void GameList::OnStyleLaunch(const QModelIndex& index) {
+    if (!index.isValid()) {
+        return;
+    }
+    QModelIndex source = index.model() == style_model ? style_model->mapToSource(index) : index;
+    source = source.sibling(source.row(), 0);
+    // Folder rows: a style opens or flattens them itself, launching a folder does nothing.
+    if (IsGameDirectoryType(source.data(GameListItem::TypeRole).value<GameListItemType>())) {
+        return;
+    }
+    ValidateEntry(source);
+}
+
+void GameList::OnStyleContextMenu(const QModelIndex& index, const QPoint& global_pos) {
+    QModelIndex source;
+    if (index.isValid()) {
+        source = index.model() == style_model ? style_model->mapToSource(index) : index;
+    }
+    PopupContextMenuAt(source, global_pos);
+}
+
+void GameList::RestoreStyleSelection() {
+    if (style_view == nullptr || style_selected_path.isEmpty() || style_model->rowCount() == 0) {
+        return;
+    }
+    const QModelIndexList matches = style_model->match(
+        style_model->index(0, 0), GameListItemPath::FullPathRole, style_selected_path, -1,
+        Qt::MatchExactly | Qt::MatchRecursive);
+    // The favorites row holds copies: prefer the entry inside its folder.
+    QModelIndex found;
+    for (const QModelIndex& match : matches) {
+        if (!found.isValid()) {
+            found = match;
+        }
+        if (match.parent().data(GameListItem::TypeRole).value<GameListItemType>() !=
+            GameListItemType::Favorites) {
+            found = match;
+            break;
+        }
+    }
+    // The view answers SetCurrentIndex with CurrentChanged; never re-enter from there.
+    if (found.isValid() && !restoring_style_selection &&
+        style_view->CurrentIndex() != found) {
+        restoring_style_selection = true;
+        style_view->SetCurrentIndex(found);
+        restoring_style_selection = false;
+    }
 }
 
 void GameList::OnTextChanged(const QString& new_text) {
     const QString edit_filter_text = new_text.toLower();
+    style_model->SetFilterText(edit_filter_text);
 
     if (m_isTreeMode) {
         tree_view->ApplyFilter(edit_filter_text, item_model);
@@ -435,10 +705,50 @@ void GameList::OnPopulatingCompleted(const QStringList& watch_list) {
                 }
             }
         }
+        // First load after start: open the folder holding the last played game (or the first
+        // folder) and select that game, instead of the folder overview.
+        QModelIndex start_game;
+        if (!root_index.isValid() && !start_folder_opened) {
+            start_folder_opened = true;
+            for (const QString& recent : std::as_const(UISettings::values.recent_files)) {
+                // All hits: the Favorites row holds copies and comes first.
+                const QModelIndexList matches = item_model->match(
+                    item_model->index(0, 0), GameListItemPath::FullPathRole, recent, -1,
+                    Qt::MatchExactly | Qt::MatchRecursive);
+                for (const QModelIndex& match : matches) {
+                    if (match.parent().isValid() &&
+                        match.parent().data(GameListItem::TypeRole).value<GameListItemType>() !=
+                            GameListItemType::Favorites) {
+                        start_game = match;
+                        break;
+                    }
+                }
+                if (start_game.isValid()) {
+                    break;
+                }
+            }
+            if (start_game.isValid()) {
+                root_index = start_game.parent();
+            } else if (item_model->rowCount() > 2) {
+                const QModelIndex first = item_model->index(1, 0);
+                const auto type = first.data(GameListItem::TypeRole).value<GameListItemType>();
+                if (type == GameListItemType::CustomDir || type == GameListItemType::SdmcDir ||
+                    type == GameListItemType::UserNandDir || type == GameListItemType::SysNandDir) {
+                    root_index = first;
+                }
+            }
+            if (start_game.isValid() && style_selected_path.isEmpty()) {
+                style_selected_path = start_game.data(GameListItemPath::FullPathRole).toString();
+            }
+        }
         grid_view->setRootIndex(root_index);
         if (root_index.isValid()) {
             grid_view->UpdateIconSize();
             grid_view->scrollToTop();
+            if (start_game.isValid()) {
+                grid_view->setCurrentIndex(start_game);
+                grid_view->scrollTo(start_game);
+            }
         } else {
             const auto* first_item = item_model->item(0, 0);
             const bool hide_favorites =
@@ -512,22 +822,8 @@ void GameList::OnPopulatingCompleted(const QStringList& watch_list) {
     m_currentView->setEnabled(true);
 
     int children_total = 0;
-    if (m_isTreeMode) {
-        for (int i = 1; i < item_model->rowCount() - 1; ++i) {
-            children_total += item_model->item(i, 0)->rowCount();
-        }
-    } else if (game_list_mode == Settings::GameListMode::GridView) {
-        for (int i = 1; i < item_model->rowCount() - 1; ++i) {
-            children_total += item_model->item(i, 0)->rowCount();
-        }
-    } else {
-        for (int i = 0; i < item_model->rowCount(); ++i) {
-            const auto* item = item_model->item(i, 0);
-            if (item->data(GameListItem::TypeRole).value<GameListItemType>() ==
-                GameListItemType::Game) {
-                ++children_total;
-            }
-        }
+    for (int i = 1; i < item_model->rowCount() - 1; ++i) {
+        children_total += item_model->item(i, 0)->rowCount();
     }
 
     search_field->setFilterResult(children_total, children_total);
@@ -539,17 +835,20 @@ void GameList::OnPopulatingCompleted(const QStringList& watch_list) {
     const auto sort_order = tree_view->header()->sortIndicatorOrder();
     if (m_isTreeMode) {
         item_model->sort(sort_column, sort_order);
-    } else if (game_list_mode != Settings::GameListMode::GridView) {
-        const QList<QStandardItem*> add_folder_row =
-            item_model->takeRow(item_model->rowCount() - 1);
-        item_model->sort(sort_column, sort_order);
-        item_model->appendRow(add_folder_row);
     }
+    // The Carousel sorts its row of all games itself.
+    carousel_view->SetSort(sort_column, sort_order);
 
     // A repopulate (a directory removed, deep scan toggled) replaces the rows: apply the search
     // text the user still has typed to them.
     if (!search_field->filterText().isEmpty()) {
         OnTextChanged(search_field->filterText());
+    }
+
+    if (style_view != nullptr) {
+        style_view->setEnabled(true);
+        RestoreStyleSelection();
+        FocusStyleView();
     }
 
     emit PopulatingCompleted();
@@ -612,15 +911,60 @@ void GameList::RefreshExternalContent() {
 }
 
 void GameList::UpdateIconSizes() {
+    UpdateStyleToggles();
+    if (style_view != nullptr) {
+        style_view->UpdateIconSize();
+    }
+    // The cards read the icon size and the names setting when they paint, so a repaint is enough
+    // even when the cell size stays the same.
     switch (game_list_mode) {
     case Settings::GameListMode::GridView:
         grid_view->UpdateIconSize();
+        grid_view->viewport()->update();
         break;
     case Settings::GameListMode::CarouselView:
         carousel_view->UpdateIconSize();
+        carousel_view->viewport()->update();
         break;
     case Settings::GameListMode::TreeView:
+        // View > Game Info picks the columns here.
+        tree_view->UpdateColumnVisibility(item_model);
         break;
+    }
+}
+
+/// Gives a folder, Add New Game Directory or Favorites row the icon of the current theme again,
+/// so a theme change doesn't need a new scan of the library.
+static void RefreshThemeIcon(QStandardItem* item) {
+    const char* icon_name = nullptr;
+    switch (static_cast<GameListItemType>(item->type())) {
+    case GameListItemType::SdmcDir:
+        icon_name = "sd_card";
+        break;
+    case GameListItemType::UserNandDir:
+    case GameListItemType::SysNandDir:
+        icon_name = "chip";
+        break;
+    case GameListItemType::CustomDir:
+        icon_name =
+            QFileInfo::exists(item->data(Qt::DisplayRole).toString()) ? "folder" : "bad_folder";
+        break;
+    case GameListItemType::AddDir:
+        icon_name = "list-add";
+        break;
+    case GameListItemType::Favorites:
+        icon_name = "star";
+        break;
+    default:
+        return;
+    }
+    item->setData(ThemeIcon(icon_name), Qt::DecorationRole);
+}
+
+void GameList::RefreshThemeIcons() {
+    // Folder rows carry their theme icon from the scan; swap it in place instead of scanning again.
+    for (int row = 0; row < item_model->rowCount(); ++row) {
+        RefreshThemeIcon(item_model->item(row, 0));
     }
 }
 
@@ -731,7 +1075,11 @@ void GameList::UpdateFolderNavigation() {
 }
 
 void GameList::PopupContextMenu(const QPoint& menu_location) {
-    QModelIndex item = m_currentView->indexAt(menu_location);
+    PopupContextMenuAt(m_currentView->indexAt(menu_location),
+                       m_currentView->viewport()->mapToGlobal(menu_location));
+}
+
+void GameList::PopupContextMenuAt(const QModelIndex& item, const QPoint& global_pos) {
     if (!item.isValid()) {
         if (m_isTreeMode)
             return;
@@ -741,7 +1089,7 @@ void GameList::PopupContextMenu(const QPoint& menu_location) {
         addGameDirAction->setIcon(MenuIcon("plus"));
 
         connect(addGameDirAction, &QAction::triggered, this, &GameList::AddDirectory);
-        blank_menu.exec(m_currentView->viewport()->mapToGlobal(menu_location));
+        blank_menu.exec(global_pos);
         return;
     }
 
@@ -767,7 +1115,7 @@ void GameList::PopupContextMenu(const QPoint& menu_location) {
     default:
         break;
     }
-    context_menu.exec(m_currentView->viewport()->mapToGlobal(menu_location));
+    context_menu.exec(global_pos);
 }
 
 void GameList::SetReportableProgramId(u64 program_id) {
@@ -1124,6 +1472,20 @@ void GameList::SetupScrollAnimation() {
 }
 
 bool GameList::eventFilter(QObject* obj, QEvent* event) {
+    if (style_view != nullptr && IsStyleObject(obj)) {
+        if (event->type() == QEvent::KeyPress &&
+            HandleStyleKey(obj, static_cast<QKeyEvent*>(event))) {
+            return true;
+        }
+        if (event->type() == QEvent::ChildAdded) {
+            QObject* child = static_cast<QChildEvent*>(event)->child();
+            if (child != nullptr && child->isWidgetType()) {
+                child->installEventFilter(this);
+            }
+        }
+        return QWidget::eventFilter(obj, event);
+    }
+
     if (obj == m_currentView && event->type() == QEvent::KeyPress &&
         game_list_mode == Settings::GameListMode::GridView) {
         const auto* key_event = static_cast<QKeyEvent*>(event);
@@ -1210,7 +1572,7 @@ GameListPlaceholder::GameListPlaceholder(MainWindow* parent) : QWidget{parent} {
     image = new QLabel;
     text = new QLabel;
     layout->setAlignment(Qt::AlignCenter);
-    image->setPixmap(QIcon::fromTheme(QStringLiteral("plus_folder")).pixmap(200));
+    RefreshThemeIcon();
 
     RetranslateUI();
     QFont font = text->font();
@@ -1228,6 +1590,10 @@ GameListPlaceholder::~GameListPlaceholder() = default;
 
 void GameListPlaceholder::mouseDoubleClickEvent(QMouseEvent* event) {
     emit GameListPlaceholder::AddDirectory();
+}
+
+void GameListPlaceholder::RefreshThemeIcon() {
+    image->setPixmap(QIcon::fromTheme(QStringLiteral("plus_folder")).pixmap(200));
 }
 
 void GameListPlaceholder::changeEvent(QEvent* event) {

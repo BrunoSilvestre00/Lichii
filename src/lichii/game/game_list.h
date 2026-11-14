@@ -40,6 +40,12 @@ enum class StartGameType;
 class GameCarousel;
 
 class QAbstractItemView;
+class QKeyEvent;
+namespace LibraryStyles {
+class FilterModel;
+class LibraryStyleView;
+struct StyleInfo;
+} // namespace LibraryStyles
 namespace Core {
 class System;
 }
@@ -89,6 +95,9 @@ public:
 
     void ResetViewMode();
 
+    /// Hands the persisted Names and Info panel toggles to the active style.
+    void UpdateStyleToggles();
+
 public slots:
     void SetNupConversionRunning(bool running);
     void SetNxToolRunning(bool running);
@@ -97,6 +106,7 @@ public slots:
     void SetGameTitle(u64 program_id, const QString& title);
     void RefreshExternalContent();
     void UpdateIconSizes();
+    void RefreshThemeIcons();
     void OnPopulate();
 
 signals:
@@ -133,6 +143,13 @@ signals:
     void PopulatingCompleted();
     void SaveConfig();
 
+    /// Shared library style keys: B toggles the names, I / Y the info panel, [ and ] (LB / RB)
+    /// switch to the previous or next style. R / X changed the style's own option to `label`.
+    void ToggleNamesRequested();
+    void ToggleInfoRequested();
+    void CycleStyleRequested(int step);
+    void StyleOptionChanged(const QString& label);
+
 private slots:
     void OnTextChanged(const QString& new_text);
     void OnFilterCloseClicked();
@@ -151,6 +168,17 @@ private:
     void UpdateFolderNavigation();
 
     void PopupContextMenu(const QPoint& menu_location);
+    void PopupContextMenuAt(const QModelIndex& item, const QPoint& global_pos);
+
+    void FocusStyleView();
+    void ActivateStyle(const LibraryStyles::StyleInfo* info);
+    bool IsStyleObject(const QObject* object) const;
+    bool HandleStyleKey(QObject* target, const QKeyEvent* event);
+    /// A controller button as a key press; held directions come again with auto_repeat set.
+    void OnControllerKey(Qt::Key key, bool auto_repeat);
+    void OnStyleLaunch(const QModelIndex& index);
+    void OnStyleContextMenu(const QModelIndex& index, const QPoint& global_pos);
+    void RestoreStyleSelection();
     void AddGamePopup(QMenu& context_menu, u64 program_id, const std::string& path);
     void AddCustomDirPopup(QMenu& context_menu, QModelIndex selected);
     void AddPermDirPopup(QMenu& context_menu, QModelIndex selected);
@@ -186,14 +214,23 @@ private:
     Core::System& system;
 
     bool m_isTreeMode = true;
-    bool m_isFlat = false;
     bool m_populating = false;
     int grid_root_dir_index_to_restore = -1;
+    /// The first load after start opens the folder of the last played game (see
+    /// OnPopulatingCompleted); later loads keep whatever the user opened.
+    bool start_folder_opened = false;
     bool suppress_grid_double_click = false;
     bool nup_conversion_running{};
     bool nx_tool_running{};
     u64 reportable_program_id{};
     QAbstractItemView* m_currentView = nullptr;
+
+    LibraryStyles::FilterModel* style_model = nullptr;
+    LibraryStyles::LibraryStyleView* style_view = nullptr;
+    std::string style_id;
+    /// Path of the game selected in a style, kept across style switches and repopulates.
+    QString style_selected_path;
+    bool restoring_style_selection = false;
 };
 
 class GameListPlaceholder : public QWidget {
@@ -201,6 +238,8 @@ class GameListPlaceholder : public QWidget {
 public:
     explicit GameListPlaceholder(MainWindow* parent = nullptr);
     ~GameListPlaceholder();
+
+    void RefreshThemeIcon();
 
 signals:
     void AddDirectory();
