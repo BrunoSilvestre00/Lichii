@@ -816,6 +816,20 @@ private:
         u32 large_logged{};
         std::chrono::steady_clock::time_point last{};
     } create_trace;
+
+    /// The last index buffer UpdateIndexBuffer resolved, and what it depends on.
+    struct IndexBufferMemo {
+        const void* channel{};
+        const void* memory{};
+        GPUVAddr begin{};
+        GPUVAddr end{};
+        u64 map_serial{~u64{0}};
+        u64 deletions{};
+        DAddr device_addr{};
+        u32 found_size{}; ///< The size FindBuffer was asked for: the buffer holds at least this
+        BufferId buffer_id{};
+    };
+    IndexBufferMemo index_buffer_memo;
     struct GeometryStats {
         u64 syncs{};
         u64 syncs_skipped{};
