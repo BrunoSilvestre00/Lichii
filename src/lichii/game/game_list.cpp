@@ -348,11 +348,6 @@ void GameList::ResetViewMode() {
     // Every view reads the loaded library as it is (the Carousel through its own flat row), so
     // switching views never scans the library again.
     m_isTreeMode = newTreeMode;
-    if (m_isFlat != newFlatMode) {
-        m_isFlat = newFlatMode;
-        item_model->SetFlat(newFlatMode);
-        item_model->PopulateAsync(UISettings::values.game_dirs);
-    }
 
     if (mode == Settings::GameListMode::GridView) {
         grid_view->setRootIndex(QModelIndex{});

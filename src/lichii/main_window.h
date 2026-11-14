@@ -461,7 +461,6 @@ private slots:
     void LaunchFirmwareApplet(u64 program_id, std::optional<Service::NFP::CabinetMode> mode);
     void OnCreateHomeMenuDesktopShortcut();
     void OnCreateHomeMenuApplicationMenuShortcut();
-    void OnCaptureScreenshot();
     void OnReportBug();
     /// ask_where: the Save As dialog when the settings want it (photo mode's picture skips it).
     void OnCaptureScreenshot(bool ask_where = true);
