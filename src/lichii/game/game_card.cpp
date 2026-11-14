@@ -39,12 +39,14 @@ const QImage& Switch2LogoImage() {
 }
 
 void DrawSwitch2Placeholder(QPainter* painter, const QRect& bounds) {
+    const int side = std::min(bounds.width(), bounds.height());
+    const QRectF logo_rect(bounds.center().x() - side / 2.0,
+                           bounds.center().y() - side / 2.0, side, side);
+    // Draw the logo first: the outline below is a fallback for a missing or undecodable image, and
+    // must not hide a logo that is there.
     const QImage& switch2_logo = Switch2LogoImage();
     if (!switch2_logo.isNull()) {
         painter->fillRect(bounds, QColor(230, 0, 18));
-        const int side = std::min(bounds.width(), bounds.height());
-        const QRectF logo_rect(bounds.center().x() - side / 2.0,
-                               bounds.center().y() - side / 2.0, side, side);
         painter->drawImage(logo_rect, switch2_logo);
         return;
     }

@@ -101,6 +101,9 @@ void GameListModel::DonePopulating(const QStringList& watch_list) {
         emit ShowList(true);
     } else {
         const bool has_games = !IsEmpty();
+        // The modern (grid) view keeps its empty-library card: it is the add-a-folder entry point,
+        // so hiding the whole list leaves a blank window. Only the tree and carousel views have no
+        // such card.
         emit ShowList(has_games ||
                       UISettings::values.game_list_mode.GetValue() == Settings::GameListMode::GridView);
         invisibleRootItem()->appendRow(new GameListAddDir());

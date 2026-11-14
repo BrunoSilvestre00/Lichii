@@ -92,6 +92,7 @@ GameList::GameList(FileSys::VirtualFilesystem vfs_, FileSys::ManualContentProvid
     connect(tree_view, &QTreeView::activated, this, &GameList::ValidateEntry);
     connect(tree_view, &QTreeView::customContextMenuRequested, this, &GameList::PopupContextMenu);
 
+    connect(grid_view, &QListView::activated, this, &GameList::ValidateEntry);
     connect(grid_view, &QListView::doubleClicked, this, [this](const QModelIndex& index) {
         if (suppress_grid_double_click) {
             return;
@@ -145,6 +146,12 @@ GameList::GameList(FileSys::VirtualFilesystem vfs_, FileSys::ManualContentProvid
 
 void GameList::SetNupConversionRunning(bool running) {
     nup_conversion_running = running;
+}
+
+void GameList::SetModernLibrary(bool modern) {
+    if (search_field != nullptr) {
+        search_field->SetModernMode(modern);
+    }
 }
 
 void GameList::SetNxToolRunning(bool running) {

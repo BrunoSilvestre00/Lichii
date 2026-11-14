@@ -4122,6 +4122,9 @@ void MainWindow::SetGameListMode(Settings::GameListMode mode, bool update_librar
     }
     ui->action_Show_Game_Name->setEnabled(mode != Settings::GameListMode::TreeView);
 
+    // The search field styles itself from the library style, so it has to follow the switch.
+    game_list->SetModernLibrary(modern_library);
+
     CheckIconSize();
     game_list->ResetViewMode();
 }

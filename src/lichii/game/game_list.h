@@ -89,6 +89,9 @@ public:
 
     QStandardItemModel* GetModel() const;
 
+    /// Styles the search field for the current library style (modern grid vs classic tree).
+    void SetModernLibrary(bool modern);
+
     /// Disables events from the emulated controller
     void UnloadController();
 

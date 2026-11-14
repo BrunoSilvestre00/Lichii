@@ -263,7 +263,15 @@ public:
                                                  Qt::SmoothTransformation)),
                       Qt::DecorationRole);
         item->setData(has_icon, HasIconRole);
-        item->setData(picture, CardIconRole);
+        // The card view shows this at card size, so scale it once here instead of storing the
+        // full-resolution image in every item.
+        const u32 card_target = std::max<u32>(size, u32{384});
+        item->setData(picture.width() > static_cast<int>(card_target) ||
+                              picture.height() > static_cast<int>(card_target)
+                          ? picture.scaled(card_target, card_target, Qt::KeepAspectRatio,
+                                           Qt::SmoothTransformation)
+                          : picture,
+                      CardIconRole);
     }
 
     int type() const override {

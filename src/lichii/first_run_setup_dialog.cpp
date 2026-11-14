@@ -388,7 +388,9 @@ QLabel* MutedLabel(const QString& text, QWidget* parent) {
 FirstRunSetupDialog::FirstRunSetupDialog(QWidget* parent) : QDialog(parent) {
     setObjectName(QStringLiteral("FirstRunSetupDialog"));
     setWindowTitle(tr("Set up Lichii"));
-    setMinimumSize(640, 460);
+    // The width is the useful constraint; the height follows the screen so small displays do not
+    // clip the dialog.
+    setMinimumWidth(640);
 
     auto current_theme = [] {
         const std::string& theme = UISettings::values.theme;

@@ -277,6 +277,9 @@ LoadingScreen::Snapshot LoadingScreen::SnapshotLoader(Loader::AppLoader& loader)
 }
 
 void LoadingScreen::ResetDisplay() {
+    // A fade that is still running would otherwise hide the screen that is being prepared.
+    fadeout_animation->stop();
+    opacity_effect->setOpacity(1);
     logo_float_animation->stop();
     ui->logo->setContentsMargins(0, LogoFloatRange, 0, 0);
     ui->banner->clear();
