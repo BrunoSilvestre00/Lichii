@@ -5491,10 +5491,11 @@ void MainWindow::UpdateStatusBar() {
 
     if (shaders_building > 0) {
         // The count is every build since the status was last idle: a background prebuild of
-        // thousands only showed its total, never how far along it was.
+        // thousands only showed its total, never how far along it was. "0 left" stays up for the
+        // moment the label lingers once all are done.
         const int left = (std::max)(shader_notify.ShadersLeft(), 0);
         shader_building_label->setText(
-            left > 0 && left != shaders_building
+            left != shaders_building
                 ? tr("Building: %n shader(s), %1 left", "", shaders_building).arg(left)
                 : tr("Building: %n shader(s)", "", shaders_building));
         shader_building_label->setVisible(true);
