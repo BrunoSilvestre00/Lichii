@@ -86,6 +86,7 @@ ThemePalette PaletteFor(UISettings::Theme theme) {
                 QColor(QStringLiteral("#94a3b8")), QColor(QStringLiteral("#7a5af8"))};
     case UISettings::Theme::LichiiDark:
     case UISettings::Theme::LichiiModern:
+    case UISettings::Theme::Ris:
         return {QColor(QStringLiteral("#17181b")), QColor(QStringLiteral("#131416")),
                 QColor(QStringLiteral("#202125")), QColor(QStringLiteral("#232429")),
                 QColor(QStringLiteral("#34363c")), QColor(QStringLiteral("#ececef")),
