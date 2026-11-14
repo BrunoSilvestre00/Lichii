@@ -156,7 +156,7 @@ std::vector<u32> EmitUntrackedAccesses(bool native, u32 min_ssbo_alignment) {
 }
 } // namespace
 
-TEST_CASE("Global memory helpers route with one switch and return only from their last block",
+TEST_CASE("Global memory helpers branch per buffer and return only from their last block",
           "[shader_recompiler][global_memory]") {
     constexpr u32 OpEntryPoint = 15;
     constexpr u32 OpFunction = 54;
@@ -196,12 +196,7 @@ TEST_CASE("Global memory helpers route with one switch and return only from thei
                 i += count;
             }
             CHECK(helpers >= 7);
-            const auto switches = Instructions(code, OpSwitch);
-            REQUIRE_FALSE(switches.empty());
-            for (const auto& operands : switches) {
-                // Selector, default, then one literal and label per candidate buffer.
-                CHECK(operands.size() >= 6);
-            }
+            CHECK(Instructions(code, OpSwitch).empty());
         }
     }
 }

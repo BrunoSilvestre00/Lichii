@@ -973,10 +973,10 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
     }
     using DefPtr = Id StorageDefinitions::*;
     const Id zero{u32_zero_value};
-    // Routes the access to its candidate buffer with one OpSwitch whose cases all merge back, so a
-    // helper only returns from its last block, with the access's value (or fallback when no buffer
-    // holds the address) from an OpPhi. NVIDIA inlines the helpers at every access, and a return in
-    // each branch made Ocarina's programs that hang its Linux driver hold hundreds of exits from
+    // Routes the access with one branch per candidate buffer. Every branch merges back, so a helper
+    // only returns from its last block, with the access's value (or fallback when no buffer holds
+    // the address) carried by OpPhis. NVIDIA inlines the helpers at every access, and a return in
+    // each branch gave the Ocarina programs that hang its Linux driver hundreds of exits from
     // nested selections (#619).
     const auto define_body{[&](DefPtr ssbo_member, Id addr, Id element_pointer, u32 shift,
                                Id result_type, Id fallback, auto&& callback) -> Id {
@@ -1054,34 +1054,28 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
             }
         }
         const bool has_value{result_type.value != void_id.value};
-        if (candidates.empty()) {
-            return fallback;
-        }
-        std::vector<Sirit::Literal> literals;
-        std::vector<Id> labels;
-        for (const u32 index : candidates) {
-            literals.push_back(index);
-            labels.push_back(OpLabel());
-        }
-        const Id merge_label{OpLabel()};
-        OpSelectionMerge(merge_label, spv::SelectionControlMask::MaskNone);
-        OpSwitch(route, merge_label, literals, labels);
-        std::vector<Id> phi_operands{fallback, header_label};
+        Id value{fallback};
+        Id predecessor{header_label};
         for (size_t i = 0; i < candidates.size(); ++i) {
-            AddLabel(labels[i]);
+            const Id routed{OpIEqual(U1, route, Const(candidates[i]))};
+            const Id then_label{OpLabel()};
+            const Id merge_label{OpLabel()};
+            OpSelectionMerge(merge_label, spv::SelectionControlMask::MaskNone);
+            OpBranchConditional(routed, then_label, merge_label);
+            AddLabel(then_label);
             const Id ssbo_id{ssbos[candidates[i]].*ssbo_member};
             const Id ssbo_offset{OpUConvert(U32[1], OpISub(U64, addr, bases[i]))};
             const Id ssbo_index{OpShiftRightLogical(U32[1], ssbo_offset, Const(shift))};
-            const Id value{callback(OpAccessChain(element_pointer, ssbo_id, zero, ssbo_index),
-                                    ssbo_id, ssbo_index)};
+            const Id result{callback(OpAccessChain(element_pointer, ssbo_id, zero, ssbo_index),
+                                     ssbo_id, ssbo_index)};
             OpBranch(merge_label);
+            AddLabel(merge_label);
             if (has_value) {
-                phi_operands.push_back(value);
-                phi_operands.push_back(labels[i]);
+                value = OpPhi(result_type, result, then_label, value, predecessor);
             }
+            predecessor = merge_label;
         }
-        AddLabel(merge_label);
-        return has_value ? OpPhi(result_type, phi_operands) : fallback;
+        return value;
     }};
     const auto define_load{[&](DefPtr ssbo_member, Id element_pointer, Id type, u32 shift) {
         const Id function_type{TypeFunction(type, U64)};
