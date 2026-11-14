@@ -827,8 +827,9 @@ bool KeplerCompute::ProcessGameDlss(u64 program_id, u64 native_key) {
     if (dlss_chain.output_pass) {
         return replacement && !recheck_after_dispatch && FinishDlssEvaluation();
     }
-    const bool replacement_will_draw =
-        replacement && dlss_chain.replacement_drew && fe_upscale_jitter.Has();
+    // An output-mismatch recheck validates this frame's network output: its passes all run.
+    const bool replacement_will_draw = replacement && !recheck_after_dispatch &&
+                                       dlss_chain.replacement_drew && fe_upscale_jitter.Has();
     return (DlssNetworkDroppedForGood() || replacement_will_draw) &&
            !passes->IsPrepass(native_key) && dlss_chain.programs.contains(native_key);
 }
