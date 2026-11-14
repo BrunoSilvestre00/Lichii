@@ -4,9 +4,11 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <random>
 #include <thread>
 #include <vector>
 
@@ -16,13 +18,38 @@ namespace {
 
 namespace fs = std::filesystem;
 
-// Writes a small file to a uniquely named path and returns the path.
-fs::path MakeTempFile(const std::string& name, const std::string& contents) {
-    const fs::path path = fs::temp_directory_path() / name;
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    out << contents;
-    return path;
-}
+// Scratch directory unique to each test invocation: two test processes never
+// share paths, and the directory goes away with the test, early exit included.
+class TempDir {
+public:
+    TempDir() {
+        static std::atomic<unsigned long long> counter{};
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        std::random_device rd;
+        path = fs::temp_directory_path() /
+               ("lichii_vfs_lifetime_" + std::to_string(stamp) + "_" + std::to_string(rd()) + "_" +
+                std::to_string(counter++));
+        fs::create_directory(path);
+    }
+    ~TempDir() {
+        std::error_code error;
+        fs::remove_all(path, error);
+    }
+
+    TempDir(const TempDir&) = delete;
+    TempDir& operator=(const TempDir&) = delete;
+
+    // Writes a small file to a uniquely named path and returns the path.
+    fs::path File(const std::string& name, const std::string& contents) const {
+        const fs::path file_path = path / name;
+        std::ofstream out(file_path, std::ios::binary | std::ios::trunc);
+        out << contents;
+        return file_path;
+    }
+
+private:
+    fs::path path;
+};
 
 } // Anonymous namespace
 
@@ -31,7 +58,8 @@ fs::path MakeTempFile(const std::string& name, const std::string& contents) {
 // fix this was a use-after-free (ASan) or an abort on hardened libc++ when
 // ~RealVfsFile locked the destroyed filesystem's mutex during app shutdown.
 TEST_CASE("RealVfsFile survives its RealVfsFilesystem", "[core][file_sys]") {
-    const auto path = MakeTempFile("lichii_vfs_lifetime.txt", "hello-vfs");
+    const TempDir dir;
+    const auto path = dir.File("vfs_lifetime.txt", "hello-vfs");
 
     FileSys::VirtualFile file;
     FileSys::VirtualFile lazy;
@@ -52,12 +80,11 @@ TEST_CASE("RealVfsFile survives its RealVfsFilesystem", "[core][file_sys]") {
     file = nullptr;
     lazy = nullptr;
     SUCCEED("files outlived the filesystem without touching it");
-
-    fs::remove(path);
 }
 
 TEST_CASE("RealVfsFile operations after filesystem teardown are defined", "[core][file_sys]") {
-    const auto path = MakeTempFile("lichii_vfs_postmortem.txt", "hello-vfs");
+    const TempDir dir;
+    const auto path = dir.File("vfs_postmortem.txt", "hello-vfs");
 
     FileSys::VirtualFile file;
     {
@@ -77,7 +104,6 @@ TEST_CASE("RealVfsFile operations after filesystem teardown are defined", "[core
     CHECK_FALSE(file->Rename("renamed"));
 
     file = nullptr;
-    fs::remove(path);
 }
 
 TEST_CASE("RealVfsFilesystem alive during concurrent file destruction", "[core][file_sys]") {
@@ -85,10 +111,10 @@ TEST_CASE("RealVfsFilesystem alive during concurrent file destruction", "[core][
     // alive, then the remaining files outlive the filesystem. This does NOT
     // race the filesystem's own destruction (see the next case for that).
     // Distinct paths: the cache dedupes same-path opens into one object.
+    const TempDir dir;
     std::vector<fs::path> paths;
     for (int i = 0; i < 16; i++) {
-        paths.push_back(MakeTempFile("lichii_vfs_concurrent_" + std::to_string(i) + ".txt",
-                                     "hello-vfs"));
+        paths.push_back(dir.File("vfs_concurrent_" + std::to_string(i) + ".txt", "hello-vfs"));
     }
 
     std::vector<FileSys::VirtualFile> files;
@@ -111,10 +137,6 @@ TEST_CASE("RealVfsFilesystem alive during concurrent file destruction", "[core][
         f = nullptr;
     }
     SUCCEED("concurrent destruction completed safely");
-
-    for (const auto& p : paths) {
-        fs::remove(p);
-    }
 }
 
 TEST_CASE("RealVfsFilesystem destroyed concurrently with file destruction", "[core][file_sys]") {
@@ -122,10 +144,10 @@ TEST_CASE("RealVfsFilesystem destroyed concurrently with file destruction", "[co
     // while worker threads are destroying files it handed out. Safe because
     // file destruction only touches the shared state block, which outlives
     // every participant.
+    const TempDir dir;
     std::vector<fs::path> paths;
     for (int i = 0; i < 8; i++) {
-        paths.push_back(MakeTempFile("lichii_vfs_race_" + std::to_string(i) + ".txt",
-                                     "hello-vfs"));
+        paths.push_back(dir.File("vfs_race_" + std::to_string(i) + ".txt", "hello-vfs"));
     }
 
     auto real_fs = std::make_unique<FileSys::RealVfsFilesystem>();
@@ -153,20 +175,15 @@ TEST_CASE("RealVfsFilesystem destroyed concurrently with file destruction", "[co
     t2.join();
 
     SUCCEED("filesystem destruction raced file destruction safely");
-
-    for (const auto& p : paths) {
-        fs::remove(p);
-    }
 }
 
 TEST_CASE("RealVfsFilesystem cache shares file objects for the same path", "[core][file_sys]") {
-    const auto path = MakeTempFile("lichii_vfs_cache.txt", "hello-vfs");
+    const TempDir dir;
+    const auto path = dir.File("vfs_cache.txt", "hello-vfs");
 
     FileSys::RealVfsFilesystem real_fs;
     auto a = real_fs.OpenFile(path.generic_string(), FileSys::OpenMode::Read);
     auto b = real_fs.OpenFile(path.generic_string(), FileSys::OpenMode::Read);
     REQUIRE(a != nullptr);
     CHECK(a == b);
-
-    fs::remove(path);
 }
