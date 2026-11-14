@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// SPDX-FileCopyrightText: 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #pragma once
@@ -15,6 +14,7 @@
 #include <optional>
 #include <span>
 #include <type_traits>
+#include <utility>
 // TODO: find out which don't require stable iters
 #include <unordered_map>
 #include "video_core/page_filter.h"
@@ -139,7 +139,7 @@ public:
 template <class P>
 class TextureCache : public VideoCommon::ChannelSetupCaches<TextureCacheChannelInfo> {
     /// Address shift for caching images into a hash table
-    static constexpr u64 YUZU_PAGEBITS = 20;
+    static constexpr u64 LICHII_PAGEBITS = 20;
 
     /// Enables debugging features to the texture cache
     static constexpr bool ENABLE_VALIDATION = P::ENABLE_VALIDATION;
@@ -154,7 +154,7 @@ class TextureCache : public VideoCommon::ChannelSetupCaches<TextureCacheChannelI
 
     static constexpr size_t UNSET_CHANNEL{(std::numeric_limits<size_t>::max)()};
 
-#ifdef YUZU_LEGACY
+#ifdef LICHII_LEGACY
     static constexpr s64 TARGET_THRESHOLD = 3_GiB;
 #else
     static constexpr s64 TARGET_THRESHOLD = 4_GiB;
@@ -174,12 +174,29 @@ class TextureCache : public VideoCommon::ChannelSetupCaches<TextureCacheChannelI
     u64 native_critical_memory{};
     u64 native_expected_memory{};
     u64 budget_check_frames{};
+    /// Usage under which the collector keeps recently used images (EvictionAge): the driver's
+    /// budget less the out-of-memory and block slack margins, within the host's commit bound.
+    /// Not less the base margin too: a Mario Kart World race on a 7.6 GB budget then reached it
+    /// (6.48 GB) and the collector deleted ~40 recently used images a frame again; images that
+    /// do not fit add to the out-of-memory margin.
+    u64 retention_limit{};
     u64 logged_critical_memory{}; ///< The critical threshold of the last thresholds line logged
     u32 seen_pressure_events{};   ///< Allocator pressure events already answered
     u32 seen_failed_images{};     ///< Images the allocator could not make, already collected for
     u64 pressure_margin{};        ///< Extra room under the budget after images did not fit
     u64 pressure_quiet_frames{};  ///< Frames since the last such image
     u64 slack_margin{};           ///< Extra room for allocator block space the driver counts as used
+    // Device-local memory the allocator placed in host memory (heap over budget): see TickFrame.
+    u64 spill_margin{};           ///< Extra room for it, sized to what spilled (at most 768 MiB)
+    u64 spill_window_bytes{};     ///< Spilled in the current window
+    u64 spill_window_start{};     ///< frame_tick the current window began at
+    u64 spill_quiet_frames{};     ///< Frames since the last spill
+    u64 spill_collect_tick{};     ///< frame_tick of the first forced collect of this episode + 1
+    u32 spill_forced_collects{};  ///< Forced collects in this episode
+    u64 spill_last_collect{};     ///< frame_tick of the last forced collect
+    u64 spill_log_bytes{};        ///< Spilled since the last spill log line
+    u32 spill_log_collects{};     ///< Forced collects since the last spill log line
+    std::chrono::steady_clock::time_point spill_log_time{};
     u64 astc_opaque_images{};
     u64 astc_alpha_images{};
     Common::ScratchBuffer<u8> astc_scan_buffer;
@@ -348,6 +365,19 @@ public:
         return render_targets;
     }
 
+    /// Images created, deleted and created from overlapping ones (joins), invalidations of every
+    /// channel's TIC tables, and TIC or TSC tables moved, since the last call.
+    struct Churn {
+        u64 created{};
+        u64 deleted{};
+        u64 joins{};
+        u64 invalidations{};
+        u64 refreshes{};
+    };
+    Churn TakeChurn() noexcept {
+        return std::exchange(churn, {});
+    }
+
     /// Mark images in a range as modified from the CPU
     void WriteMemory(DAddr cpu_addr, size_t size);
 
@@ -383,7 +413,8 @@ public:
     /// Health check of a game's DLSS network output (dst) against its input (src); see the
     /// runtime's ProbeGameDlssOutput. Returns an earlier check's result when one is ready.
     std::optional<VideoCore::GameDlssProbe> ProbeGameDlssOutput(
-        const Tegra::Engines::Fermi2D::Surface& dst, const Tegra::Engines::Fermi2D::Surface& src);
+        const Tegra::Engines::Fermi2D::Surface& dst, const Tegra::Engines::Fermi2D::Surface& src,
+        std::optional<std::array<u32, 2>> src_region = std::nullopt);
 
     /// Try to find a cached image view in the given CPU address
     [[nodiscard]] std::pair<ImageView*, bool> TryFindFramebufferImageView(
@@ -439,8 +470,8 @@ private:
     template <typename Func>
     static void ForEachCPUPage(DAddr addr, size_t size, Func&& func) {
         static constexpr bool RETURNS_BOOL = std::is_same_v<std::invoke_result<Func, u64>, bool>;
-        const u64 page_end = (addr + size - 1) >> YUZU_PAGEBITS;
-        for (u64 page = addr >> YUZU_PAGEBITS; page <= page_end; ++page) {
+        const u64 page_end = (addr + size - 1) >> LICHII_PAGEBITS;
+        for (u64 page = addr >> LICHII_PAGEBITS; page <= page_end; ++page) {
             if constexpr (RETURNS_BOOL) {
                 if (func(page)) {
                     break;
@@ -454,8 +485,8 @@ private:
     template <typename Func>
     static void ForEachGPUPage(GPUVAddr addr, size_t size, Func&& func) {
         static constexpr bool RETURNS_BOOL = std::is_same_v<std::invoke_result<Func, u64>, bool>;
-        const u64 page_end = (addr + size - 1) >> YUZU_PAGEBITS;
-        for (u64 page = addr >> YUZU_PAGEBITS; page <= page_end; ++page) {
+        const u64 page_end = (addr + size - 1) >> LICHII_PAGEBITS;
+        for (u64 page = addr >> LICHII_PAGEBITS; page <= page_end; ++page) {
             if constexpr (RETURNS_BOOL) {
                 if (func(page)) {
                     break;
@@ -609,6 +640,8 @@ private:
     /// none for an unbacked image (too large to back, or over unwritten sparse blocks), what is
     /// bound to its layers for a SparseLayers one.
     u64 ImageMemoryBytes(const Image& image) const;
+    /// The image's allocation size where the runtime reports one, else ImageMemoryBytes.
+    u64 ImageAllocationBytes(const Image& image) const;
 
     void QueueAsyncDecode(Image& image, ImageId image_id);
     void TickAsyncDecode();
@@ -627,6 +660,7 @@ private:
     std::array<ImageId, 8> rt_image_id{};
     ImageId rt_depth_image_id{};
     u64 texture_bindings_serial = 0;
+    Churn churn;
     u64 last_feedback_loop_serial = 0;
     u64 last_feedback_texture_serial = 0;
     bool last_feedback_loop_result = false;
@@ -706,7 +740,7 @@ private:
     };
     Common::LeastRecentlyUsedCache<LRUItemParams> lru_cache;
 
- #ifdef YUZU_LEGACY
+ #ifdef LICHII_LEGACY
     static constexpr size_t TICKS_TO_DESTROY = 6;
  #else
     static constexpr size_t TICKS_TO_DESTROY = 8;
