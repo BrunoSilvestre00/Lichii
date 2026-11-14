@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
@@ -20,11 +19,13 @@
 #include "common/logging.h"
 #include "common/settings.h"
 #include "shader_recompiler/exception.h"
+#include "shader_recompiler/frontend/ampere/program_override.h"
 #include "core/core.h"
 #include "video_core/gpu_split.h"
 #include "video_core/fire_emblem_upscale.h"
 #include "video_core/nx2_profile.h"
 #include "video_core/nx2.h"
+#include "video_core/nx2_list_macro_trace.h"
 #include "video_core/engines/fermi_2d.h"
 #include "video_core/engines/kepler_compute.h"
 #include "video_core/engines/native_upscale.h"
@@ -348,6 +349,9 @@ bool KeplerCompute::ProcessNativeMethod(Core::System& system, u32 method, u32 ar
             [&](u64 address, NativeQmdScheduler::Descriptor& descriptor) {
                 if (!memory_manager.IsFullyMappedRange(address, sizeof(descriptor))) return false;
                 memory_manager.ReadBlockUnsafe(address, descriptor.data(), sizeof(descriptor));
+                if (VideoCommon::ListMacroTrace::g_enabled) {
+                    VideoCommon::ListMacroTrace::NoteQmd(address, descriptor);
+                }
                 if (static u32 logged{}; (descriptor[53] & (1U << 23)) && logged < 8) {
                     ++logged;
                     LOG_INFO(HW_GPU, "Native QMD {:#x} releases: {:08x} | {:08x} | {:08x}", address,
@@ -542,6 +546,8 @@ void KeplerCompute::CallMultiMethod(Core::System& system, u32 method, const u32*
     }
 }
 
+/// Set up the compute registers from the native descriptor and submit the dispatch.
+/// Returns true if the dispatch was submitted, skipped, or replaced.
 bool KeplerCompute::DispatchNativeCompute(const NativeQmdScheduler::Descriptor& qmd) {
     launch_description = {};
     launch_description.grid_dim_x.Assign(qmd[12]);
@@ -723,6 +729,9 @@ bool KeplerCompute::DispatchNativeCompute(const NativeQmdScheduler::Descriptor& 
             return true;
         }
     }
+    if (BypassOotBaseNetwork()) {
+        return true;
+    }
     bool dispatched = true;
     try {
         rasterizer->DispatchCompute();
@@ -775,16 +784,18 @@ constexpr u32 DLSS_NETWORK_BAD_CHECKS = 10;
 constexpr u32 DLSS_CHECK_MISMATCH_PERCENT = 3;
 } // Anonymous namespace
 
+/// Track captured network passes and return whether native dispatch should be skipped.
+/// Spatial-only chains still dispatch natively and replace the display output afterward.
 bool KeplerCompute::ProcessGameDlss(u64 program_id, u64 native_key) {
     using namespace VideoCommon::FireEmblemUpscale;
     const auto passes = CapturedPasses(program_id);
     if (!passes) {
         return false;
     }
-    if (passes->spatial_only && (native_key == passes->prepass || native_key == passes->output)) {
+    if (passes->spatial_only && (passes->IsPrepass(native_key) || native_key == passes->output)) {
         TraceDlssContract(native_key, false);
     }
-    if (native_key == passes->prepass) {
+    if (passes->IsPrepass(native_key)) {
         dlss_chain.spatial_only = passes->spatial_only;
         dlss_chain.render_region = passes->render_region;
         CaptureFireEmblemJitter();
@@ -809,7 +820,7 @@ bool KeplerCompute::ProcessGameDlss(u64 program_id, u64 native_key) {
     const bool replacement_will_draw =
         replacement && dlss_chain.replacement_drew && fe_upscale_jitter.Has();
     return (dlss_chain.failure != VideoCore::GameDlssReason::None || replacement_will_draw) &&
-           native_key != passes->prepass && dlss_chain.programs.contains(native_key);
+           !passes->IsPrepass(native_key) && dlss_chain.programs.contains(native_key);
 }
 
 // The game's own DLSS network (its translated programs) is shown once every pass of an
@@ -1063,6 +1074,33 @@ std::optional<Texture::TICEntry> KeplerCompute::ConstBuffer0Image(u32 offset) co
     return GetTICEntry(tic_index);
 }
 
+/// Identify a known 1.0.0 output pass before shader translation can reject it.
+/// The first word is a quick filter. The full native key must match before replacing the pass.
+bool KeplerCompute::BypassOotBaseNetwork() {
+    using namespace VideoCommon::OotNetwork;
+    const u64 program_id = Settings::GetCurrentProgramID();
+    if (!BypassEnabled(program_id)) {
+        return false;
+    }
+    const GPUVAddr program = regs.code_loc.Address() + launch_description.program_start;
+    if (!memory_manager.IsFullyMappedRange(program, sizeof(u32))) {
+        return false;
+    }
+    const u32 first_word = memory_manager.Read<u32>(program);
+    const auto match =
+        std::ranges::find(BaseOutputPrograms, first_word, &BaseOutputProgram::first_word);
+    if (match == BaseOutputPrograms.end() ||
+        !memory_manager.IsFullyMappedRange(program, match->size)) {
+        return false;
+    }
+    std::vector<Shader::Ampere::Instruction> code(match->size / sizeof(Shader::Ampere::Instruction));
+    memory_manager.ReadBlock(program, code.data(), match->size);
+    return Shader::Ampere::NativeProgramKey(code) == match->key &&
+           BypassOotNetwork(program_id, match->key);
+}
+
+/// Replace a known output pass with the latest tonemap, using scaling for the base game.
+/// The update's prepass and network may be skipped after a successful replacement.
 bool KeplerCompute::BypassOotNetwork(u64 program_id, u64 native_key) {
     using namespace VideoCommon::OotNetwork;
     if (!BypassEnabled(program_id)) {
@@ -1086,16 +1124,19 @@ bool KeplerCompute::BypassOotNetwork(u64 program_id, u64 native_key) {
     if (native_key == PrepassProgramKey || native_key == NetworkProgramKey) {
         return bypass->output_replaced.load(std::memory_order_relaxed);
     }
-    if (native_key != OutputProgramKey) {
+    const bool base_output = std::ranges::find(BaseOutputPrograms, native_key,
+                                              &BaseOutputProgram::key) != BaseOutputPrograms.end();
+    if (native_key != OutputProgramKey && !base_output) {
         return false;
     }
-    // The copy needs the tonemapped image to be a B10G11R11 block-linear image of the output's size.
+    // The base game can run its tonemap at a lower resolution than the output.
     const auto output = ConstBuffer0Image(OutputImageHandleOffset);
     if (!output || output->format != Texture::TextureFormat::B10G11R11 || output->Address() == 0 ||
         output->Address() == tonemapped.Address() || !output->IsBlockLinear() ||
         tonemapped.format != Tegra::RenderTargetFormat::B10G11R11_FLOAT ||
-        tonemapped.tile_mode.is_pitch_linear || tonemapped.width != output->Width() ||
-        tonemapped.height != output->Height()) {
+        tonemapped.tile_mode.is_pitch_linear || tonemapped.width == 0 || tonemapped.height == 0 ||
+        (base_output ? tonemapped.width > output->Width() || tonemapped.height > output->Height()
+                     : tonemapped.width != output->Width() || tonemapped.height != output->Height())) {
         bypass->output_replaced.store(false, std::memory_order_relaxed);
         static bool warned = false;
         if (!std::exchange(warned, true)) {
@@ -1120,6 +1161,8 @@ bool KeplerCompute::BypassOotNetwork(u64 program_id, u64 native_key) {
     destination.addr_upper = static_cast<u32>(output->Address() >> 32);
     destination.addr_lower = static_cast<u32>(output->Address());
     Fermi2D::Surface source = destination;
+    source.width = tonemapped.width;
+    source.height = tonemapped.height;
     source.block_width.Assign(tonemapped.tile_mode.block_width);
     source.block_height.Assign(tonemapped.tile_mode.block_height);
     source.block_depth.Assign(tonemapped.tile_mode.block_depth);
@@ -1129,7 +1172,7 @@ bool KeplerCompute::BypassOotNetwork(u64 program_id, u64 native_key) {
     const s32 height = static_cast<s32>(output->Height());
     const Fermi2D::Config config{
         .operation = Fermi2D::Operation::SrcCopy,
-        .filter = Fermi2D::Filter::Point,
+        .filter = base_output ? Fermi2D::Filter::Bilinear : Fermi2D::Filter::Point,
         .must_accelerate = true,
         .dst_x0 = 0,
         .dst_y0 = 0,
@@ -1137,17 +1180,18 @@ bool KeplerCompute::BypassOotNetwork(u64 program_id, u64 native_key) {
         .dst_y1 = height,
         .src_x0 = 0,
         .src_y0 = 0,
-        .src_x1 = width,
-        .src_y1 = height,
+        .src_x1 = static_cast<s32>(source.width),
+        .src_y1 = static_cast<s32>(source.height),
     };
     const bool copied = rasterizer->AccelerateSurfaceCopy(source, destination, config);
     bypass->output_replaced.store(copied, std::memory_order_relaxed);
     static bool logged = false;
     if (!std::exchange(logged, true)) {
         LOG_INFO(HW_GPU,
-                 "Ocarina of Time: anti-aliasing network bypassed ({}): {:#x} -> {:#x} {}x{}",
-                 copied ? "copy of the tonemapped image" : "copy failed", tonemapped.Address(),
-                 output->Address(), width, height);
+                 "Ocarina of Time: anti-aliasing network bypassed ({}): "
+                 "shader {:016x}, {:#x} {}x{} -> {:#x} {}x{}",
+                 copied ? "copy of the tonemapped image" : "copy failed", native_key,
+                 tonemapped.Address(), source.width, source.height, output->Address(), width, height);
     }
     return copied;
 }
@@ -1617,6 +1661,12 @@ void KeplerCompute::FrontCallMethod(Core::System& system, VideoCommon::GpuSplit&
     }
 }
 
+bool KeplerCompute::FrontRunsMacroWord(u32 method) const {
+    const auto& executing = front ? front->executing_macro : native_executing_macro;
+    return method >= 0xe00 && method < native_registers.size() &&
+           (executing || (method & 1) == 0);
+}
+
 void KeplerCompute::FrontNoteReport(VideoCommon::GpuSplit& split, const FrontState& fs,
                                     u32 control) {
     // SET_REPORT_SEMAPHORE_D was sent: what ProcessNativeReportSemaphore will write on the back.
@@ -1665,20 +1715,32 @@ void KeplerCompute::FrontCallMultiMethod(Core::System& system, VideoCommon::GpuS
 void KeplerCompute::FrontRunMacro(Core::System& system, VideoCommon::GpuSplit& split,
                                   FrontState& fs) {
     const auto positions = FrontMacroPositions(fs);
-    const u32 start = positions[((*fs.executing_macro - 0xe00) / 2) % positions.size()];
+    const u32 method = *fs.executing_macro;
+    const u32 start = positions[((method - 0xe00) / 2) % positions.size()];
     fs.executing_macro.reset();
     auto& macro = FrontMacroEngine(fs);
     if (native_data_ram) {
         macro.native_interpreter.active_dram = native_data_ram;
     }
     VideoCommon::Nx2Profile::Scope profile_scope{VideoCommon::Nx2Profile::Zone::Macro};
-    const auto read = [&fs](u32 address) {
-        return address < fs.registers.size() ? fs.registers[address] : 0U;
+    namespace ListTrace = VideoCommon::ListMacroTrace;
+    ListTrace::Call* const trace =
+        ListTrace::g_enabled
+            ? ListTrace::BeginCall(ListTrace::Engine::Compute, static_cast<EngineInterface*>(this),
+                                   method, macro.native_code, macro.native_code_generation, start,
+                                   fs.parameters, *macro.native_interpreter.active_dram,
+                                   fs.registers)
+            : nullptr;
+    const auto read = [&fs, trace](u32 address) {
+        const u32 value = address < fs.registers.size() ? fs.registers[address] : 0U;
+        ListTrace::NoteRead(trace, address, value);
+        return value;
     };
     const auto emit = [&](u32 address, u32 value) {
         if (address >= 0xe00) {
             return false;
         }
+        ListTrace::NoteWrite(trace, address, value);
         FrontApply(fs, address, value);
         split.MacroWrite(this, address, value);
         if (address == 0x6c3) {
@@ -1691,8 +1753,12 @@ void KeplerCompute::FrontRunMacro(Core::System& system, VideoCommon::GpuSplit& s
         macro.native_jit = std::make_shared<TuringMacroJit>();
     }
     macro.native_jit->Prepare(macro.native_code, macro.native_code_generation);
-    const auto result = macro.native_jit->Execute(
-        start, fs.parameters, std::span<u32>{*macro.native_interpreter.active_dram}, read, emit);
+    const auto result =
+        trace != nullptr && trace->data_ram
+            ? macro.native_interpreter.Execute(macro.native_code, start, fs.parameters, read, emit)
+            : macro.native_jit->Execute(start, fs.parameters,
+                                        std::span<u32>{*macro.native_interpreter.active_dram},
+                                        read, emit);
 #else
     const auto result =
         macro.native_interpreter.Execute(macro.native_code, start, fs.parameters, read, emit);
@@ -1701,6 +1767,10 @@ void KeplerCompute::FrontRunMacro(Core::System& system, VideoCommon::GpuSplit& s
         macro.native_execution_failed = true;
         LOG_ERROR(HW_GPU, "Native MME (split front) failed: compute start={:#x}, consumed={}, error={}",
                   start, result.consumed, result.error);
+    }
+    if (trace != nullptr) {
+        ListTrace::EndCall(*trace, false, macro.native_interpreter.data_ram_reads,
+                           macro.native_interpreter.data_ram_writes);
     }
     fs.parameters.clear();
 }
