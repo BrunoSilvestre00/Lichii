@@ -33,6 +33,7 @@ public:
     static bool IsNxArchive(const std::string& game_path);
 
     void ConvertToNx(const std::string& game_path);
+    void ExtractNx(const std::string& archive_path);
     void AddToNx(const std::string& archive_path);
     void RemoveFromNx(const std::string& archive_path);
     /// Sets the title, publisher and icon the game list shows, in place.

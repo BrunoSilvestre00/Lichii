@@ -421,6 +421,7 @@ struct NxTools::Job {
     std::mutex lines_mutex;
     QStringList added;
     QStringList skipped;
+    QStringList warnings;
     // The new icon given to set-metadata, removed when the job ends.
     std::unique_ptr<QTemporaryFile> icon_file;
 
@@ -542,6 +543,31 @@ bool NxTools::CanConvert(const std::string& game_path) {
 
 bool NxTools::IsNxArchive(const std::string& game_path) {
     return HasExtension(game_path, ".nx");
+}
+
+void NxTools::ExtractNx(const std::string& archive_path) {
+    if (running) {
+        return;
+    }
+    const QString title = tr("Dump NX");
+    auto suggested = ToPath(archive_path);
+    suggested.replace_extension();
+    const QString chosen =
+        QFileDialog::getSaveFileName(parent_widget, title, ToQString(suggested));
+    if (chosen.isEmpty()) {
+        return;
+    }
+    if (std::error_code ec; std::filesystem::exists(ToPath(ToUtf8(chosen)), ec)) {
+        QMessageBox::information(parent_widget, title,
+                                 tr("The target directory already exists:\n%1").arg(chosen));
+        return;
+    }
+    auto job = std::make_shared<Job>();
+    job->title = tr("Extracting NX");
+    // extract exports every snapshot on both platforms and keeps a compact restoration recipe.
+    job->args = {"extract", archive_path, ToUtf8(chosen), "--frontend"};
+    job->done_message = tr("The NX archive was extracted to:\n%1").arg(chosen);
+    Start(std::move(job));
 }
 
 void NxTools::ConvertToNx(const std::string& game_path) {
@@ -1065,6 +1091,11 @@ void NxTools::Start(std::shared_ptr<Job> job) {
             [](void* user, int is_error, const char* line) {
                 auto& j = *static_cast<Job*>(user);
                 if (is_error) {
+                    if (j.args.front() == "extract" &&
+                        QString::fromUtf8(line).startsWith(QStringLiteral("Warning:"))) {
+                        std::scoped_lock lock{j.lines_mutex};
+                        j.warnings.push_back(QString::fromUtf8(line));
+                    }
                     return;
                 }
                 const auto fields = QString::fromUtf8(line).split(QLatin1Char('\t'));
@@ -1191,7 +1222,13 @@ void NxTools::Finished(std::shared_ptr<Job> job, int code, QString error) {
             text += QStringLiteral("\n\n") +
                     tr("Already in the archive: %1").arg(job->skipped.join(QStringLiteral(", ")));
         }
-        QMessageBox::information(parent_widget, job->title, text);
+        if (job->warnings.isEmpty()) {
+            QMessageBox::information(parent_widget, job->title, text);
+        } else {
+            QMessageBox::warning(parent_widget, job->title,
+                                 text + QStringLiteral("\n\n") +
+                                     job->warnings.join(QLatin1Char('\n')));
+        }
         if (!metadata_write) {
             emit ArchivesChanged();
         }
@@ -1202,8 +1239,11 @@ void NxTools::Finished(std::shared_ptr<Job> job, int code, QString error) {
             QMessageBox::information(parent_widget, job->title, tr("Cancelled.") + kept);
             emit ArchivesChanged();
         } else {
-            QMessageBox::information(parent_widget, job->title,
-                                     tr("Cancelled. Nothing was changed on disk."));
+            QMessageBox::information(
+                parent_widget, job->title,
+                job->args.front() == "extract"
+                    ? tr("Cancelled. Any files already extracted were kept.")
+                    : tr("Cancelled. Nothing was changed on disk."));
         }
         break;
     default: {
