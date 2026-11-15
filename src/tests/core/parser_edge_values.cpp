@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Each size and offset field of the KIP/BLZ, INI1, NPDM, NCZ and NUP headers, set to the values
+// Each size and offset field of the KIP/BLZ, INI1, NPDM, NCZ and NUP headers, and of the IPS,
+// PFS0/HFS0, RomFS, CNMT and XCI containers, set to the values
 // that break unchecked arithmetic (0, 1, 2^31 - 1, 2^31, 2^32 - 1, and the value that makes it
 // wrap with the field it is added to) while the rest of the header stays valid. The parser must
 // reject the input, or accept it with sizes the input can hold: no success with an empty or
@@ -22,9 +23,14 @@
 
 #include "common/common_funcs.h"
 #include "core/crypto/ncz_decompressor.h"
+#include "core/file_sys/card_image.h"
+#include "core/file_sys/ips_layer.h"
 #include "core/file_sys/kernel_executable.h"
+#include "core/file_sys/nca_metadata.h"
 #include "core/file_sys/nup_container.h"
+#include "core/file_sys/partition_filesystem.h"
 #include "core/file_sys/program_metadata.h"
+#include "core/file_sys/romfs.h"
 #include "core/file_sys/vfs/vfs_vector.h"
 #include "core/loader/loader.h"
 
@@ -410,6 +416,281 @@ TEST_CASE("NUP size and offset fields at edge values", "[core][file_sys][edge_va
                 const auto file = nup.OpenFile(i);
                 REQUIRE(file != nullptr);
                 CHECK(file->GetSize() <= bytes.size());
+            }
+        }
+    }
+}
+
+
+// --- Containers: every file they list must lie in the input ---
+
+// Walks a parsed container (at most 64 files a directory, 8 levels deep) and checks that reading
+// a file never returns more bytes than the input has. A file may still report a larger size
+// (RomFS and PFS0 take an entry's size as given and clamp the reads); that is not checked here.
+void CheckFiles(const VirtualDir& dir, std::size_t input, int depth = 0) {
+    if (!dir || depth > 8) {
+        return;
+    }
+    std::size_t seen = 0;
+    for (const auto& file : dir->GetFiles()) {
+        if (++seen > 64) {
+            return;
+        }
+        INFO("file " << file->GetName());
+        CHECK(file->ReadAllBytes().size() <= input);
+    }
+    for (const auto& sub : dir->GetSubdirectories()) {
+        CheckFiles(sub, input, depth + 1);
+    }
+}
+
+// A PFS0 (or HFS0, with 0x40-byte entries) holding "a" with 4 bytes and "bc" with 2.
+std::vector<u8> Pfs0(bool hfs = false) {
+    const std::size_t entry = hfs ? 0x40 : 0x18;
+    const std::string_view strtab{"a\0bc\0\0\0", 8};
+    std::vector<u8> bytes(0x10 + 2 * entry);
+    Put<u32>(bytes, 0, hfs ? Common::MakeMagic('H', 'F', 'S', '0')
+                           : Common::MakeMagic('P', 'F', 'S', '0'));
+    Put<u32>(bytes, 4, 2);
+    Put<u32>(bytes, 8, static_cast<u32>(strtab.size()));
+    Put<u64>(bytes, 0x10, 0);
+    Put<u64>(bytes, 0x18, 4);
+    Put<u32>(bytes, 0x20, 0);
+    Put<u64>(bytes, 0x10 + entry, 4);
+    Put<u64>(bytes, 0x18 + entry, 2);
+    Put<u32>(bytes, 0x20 + entry, 2);
+    bytes.insert(bytes.end(), strtab.begin(), strtab.end());
+    bytes.insert(bytes.end(), {'d', 'a', 't', 'a', 'h', 'i'});
+    return bytes;
+}
+
+TEST_CASE("PFS0 and HFS0 fields at edge values", "[core][file_sys][edge_values]") {
+    for (const bool hfs : {false, true}) {
+        const std::size_t entry = hfs ? 0x40 : 0x18;
+        REQUIRE(PartitionFilesystem{File(Pfs0(hfs))}.GetStatus() ==
+                Loader::ResultStatus::Success);
+        for (const u32 value : Edges32(0)) {
+            for (const std::size_t field : {std::size_t{4}, std::size_t{8}, 0x20 + entry}) {
+                INFO((hfs ? "HFS0" : "PFS0") << " u32 field at " << field << " = " << value);
+                auto bytes = Pfs0(hfs);
+                Put<u32>(bytes, field, value);
+                PartitionFilesystem pfs{File(bytes)};
+                if (pfs.GetStatus() == Loader::ResultStatus::Success) {
+                    CHECK(pfs.GetFiles().size() <= std::min<u64>(Get<u32>(bytes, 4), 2));
+                    for (const auto& file : pfs.GetFiles()) {
+                        CHECK(file->ReadAllBytes().size() <= bytes.size());
+                    }
+                }
+            }
+        }
+        for (const u64 value : Edges64(0)) {
+            for (const std::size_t field : {0x10 + entry, 0x18 + entry}) {
+                INFO((hfs ? "HFS0" : "PFS0") << " entry field at " << field << " = " << value);
+                auto bytes = Pfs0(hfs);
+                Put<u64>(bytes, field, value);
+                PartitionFilesystem pfs{File(bytes)};
+                if (pfs.GetStatus() == Loader::ResultStatus::Success) {
+                    for (const auto& file : pfs.GetFiles()) {
+                        CHECK(file->ReadAllBytes().size() <= bytes.size());
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The RomFS of file_sys_parsers.cpp: a root holding directory "a" holding file "f" with "hi".
+std::vector<u8> RomFS() {
+    std::vector<u8> dirs(0x34); // two 0x18-byte entries, "a" padded to 4 bytes
+    const std::array<u32, 6> root{0, 0xFFFFFFFF, 0x18, 0xFFFFFFFF, 0, 0};
+    const std::array<u32, 6> a{0, 0xFFFFFFFF, 0xFFFFFFFF, 0, 0, 1};
+    for (std::size_t i = 0; i < 6; ++i) {
+        Put<u32>(dirs, i * 4, root[i]);
+        Put<u32>(dirs, 0x18 + i * 4, a[i]);
+    }
+    dirs[0x18 + 0x18] = 'a';
+    std::vector<u8> files(0x24);
+    Put<u32>(files, 0, 0x18);
+    Put<u32>(files, 4, 0xFFFFFFFF);
+    Put<u64>(files, 8, 0);
+    Put<u64>(files, 0x10, 2);
+    Put<u32>(files, 0x18, 0);
+    Put<u32>(files, 0x1C, 1);
+    files[0x20] = 'f';
+    std::vector<u8> bytes(0x50);
+    Put<u64>(bytes, 0x00, 0x50);
+    Put<u64>(bytes, 0x18, 0x50);
+    Put<u64>(bytes, 0x20, dirs.size());
+    Put<u64>(bytes, 0x38, 0x50 + dirs.size());
+    Put<u64>(bytes, 0x40, files.size());
+    Put<u64>(bytes, 0x48, 0x50 + dirs.size() + files.size());
+    bytes.insert(bytes.end(), dirs.begin(), dirs.end());
+    bytes.insert(bytes.end(), files.begin(), files.end());
+    bytes.insert(bytes.end(), {'h', 'i'});
+    return bytes;
+}
+
+TEST_CASE("RomFS fields at edge values", "[core][file_sys][edge_values]") {
+    REQUIRE(ExtractRomFS(File(RomFS())) != nullptr);
+    const std::size_t file_entry = 0x50 + 0x34;
+    const std::array<std::size_t, 8> u64_fields{
+        0x18, 0x20, 0x38, 0x40, 0x48,          // table offsets and sizes, data offset
+        file_entry + 0x08, file_entry + 0x10, // the file's data offset and size
+        0x00,                                  // header size
+    };
+    for (const auto field : u64_fields) {
+        for (const u64 value : Edges64(0)) {
+            INFO("RomFS u64 field at " << field << " = " << value);
+            auto bytes = RomFS();
+            Put<u64>(bytes, field, value);
+            CheckFiles(ExtractRomFS(File(bytes)), bytes.size());
+        }
+    }
+    const std::array<std::size_t, 4> u32_fields{
+        0x50 + 0x18 + 0x14, // directory name length
+        file_entry + 0x1C,  // file name length
+        0x50 + 0x08,        // root's first child directory
+        0x50 + 0x18 + 0x0C, // "a"'s first file
+    };
+    for (const auto field : u32_fields) {
+        for (const u32 value : Edges32(0)) {
+            INFO("RomFS u32 field at " << field << " = " << value);
+            auto bytes = RomFS();
+            Put<u32>(bytes, field, value);
+            CheckFiles(ExtractRomFS(File(bytes)), bytes.size());
+        }
+    }
+}
+
+// An IPS (or IPS32) patch with one 2-byte record at 0x10 and one 4-byte RLE record at 0x20.
+std::vector<u8> Ips(bool ips32) {
+    const std::size_t off = ips32 ? 4 : 3;
+    std::vector<u8> bytes;
+    const std::string_view magic = ips32 ? "IPS32" : "PATCH";
+    bytes.insert(bytes.end(), magic.begin(), magic.end());
+    const auto record = [&](u32 offset, std::initializer_list<u8> rest) {
+        for (std::size_t i = off; i-- > 0;) {
+            bytes.push_back(static_cast<u8>(offset >> (8 * i)));
+        }
+        bytes.insert(bytes.end(), rest);
+    };
+    record(0x10, {0x00, 0x02, 0xAB, 0xCD});
+    record(0x20, {0x00, 0x00, 0x00, 0x04, 0x11});
+    const std::string_view end = ips32 ? "EEOF" : "EOF";
+    bytes.insert(bytes.end(), end.begin(), end.end());
+    return bytes;
+}
+
+TEST_CASE("IPS record fields at edge values", "[core][file_sys][edge_values]") {
+    const auto base = File(std::vector<u8>(0x40, 0xAA));
+    for (const bool ips32 : {false, true}) {
+        REQUIRE(PatchIPS(base, File(Ips(ips32))) != nullptr);
+        const std::size_t off = ips32 ? 4 : 3;
+        const std::size_t first = 5;                      // first record's offset
+        const std::size_t second = first + off + 4;      // second record's offset
+        const std::size_t sizes[] = {first + off, second + off, second + off + 2};
+        for (const u32 value : Edges32(0)) {
+            for (std::size_t field = 0; field < 4; ++field) {
+                INFO((ips32 ? "IPS32" : "IPS") << " field " << field << " = " << value);
+                auto bytes = Ips(ips32);
+                if (field < 1) {
+                    for (std::size_t i = 0; i < off; ++i) {
+                        bytes[first + i] = static_cast<u8>(value >> (8 * (off - 1 - i)));
+                    }
+                } else {
+                    // Record sizes are big-endian u16s.
+                    bytes[sizes[field - 1]] = static_cast<u8>(value >> 8);
+                    bytes[sizes[field - 1] + 1] = static_cast<u8>(value);
+                }
+                const auto patched = PatchIPS(base, File(bytes));
+                if (patched) {
+                    // Patching never grows or shrinks the file.
+                    CHECK(patched->GetSize() == base->GetSize());
+                    CHECK(patched->ReadAllBytes().size() == base->GetSize());
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("CNMT table fields at edge values", "[core][file_sys][edge_values]") {
+    // An application CNMT: header, optional header, then one content and one meta record.
+    std::vector<u8> base(0x20 + 0x10 + 0x38 + 0x10);
+    base[0x0C] = 0x80;
+    Put<u16>(base, 0x0E, 0x10);
+    Put<u16>(base, 0x10, 1);
+    Put<u16>(base, 0x12, 1);
+    for (const std::size_t field : {std::size_t{0x0E}, std::size_t{0x10}, std::size_t{0x12}}) {
+        for (const u16 value : {u16{0}, u16{1}, u16{0x7FFF}, u16{0x8000}, u16{0xFFFF}}) {
+            INFO("CNMT field at " << field << " = " << value);
+            auto bytes = base;
+            Put<u16>(bytes, field, value);
+            const CNMT cnmt{File(bytes)};
+            const u64 table = 0x20 + u64{Get<u16>(bytes, 0x0E)};
+            // Only records read in full are kept.
+            const auto contents = cnmt.GetContentRecords().size();
+            const auto metas = cnmt.GetMetaRecords().size();
+            CHECK(contents <= Get<u16>(bytes, 0x10));
+            CHECK((contents == 0 || table + contents * 0x38 <= bytes.size()));
+            CHECK(metas <= Get<u16>(bytes, 0x12));
+            CHECK((metas == 0 || table + metas * 0x10 <= bytes.size()));
+        }
+    }
+}
+
+// The XCI of file_sys_parsers.cpp: a root HFS0 with update, normal and secure partitions, each
+// an empty HFS0.
+std::vector<u8> Xci() {
+    std::vector<u8> partition(0x10);
+    Put<u32>(partition, 0, Common::MakeMagic('H', 'F', 'S', '0'));
+    const std::string_view strtab{"update\0normal\0secure\0", 21};
+    std::vector<u8> root(0x10 + 3 * 0x40);
+    Put<u32>(root, 0, Common::MakeMagic('H', 'F', 'S', '0'));
+    Put<u32>(root, 4, 3);
+    Put<u32>(root, 8, static_cast<u32>(strtab.size()));
+    const u32 names[] = {0, 7, 14};
+    for (std::size_t i = 0; i < 3; ++i) {
+        Put<u64>(root, 0x10 + i * 0x40, i * partition.size());
+        Put<u64>(root, 0x18 + i * 0x40, partition.size());
+        Put<u32>(root, 0x20 + i * 0x40, names[i]);
+    }
+    root.insert(root.end(), strtab.begin(), strtab.end());
+    for (int i = 0; i < 3; ++i) {
+        root.insert(root.end(), partition.begin(), partition.end());
+    }
+    std::vector<u8> bytes(0x200);
+    Put<u32>(bytes, 0x100, Common::MakeMagic('H', 'E', 'A', 'D'));
+    Put<u64>(bytes, 0x130, 0x200);
+    Put<u64>(bytes, 0x138, root.size());
+    bytes.insert(bytes.end(), root.begin(), root.end());
+    return bytes;
+}
+
+TEST_CASE("XCI partition fields at edge values", "[core][file_sys][edge_values]") {
+    REQUIRE(XCI{File(Xci())}.GetStatus() == Loader::ResultStatus::Success);
+    const std::array<std::size_t, 6> fields{
+        0x130,             // root HFS0 offset
+        0x138,             // root HFS0 size
+        0x200 + 0x10,      // update partition offset
+        0x200 + 0x18,      // update partition size
+        0x200 + 0x10 + 0x80, // secure partition offset
+        0x200 + 0x18 + 0x80, // secure partition size
+    };
+    for (const auto field : fields) {
+        for (const u64 value : Edges64(0)) {
+            INFO("XCI field at " << field << " = " << value);
+            auto bytes = Xci();
+            Put<u64>(bytes, field, value);
+            XCI xci{File(bytes)};
+            if (xci.GetStatus() != Loader::ResultStatus::Success) {
+                continue;
+            }
+            for (const auto partition : {XCIPartition::Update, XCIPartition::Normal,
+                                         XCIPartition::Secure}) {
+                const auto raw = xci.GetPartitionRaw(partition);
+                if (raw) {
+                    CHECK(raw->ReadAllBytes().size() <= bytes.size());
+                }
             }
         }
     }
