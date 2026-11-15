@@ -227,6 +227,30 @@ TEST_CASE("Fuzzed INI1: every KIP is read", "[core][fuzz_regressions]") {
     CHECK(ini.GetKIPs()[1].GetName() == "spl");
 }
 
+TEST_CASE("Fuzzed INI1: a later KIP's BLZ stream that starts with no input", "[core][fuzz_regressions]") {
+    // CodeRabbit's review of #1883: now that the INI1 reaches every KIP, a second KIP whose
+    // 12-byte text section is only a BLZ footer (compressed 12, footer 12, added 1) starts the
+    // decoder with no input left. Without #1879 the cursor wrapped and the read went past the
+    // section; with it that KIP fails and the INI1 stops before it.
+    std::vector<u8> bytes(0x10);
+    Put32(bytes, 0, Common::MakeMagic('I', 'N', 'I', '1'));
+    Put32(bytes, 8, 2);
+    auto first = Kip({}, 0);
+    std::memcpy(first.data() + 4, "FS", 2);
+    bytes.insert(bytes.end(), first.begin(), first.end());
+    std::vector<u8> footer_only(0xC);
+    Put32(footer_only, 0, 12);
+    Put32(footer_only, 4, 12);
+    Put32(footer_only, 8, 1);
+    auto second = Kip(footer_only, 13);
+    std::memcpy(second.data() + 4, "spl", 3);
+    CHECK(KipStatus(second) == Loader::ResultStatus::ErrorBLZDecompressionFailed);
+    bytes.insert(bytes.end(), second.begin(), second.end());
+    const INI ini{File(bytes, "ini1.bin")};
+    REQUIRE(ini.GetKIPs().size() == 1);
+    CHECK(ini.GetKIPs()[0].GetName() == "FS");
+}
+
 TEST_CASE("Fuzzed NPDM: kernel capability and file access fields", "[core][fuzz_regressions]") {
     const auto load = [](std::vector<u8> bytes) {
         ProgramMetadata npdm;
