@@ -77,7 +77,7 @@ TEST_CASE("Range Map: Random maps match a flat model", "[video_core]") {
     std::mt19937 rng{1234};
     for (int i = 0; i < 2000; ++i) {
         const u64 begin = rng() % size;
-        const u64 end = begin + rng() % (size - begin + 1);
+        const u64 end = begin + 1 + rng() % (size - begin);
         const auto value = static_cast<MappedEnum>(rng() % 4);
         my_map.Map(begin, end, value);
         for (u64 address = begin; address < end; ++address) {
