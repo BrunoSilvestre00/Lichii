@@ -149,6 +149,12 @@ public:
     bool read_at(u64 offset, u8* output, std::size_t length) override {
         return source->read_at(offset, output, length);
     }
+    bool immutable_reads() const noexcept override {
+        return source->immutable_reads();
+    }
+    nx::ImmutableReadView immutable_view(u64 offset, std::size_t length) const noexcept override {
+        return source->immutable_view(offset, length);
+    }
 
     std::shared_ptr<nx::RandomAccessSource> source;
     DecoderPool decoder;
@@ -327,8 +333,15 @@ nx::Result<std::shared_ptr<nx::Session>> OpenNxSession(VirtualFile file,
     try {
         std::shared_ptr<nx::RandomAccessSource> source;
         if (!host_path.empty() && !host_path.starts_with("content://")) {
-            auto pinned = nx::DiskSource::open(
-                std::filesystem::path(Common::FS::ToU8String(host_path)));
+            const auto path = std::filesystem::path(Common::FS::ToU8String(host_path));
+#if defined(_WIN32) && defined(_MSC_VER)
+            auto pinned = nx::DiskSource::open_mapped(path);
+            if (!pinned) {
+                pinned = nx::DiskSource::open(path);
+            }
+#else
+            auto pinned = nx::DiskSource::open(path);
+#endif
             if (!pinned) {
                 return SessionResult::failure(pinned.error.code, pinned.error.message);
             }
@@ -339,6 +352,7 @@ nx::Result<std::shared_ptr<nx::Session>> OpenNxSession(VirtualFile file,
         auto codec = std::make_shared<CodecSource>(std::move(source), options.parallel_reads);
         options.reader.zstd = &Decode;
         options.reader.zstd_context = &codec->decoder;
+        options.reader.cache_raw_verification = codec->immutable_reads();
         return nx::Session::open(std::move(codec), options);
     } catch (const std::bad_alloc&) {
         return SessionResult::failure(nx::ErrorCode::resource_limit,
