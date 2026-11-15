@@ -1241,12 +1241,18 @@ void NxTools::Finished(std::shared_ptr<Job> job, int code, QString error) {
         if (changed) {
             QMessageBox::information(parent_widget, job->title, tr("Cancelled.") + kept);
             emit ArchivesChanged();
-        } else {
+        } else if (job->args.front() == "extract") {
+            // The target did not exist before. nxformat removes it when the cancel stops the
+            // file extraction, and keeps it when the cancel comes later (restoration recipe).
+            std::error_code ec;
+            const bool kept_files = std::filesystem::exists(ToPath(job->args[2]), ec);
             QMessageBox::information(
                 parent_widget, job->title,
-                job->args.front() == "extract"
-                    ? tr("Cancelled. Any files already extracted were kept.")
-                    : tr("Cancelled. Nothing was changed on disk."));
+                kept_files ? tr("Cancelled. The files already extracted were kept.")
+                           : tr("Cancelled. The partial extraction was removed."));
+        } else {
+            QMessageBox::information(parent_widget, job->title,
+                                     tr("Cancelled. Nothing was changed on disk."));
         }
         break;
     default: {
