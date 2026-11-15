@@ -1246,10 +1246,18 @@ void NxTools::Finished(std::shared_ptr<Job> job, int code, QString error) {
             // file extraction, and keeps it when the cancel comes later (restoration recipe).
             std::error_code ec;
             const bool kept_files = std::filesystem::exists(ToPath(job->args[2]), ec);
-            QMessageBox::information(
-                parent_widget, job->title,
-                kept_files ? tr("Cancelled. The files already extracted were kept.")
-                           : tr("Cancelled. The partial extraction was removed."));
+            QString text;
+            if (ec) {
+                // A failed check is not a confirmed absence.
+                text = tr("Cancelled. Could not check whether the partial extraction was "
+                          "removed:\n%1")
+                           .arg(ToQString(ToPath(job->args[2])));
+            } else if (kept_files) {
+                text = tr("Cancelled. The files already extracted were kept.");
+            } else {
+                text = tr("Cancelled. The partial extraction was removed.");
+            }
+            QMessageBox::information(parent_widget, job->title, text);
         } else {
             QMessageBox::information(parent_widget, job->title,
                                      tr("Cancelled. Nothing was changed on disk."));
