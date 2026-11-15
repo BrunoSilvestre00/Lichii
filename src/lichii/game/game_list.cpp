@@ -92,13 +92,18 @@ GameList::GameList(FileSys::VirtualFilesystem vfs_, FileSys::ManualContentProvid
     connect(tree_view, &QTreeView::activated, this, &GameList::ValidateEntry);
     connect(tree_view, &QTreeView::customContextMenuRequested, this, &GameList::PopupContextMenu);
 
-    connect(grid_view, &QListView::activated, this, &GameList::ValidateEntry);
     connect(grid_view, &QListView::doubleClicked, this, [this](const QModelIndex& index) {
         if (suppress_grid_double_click) {
             return;
         }
+        grid_mouse_activated = true;
         ValidateEntry(index);
     });
+    // Mouse double-clicks also emit activated right after doubleClicked, and both would boot the
+    // game; a second boot while the first is still starting shuts it down again. Ignore activations
+    // that arrive from the mouse so the grid keeps keyboard and controller activation only.
+    connect(grid_view, &QListView::activated, this,
+            [this](const QModelIndex& index) { OnGridActivated(index); });
     connect(grid_view, &QListView::clicked, this, [this](const QModelIndex& index) {
         if (suppress_grid_double_click) {
             return;
@@ -146,6 +151,17 @@ GameList::GameList(FileSys::VirtualFilesystem vfs_, FileSys::ManualContentProvid
 
 void GameList::SetNupConversionRunning(bool running) {
     nup_conversion_running = running;
+}
+
+void GameList::OnGridActivated(const QModelIndex& index) {
+    // A mouse double-click is handled by the doubleClicked connection, and Qt then also emits
+    // activated for it. ValidateEntry twice would boot the game and immediately shut it down again,
+    // so only activations that came from the keyboard or the emulated controller open an entry.
+    if (grid_mouse_activated) {
+        grid_mouse_activated = false;
+        return;
+    }
+    ValidateEntry(index);
 }
 
 void GameList::SetModernLibrary(bool modern) {
