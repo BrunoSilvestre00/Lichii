@@ -12,7 +12,7 @@
 
 #include "core/file_sys/vfs/vfs_types.h"
 
-class QProgressDialog;
+class NupProgressDialog;
 class QWidget;
 
 /// NX archive tools of the game list, run in the process with nxformat:
@@ -56,5 +56,5 @@ private:
     FileSys::VirtualFilesystem vfs;
     QWidget* parent_widget;
     std::shared_ptr<Job> running;
-    QPointer<QProgressDialog> progress;
+    QPointer<NupProgressDialog> progress;
 };

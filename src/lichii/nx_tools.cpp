@@ -36,7 +36,6 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPixmap>
-#include <QProgressDialog>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QTemporaryFile>
@@ -402,6 +401,8 @@ struct NxTools::Job {
     }
 
     QString title;
+    QString display_name;
+    QPixmap icon;
     QString done_message;
     // Converted games or dumps the user may send to the Recycle Bin at the end.
     std::vector<std::filesystem::path> originals;
@@ -674,6 +675,18 @@ void NxTools::ConvertToNx(const std::string& game_path) {
         return;
     }
     job->done_message = tr("The NX archive was created:\n%1").arg(chosen);
+    job->display_name = ToQString(source.stem());
+    if (const auto loader = Loader::GetLoader(
+            *QtCommon::system, vfs->OpenFile(game_path, FileSys::OpenMode::Read))) {
+        std::string name;
+        if (loader->ReadTitle(name) == Loader::ResultStatus::Success && !name.empty()) {
+            job->display_name = QString::fromStdString(name);
+        }
+        std::vector<u8> icon;
+        if (loader->ReadIcon(icon) == Loader::ResultStatus::Success && !icon.empty()) {
+            job->icon.loadFromData(icon.data(), static_cast<uint>(icon.size()));
+        }
+    }
     if (job->originals.empty()) {
         job->originals.push_back(source);
     }
@@ -1010,22 +1023,18 @@ void NxTools::Start(std::shared_ptr<Job> job) {
     running = job;
     emit RunningChanged(true);
 
-    progress = new QProgressDialog(job->title, tr("Cancel"), 0, 0, parent_widget);
-    progress->setWindowTitle(job->title);
+    progress = new NupProgressDialog(job->title, job->display_name, job->icon, parent_widget);
     progress->setWindowModality(Qt::WindowModal);
-    progress->setMinimumDuration(0);
-    progress->setAutoClose(false);
-    progress->setAutoReset(false);
-    connect(progress, &QProgressDialog::canceled, this, [this, job] {
+    connect(progress, &NupProgressDialog::CancelRequested, this, [this, job] {
         nxformat_cancel_set(job->cancel);
         if (progress) {
-            progress->setLabelText(tr("Cancelling..."));
+            progress->SetCancelling();
         }
     });
     job->clock.start();
     auto* timer = new QTimer(progress);
     connect(timer, &QTimer::timeout, this, [this, job] {
-        if (!progress || progress->wasCanceled()) {
+        if (!progress) {
             return;
         }
         // nxformat counts the bytes it reads, not the checks it makes before and after:
@@ -1062,19 +1071,15 @@ void NxTools::Start(std::shared_ptr<Job> job) {
                       .arg(seconds % 60, 2, 10, QLatin1Char('0'))
                 : QStringLiteral("%1:%2").arg(seconds / 60).arg(seconds % 60, 2, 10,
                                                                  QLatin1Char('0'));
-        QString text = tr("%1\nElapsed: %2").arg(job->title, elapsed);
+        QString text = tr("Elapsed: %1").arg(elapsed);
+        if (job->counting_since >= 0 && now - job->counting_since >= 1000 && done < total) {
+            const double rate = double(done) * 1000.0 / (now - job->counting_since);
+            text += tr(" - %1 MB/s").arg(rate / (1024 * 1024), 0, 'f', 1);
+        }
         if (!step.isEmpty()) {
             text += QStringLiteral(" - ") + step;
         }
-        progress->setLabelText(text);
-        if (total == 0) {
-            return;
-        }
-        // setValue() of a modal dialog processes events: Finished() may run inside it and
-        // close the dialog, so it must be the last use of `progress` here. It stays below
-        // 100 % until nxformat has returned.
-        progress->setMaximum(1000);
-        progress->setValue(static_cast<int>(std::min<u64>(999, done * 1000 / total)));
+        progress->SetByteProgress(done, total, text);
     });
     timer->start(200);
     progress->show();
@@ -1187,10 +1192,8 @@ QString NxTools::TimeLeft(double seconds) {
 
 void NxTools::Finished(std::shared_ptr<Job> job, int code, QString error) {
     if (progress) {
-        // Closing a QProgressDialog emits canceled(): disconnect first, or a failed or finished
-        // job shows "Cancelling..." behind its result.
         QObject::disconnect(progress, nullptr, this, nullptr);
-        progress->hide();
+        progress->Finish();
         progress->deleteLater();
         progress.clear();
     }
