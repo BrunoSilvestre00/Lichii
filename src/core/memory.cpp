@@ -1000,6 +1000,11 @@ struct Memory::Impl {
         if (Core::g_pages_tracked_generation.load(std::memory_order_relaxed) == generation) {
             return;
         }
+        // The address the store went to: GetPointerImpl drops the upper 16 bits (AArch64 tags).
+        v_address &= 0xffffffffffffULL;
+        if (!AddressSpaceContains(*current_page_table, v_address, size)) {
+            return;
+        }
         const u64 first_page = v_address >> LICHII_PAGEBITS;
         const u64 last_page = (v_address + (std::max<size_t>)(size, 1) - 1) >> LICHII_PAGEBITS;
         bool tracked = false;
