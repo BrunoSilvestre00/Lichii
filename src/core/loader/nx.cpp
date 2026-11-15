@@ -334,14 +334,11 @@ nx::Result<std::shared_ptr<nx::Session>> OpenNxSession(VirtualFile file,
         std::shared_ptr<nx::RandomAccessSource> source;
         if (!host_path.empty() && !host_path.starts_with("content://")) {
             const auto path = std::filesystem::path(Common::FS::ToU8String(host_path));
-#if defined(_WIN32) && defined(_MSC_VER)
-            auto pinned = nx::DiskSource::open_mapped(path);
-            if (!pinned) {
-                pinned = nx::DiskSource::open(path);
-            }
-#else
+            // Positional reads, not open_mapped(): mapped views were 17-43 % slower cold and
+            // 2-4x slower warm (first touch of each page faults), and they remap constantly
+            // once a game is larger than the 1 GiB of views. On Windows open() still denies
+            // writers, so the RAW verification cache stays on.
             auto pinned = nx::DiskSource::open(path);
-#endif
             if (!pinned) {
                 return SessionResult::failure(pinned.error.code, pinned.error.message);
             }
