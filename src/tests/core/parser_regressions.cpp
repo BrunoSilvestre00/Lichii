@@ -281,7 +281,7 @@ TEST_CASE("Fuzzed NCZ: NCZBLOCK headers", "[core][fuzz_regressions]") {
     CHECK_FALSE(OpensAsNcz(NczBlock(32, 2, 0x4100)));
     CHECK_FALSE(OpensAsNcz(NczBlock(14, 3, 0x4100)));
 
-    // fix/ncz-block-sections (PR to open): block mode skipped the section checks of a solid
+    // #1892: block mode skipped the section checks of a solid
     // stream, so these opened as files of about 2^63 bytes or with a section before the header.
     CHECK_FALSE(OpensAsNcz(NczBlock(14, 1, 0x100, 0x7FFFFFFFFFFFFFF0, 0x100)));
     CHECK_FALSE(OpensAsNcz(NczBlock(14, 1, 0x100, static_cast<u64>(-0x1000), 0x5000)));
