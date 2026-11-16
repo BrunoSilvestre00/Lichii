@@ -511,6 +511,16 @@
        </widget>
       </item>
       <item>
+       <widget class="QCheckBox" name="checkBoxSteamControllerHdRumble">
+        <property name="toolTip">
+         <string>Experimental dual-band haptics for the physical 2026 Steam Controller on Windows. Steam may interfere with the controller's haptics mode.</string>
+        </property>
+        <property name="text">
+         <string>Detailed Steam Controller (2026) haptics</string>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="QCheckBox" name="checkBoxDualSenseHaptics">
         <property name="toolTip">
          <string>Play HD Rumble through the DualSense haptic actuators, left and right apart. Requires a USB connection and a single wired DualSense; otherwise standard rumble is used.</string>
