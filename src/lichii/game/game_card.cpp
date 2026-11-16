@@ -6,6 +6,7 @@
 #include <QColor>
 #include <QFileInfo>
 #include <QFont>
+#include <QHash>
 #include <QImage>
 #include <QPainter>
 #include <QPainterPath>
@@ -13,6 +14,7 @@
 #include <QTextLayout>
 #include <QTextOption>
 #include <QStringList>
+#include <QSvgRenderer>
 #include <QWidget>
 #include "game_card.h"
 #include "qt_common/config/uisettings.h"
@@ -20,6 +22,22 @@
 #include "qt_common/game_list/model.h"
 
 namespace {
+
+const QImage& Switch2LogoImage() {
+    static const QImage logo = [] {
+        QImage image(512, 512, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::transparent);
+        QSvgRenderer renderer(QStringLiteral(":/img/switch2_logo.svg"));
+        if (!renderer.isValid()) {
+            return QImage{};
+        }
+        QPainter painter(&image);
+        painter.setRenderHint(QPainter::Antialiasing);
+        renderer.render(&painter, QRectF(image.rect()));
+        return image;
+    }();
+    return logo;
+}
 
 void DrawAddFolderArtwork(QPainter* painter, const QRect& bounds, const QColor& accent, bool dark) {
     const QRectF rect(bounds);
@@ -123,23 +141,37 @@ QPixmap GameListFallbackIcon(int size) {
     if (size <= 0) {
         return {};
     }
-    if (IsLichiiTheme()) {
-        return RoundedIcon(GetDefaultIcon(static_cast<u32>(size)));
+
+    static QHash<int, QPixmap> fallback_cache;
+    if (const auto it = fallback_cache.constFind(size); it != fallback_cache.cend()) {
+        return it.value();
     }
 
-    QImage image(size, size, QImage::Format_ARGB32_Premultiplied);
-    image.fill(Qt::transparent);
-    QPainter painter(&image);
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(48, 52, 60));
-    painter.drawRoundedRect(QRectF(image.rect()), size * 0.18, size * 0.18);
+    QPixmap fallback;
+    const QImage& logo = Switch2LogoImage();
+    if (!logo.isNull()) {
+        fallback = QPixmap::fromImage(
+            logo.scaled(size, size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+    } else if (IsLichiiTheme()) {
+        fallback = RoundedIcon(GetDefaultIcon(static_cast<u32>(size)));
+    } else {
+        QImage image(size, size, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::transparent);
+        QPainter painter(&image);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(48, 52, 60));
+        painter.drawRoundedRect(QRectF(image.rect()), size * 0.18, size * 0.18);
 
-    const int glyph_size = size * 3 / 8;
-    painter.drawImage(QRect((size - glyph_size) / 2, (size - glyph_size) / 2, glyph_size,
-                             glyph_size),
-                      QImage(QStringLiteral(":/lichii/icons/menu_gamepad@2x.png")));
-    return QPixmap::fromImage(image);
+        const int glyph_size = size * 3 / 8;
+        painter.drawImage(QRect((size - glyph_size) / 2, (size - glyph_size) / 2, glyph_size,
+                                 glyph_size),
+                          QImage(QStringLiteral(":/lichii/icons/menu_gamepad@2x.png")));
+        fallback = QPixmap::fromImage(image);
+    }
+
+    fallback_cache.insert(size, fallback);
+    return fallback;
 }
 
 GameCard::GameCard(QObject* parent) : QStyledItemDelegate{parent} {
