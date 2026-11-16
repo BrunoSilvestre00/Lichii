@@ -6,6 +6,7 @@
 #include <string>
 
 #include <QAbstractItemView>
+#include <QApplication>
 #include <QButtonGroup>
 #include <QColor>
 #include <QCoreApplication>
@@ -22,6 +23,7 @@
 #include <QMessageBox>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPalette>
 #include <QPen>
 #include <QPixmap>
 #include <QPointF>
@@ -386,7 +388,7 @@ QLabel* SectionLabel(const QString& text, QWidget* parent) {
 QLabel* MutedLabel(const QString& text, QWidget* parent) {
     auto* label = new QLabel(text, parent);
     label->setWordWrap(true);
-    label->setStyleSheet(QStringLiteral("color: palette(mid);"));
+    label->setStyleSheet(QStringLiteral("color: palette(window-text);"));
     return label;
 }
 
@@ -395,9 +397,16 @@ QLabel* MutedLabel(const QString& text, QWidget* parent) {
 FirstRunSetupDialog::FirstRunSetupDialog(QWidget* parent) : QWizard(parent) {
     setObjectName(QStringLiteral("FirstRunSetupDialog"));
     setWindowTitle(tr("Welcome to Lichii"));
+    setWizardStyle(QWizard::ClassicStyle);
     // The width is the useful constraint; the height follows the screen so small displays do not
     // clip the dialog.
     setMinimumWidth(680);
+    QPalette setup_palette = parent ? parent->palette() : QApplication::palette();
+    setup_palette.setColor(QPalette::Base, setup_palette.color(QPalette::Window));
+    setup_palette.setColor(QPalette::Button, setup_palette.color(QPalette::Window));
+    setup_palette.setColor(QPalette::ButtonText, setup_palette.color(QPalette::WindowText));
+    setPalette(setup_palette);
+    setAutoFillBackground(true);
     setOption(QWizard::NoBackButtonOnStartPage);
     setButtonText(QWizard::CancelButton, tr("Skip setup"));
     setButtonText(QWizard::BackButton, tr("Back"));
@@ -423,6 +432,8 @@ FirstRunSetupDialog::FirstRunSetupDialog(QWidget* parent) : QWizard(parent) {
                          : UISettings::GameLibraryStyle::Modern;
 
     auto* appearance_page = new QWizardPage(this);
+    appearance_page->setPalette(palette());
+    appearance_page->setAutoFillBackground(true);
     appearance_page->setTitle(tr("Make Lichii yours"));
     appearance_page->setSubTitle(
         tr("Choose a theme and library layout. You can change both later in settings."));
@@ -532,6 +543,8 @@ FirstRunSetupDialog::FirstRunSetupDialog(QWidget* parent) : QWizard(parent) {
     theme_list->setFocus();
 
     auto* firmware_page = new QWizardPage(this);
+    firmware_page->setPalette(palette());
+    firmware_page->setAutoFillBackground(true);
     firmware_page->setTitle(tr("Firmware"));
     firmware_page->setSubTitle(
         tr("Choose a firmware ZIP archive or extracted firmware folder. Firmware is imported after "
@@ -589,6 +602,8 @@ FirstRunSetupDialog::FirstRunSetupDialog(QWidget* parent) : QWizard(parent) {
     });
 
     keys_page = new QWizardPage(this);
+    keys_page->setPalette(palette());
+    keys_page->setAutoFillBackground(true);
     keys_page->setTitle(tr("Select prod.keys"));
     keys_page->setSubTitle(
         tr("Choose your prod.keys file. If you selected firmware, it will be installed after the "
@@ -631,6 +646,8 @@ FirstRunSetupDialog::FirstRunSetupDialog(QWidget* parent) : QWizard(parent) {
     connect(clear_keys_button, &QPushButton::clicked, this, [this] { keys_path->clear(); });
 
     auto* finish_page = new QWizardPage(this);
+    finish_page->setPalette(palette());
+    finish_page->setAutoFillBackground(true);
     finish_page->setTitle(tr("You're all set"));
     finish_page->setSubTitle(tr("The initial setup is complete."));
     finish_page->setFinalPage(true);
@@ -645,15 +662,10 @@ FirstRunSetupDialog::FirstRunSetupDialog(QWidget* parent) : QWizard(parent) {
     success_message->setFont(success_font);
     success_message->setWordWrap(true);
     finish_layout->addWidget(success_message);
-    finish_layout->addWidget(MutedLabel(
-        tr("Some games require prod.keys or firmware. You can install or update them later from "
-           "the Tools menu."),
-        finish_page));
-    finish_layout->addStretch(1);
     setPage(3, finish_page);
     setStartId(0);
 
-    ConfigurationShared::FitToScreen(this, QSize(940, 660));
+    ConfigurationShared::FitToScreen(this, QSize(940, 600));
 }
 
 FirstRunSetupDialog::~FirstRunSetupDialog() = default;

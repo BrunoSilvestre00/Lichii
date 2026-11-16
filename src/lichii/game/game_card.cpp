@@ -6,7 +6,6 @@
 #include <QColor>
 #include <QFileInfo>
 #include <QFont>
-#include <QImage>
 #include <QPainter>
 #include <QPainterPath>
 #include <QRectF>
@@ -20,95 +19,6 @@
 #include "qt_common/game_list/model.h"
 
 namespace {
-
-const QImage& Switch2LogoImage() {
-    // The SVG is rasterized once here instead of through Qt Svg: Qt Svg is an optional module the
-    // CI images do not install, and drawing the two controller outlines needs no renderer.
-    static const QImage logo = [] {
-        QImage image(512, 512, QImage::Format_ARGB32_Premultiplied);
-        image.fill(Qt::transparent);
-        QPainter image_painter(&image);
-        image_painter.setRenderHint(QPainter::Antialiasing);
-        image_painter.setPen(Qt::NoPen);
-        image_painter.setBrush(QColor(230, 0, 18));
-        image_painter.drawRoundedRect(QRectF(image.rect()), 48, 48);
-        image_painter.end();
-        return image;
-    }();
-    return logo;
-}
-
-void DrawSwitch2Placeholder(QPainter* painter, const QRect& bounds) {
-    const int side = std::min(bounds.width(), bounds.height());
-    const QRectF logo_rect(bounds.center().x() - side / 2.0,
-                           bounds.center().y() - side / 2.0, side, side);
-    // Draw the logo first: the outline below is a fallback for a missing or undecodable image, and
-    // must not hide a logo that is there.
-    const QImage& switch2_logo = Switch2LogoImage();
-    if (!switch2_logo.isNull()) {
-        painter->fillRect(bounds, QColor(230, 0, 18));
-        painter->drawImage(logo_rect, switch2_logo);
-        return;
-    }
-
-    const QRectF rect(bounds);
-    const QColor red(226, 0, 20);
-    painter->fillRect(rect, red);
-
-    const qreal width = rect.width();
-    const qreal height = rect.height();
-    const qreal left = rect.left();
-    const qreal top = rect.top();
-    const qreal body_width = width * 0.15;
-    const qreal body_height = height * 0.39;
-    const qreal body_top = top + height * 0.14;
-    const qreal inner = std::max(2.0, width * 0.012);
-
-    painter->setPen(Qt::NoPen);
-    painter->setBrush(Qt::white);
-    const QRectF left_controller(left + width * 0.09, body_top, body_width, body_height);
-    const QRectF right_controller(left + width * 0.28, body_top, body_width, body_height);
-    painter->drawRoundedRect(left_controller, width * 0.035, width * 0.035);
-    painter->drawRoundedRect(right_controller, width * 0.035, width * 0.035);
-
-    painter->setBrush(red);
-    painter->drawRoundedRect(left_controller.adjusted(inner, inner, -inner, -inner),
-                             width * 0.025, width * 0.025);
-    painter->drawRoundedRect(right_controller.adjusted(inner, inner, -inner, -inner),
-                             width * 0.025, width * 0.025);
-
-    painter->setBrush(Qt::white);
-    const qreal button_size = width * 0.035;
-    painter->drawEllipse(QRectF(left_controller.center().x() - button_size / 2,
-                                body_top + body_height * 0.30, button_size, button_size));
-    painter->drawEllipse(QRectF(right_controller.center().x() - button_size / 2,
-                                body_top + body_height * 0.58, button_size, button_size));
-
-    QFont number_font(QStringLiteral("Arial"));
-    number_font.setPixelSize(std::max(18, static_cast<int>(height * 0.48)));
-    number_font.setWeight(QFont::Black);
-    painter->setFont(number_font);
-    painter->drawText(QRectF(left + width * 0.47, top + height * 0.04, width * 0.45,
-                             height * 0.53),
-                      Qt::AlignCenter, QStringLiteral("2"));
-
-    QFont brand_font(QStringLiteral("Arial"));
-    brand_font.setPixelSize(std::max(8, static_cast<int>(height * 0.085)));
-    brand_font.setWeight(QFont::DemiBold);
-    brand_font.setLetterSpacing(QFont::AbsoluteSpacing, std::max(1.0, width * 0.008));
-    painter->setFont(brand_font);
-    painter->drawText(QRectF(left + width * 0.08, top + height * 0.62, width * 0.84,
-                             height * 0.14),
-                      Qt::AlignCenter, QStringLiteral("NINTENDO"));
-
-    QFont switch_font(QStringLiteral("Arial"));
-    switch_font.setPixelSize(std::max(12, static_cast<int>(height * 0.16)));
-    switch_font.setWeight(QFont::Bold);
-    painter->setFont(switch_font);
-    painter->drawText(QRectF(left + width * 0.08, top + height * 0.74, width * 0.84,
-                             height * 0.21),
-                      Qt::AlignCenter, QStringLiteral("SWITCH"));
-}
 
 void DrawAddFolderArtwork(QPainter* painter, const QRect& bounds, const QColor& accent, bool dark) {
     const QRectF rect(bounds);
@@ -209,12 +119,7 @@ bool IsGameDirectory(GameListItemType type) {
 }
 
 QPixmap GameListFallbackIcon(int size) {
-    QPixmap pixmap(size, size);
-    pixmap.fill(Qt::transparent);
-    QPainter painter(&pixmap);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    DrawSwitch2Placeholder(&painter, pixmap.rect());
-    return pixmap;
+    return RoundedIcon(GetDefaultIcon(static_cast<u32>(std::max(0, size))));
 }
 
 GameCard::GameCard(QObject* parent) : QStyledItemDelegate{parent} {
@@ -274,8 +179,6 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
     const QPixmap icon_pixmap = game_folder || add_folder
                                     ? QPixmap{}
                                     : index.data(GameListItemPath::CardIconRole).value<QPixmap>();
-    const bool has_icon = !game_folder && !add_folder &&
-                          index.data(GameListItemPath::HasIconRole).toBool();
     const bool folder_cards = option.widget &&
                               option.widget->objectName() == QStringLiteral("gameGridView");
     const bool show_game_name = UISettings::values.show_game_name.GetValue() ||
@@ -300,11 +203,12 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
         const QColor accent = selected ? palette.highlightedText().color()
                                        : palette.highlight().color();
         DrawGameFolderArtwork(painter, artworkRect, accent, dark);
-    } else if (has_icon) {
-        // Fall back to the small icon when no card artwork is available, so the card is never
-        // left blank for a game that does have an icon.
-        const QPixmap artwork =
-            icon_pixmap.isNull() ? index.data(Qt::DecorationRole).value<QPixmap>() : icon_pixmap;
+    } else {
+        // Use the existing neutral controller icon when a game has no artwork; the red console
+        // logo placeholder obscured the library theme and had no actual game art.
+        const QPixmap artwork = icon_pixmap.isNull()
+                                    ? index.data(Qt::DecorationRole).value<QPixmap>()
+                                    : icon_pixmap;
         if (!artwork.isNull()) {
             QSize scaled = artwork.size();
             scaled.scale(artworkRect.size(), Qt::KeepAspectRatioByExpanding);
@@ -313,8 +217,6 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
                                   scaled.height());
             painter->drawPixmap(imageRect, artwork);
         }
-    } else if (!has_icon) {
-        DrawSwitch2Placeholder(painter, artworkRect);
     }
     painter->restore();
 
