@@ -9,14 +9,17 @@
 #include <QButtonGroup>
 #include <QColor>
 #include <QCoreApplication>
-#include <QDialogButtonBox>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFont>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QLabel>
 #include <QLinearGradient>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QListWidgetItem>
+#include <QMessageBox>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPen>
@@ -30,9 +33,13 @@
 #include <QString>
 #include <QVBoxLayout>
 #include <QVariant>
+#include <QWizardPage>
 
 #include "lichii/configuration/configuration_shared.h"
 #include "lichii/first_run_setup_dialog.h"
+#include "frontend_common/content_manager.h"
+#include "qt_common/qt_common.h"
+#include "qt_common/util/content.h"
 
 namespace {
 
@@ -385,12 +392,17 @@ QLabel* MutedLabel(const QString& text, QWidget* parent) {
 
 } // namespace
 
-FirstRunSetupDialog::FirstRunSetupDialog(QWidget* parent) : QDialog(parent) {
+FirstRunSetupDialog::FirstRunSetupDialog(QWidget* parent) : QWizard(parent) {
     setObjectName(QStringLiteral("FirstRunSetupDialog"));
-    setWindowTitle(tr("Set up Lichii"));
+    setWindowTitle(tr("Welcome to Lichii"));
     // The width is the useful constraint; the height follows the screen so small displays do not
     // clip the dialog.
-    setMinimumWidth(640);
+    setMinimumWidth(680);
+    setOption(QWizard::NoBackButtonOnStartPage);
+    setButtonText(QWizard::CancelButton, tr("Skip setup"));
+    setButtonText(QWizard::BackButton, tr("Back"));
+    setButtonText(QWizard::NextButton, tr("Next"));
+    setButtonText(QWizard::FinishButton, tr("Finish"));
 
     auto current_theme = [] {
         const std::string& theme = UISettings::values.theme;
@@ -410,33 +422,15 @@ FirstRunSetupDialog::FirstRunSetupDialog(QWidget* parent) : QDialog(parent) {
                          ? UISettings::GameLibraryStyle::Classic
                          : UISettings::GameLibraryStyle::Modern;
 
-    auto* root = new QVBoxLayout(this);
+    auto* appearance_page = new QWizardPage(this);
+    appearance_page->setTitle(tr("Make Lichii yours"));
+    appearance_page->setSubTitle(
+        tr("Choose a theme and library layout. You can change both later in settings."));
+    setPage(2, appearance_page);
+
+    auto* root = new QVBoxLayout(appearance_page);
     root->setContentsMargins(24, 20, 24, 18);
     root->setSpacing(16);
-
-    auto* header = new QHBoxLayout;
-    header->setSpacing(14);
-    auto* logo = new QLabel(this);
-    logo->setPixmap(
-        QIcon(QStringLiteral(":/icons/default/256x256/lichii.png")).pixmap(44));
-    header->addWidget(logo, 0, Qt::AlignTop);
-
-    auto* titles = new QVBoxLayout;
-    titles->setSpacing(3);
-    auto* title = new QLabel(tr("Make Lichii yours"), this);
-    QFont title_font = title->font();
-    title_font.setBold(true);
-    title_font.setPointSizeF(title_font.pointSizeF() * 1.35);
-    title->setFont(title_font);
-    auto* subtitle =
-        new QLabel(tr("Pick a theme and a library layout. They are independent, so you can mix "
-                      "them, and you can change both later."),
-                   this);
-    subtitle->setWordWrap(true);
-    titles->addWidget(title);
-    titles->addWidget(subtitle);
-    header->addLayout(titles, 1);
-    root->addLayout(header);
 
     auto* content = new QHBoxLayout;
     content->setSpacing(24);
@@ -500,15 +494,8 @@ FirstRunSetupDialog::FirstRunSetupDialog(QWidget* parent) : QDialog(parent) {
     root->addLayout(content, 1);
 
     root->addWidget(MutedLabel(
-        tr("You can change both later under Emulation > Configure > General > UI."), this));
-
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok, this);
-    auto* continue_button = buttons->button(QDialogButtonBox::Ok);
-    continue_button->setText(tr("Continue"));
-    continue_button->setDefault(true);
-    continue_button->setAutoDefault(true);
-    connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
-    root->addWidget(buttons);
+        tr("You can change both later under Emulation > Configure > General > UI."),
+        appearance_page));
 
     auto* style_group = new QButtonGroup(this);
     style_group->addButton(modern_style);
@@ -544,10 +531,184 @@ FirstRunSetupDialog::FirstRunSetupDialog(QWidget* parent) : QDialog(parent) {
     UpdatePreview();
     theme_list->setFocus();
 
+    auto* firmware_page = new QWizardPage(this);
+    firmware_page->setTitle(tr("Firmware"));
+    firmware_page->setSubTitle(
+        tr("Choose a firmware ZIP archive or extracted firmware folder. Firmware is imported after "
+           "you select prod.keys."));
+    setPage(0, firmware_page);
+
+    auto* firmware_layout = new QVBoxLayout(firmware_page);
+    firmware_layout->setContentsMargins(24, 20, 24, 20);
+    firmware_layout->setSpacing(14);
+    firmware_layout->addWidget(MutedLabel(
+        tr("Firmware enables system features and is required by some games. You can install it "
+           "from a ZIP file or from a folder containing the firmware files."),
+        firmware_page));
+
+    const bool firmware_present =
+        QtCommon::system && FirmwareManager::CheckFirmwarePresence(*QtCommon::system);
+    firmware_layout->addWidget(MutedLabel(
+        firmware_present ? tr("Firmware is already installed. You can keep it or choose another source.")
+                         : tr("No firmware is installed yet. You can also install it later from the Tools menu."),
+        firmware_page));
+
+    firmware_path = new QLineEdit(firmware_page);
+    firmware_path->setReadOnly(true);
+    firmware_path->setPlaceholderText(tr("No firmware source selected"));
+    firmware_layout->addWidget(firmware_path);
+
+    auto* firmware_buttons = new QHBoxLayout;
+    auto* firmware_zip_button = new QPushButton(tr("Choose firmware ZIP…"), firmware_page);
+    auto* firmware_folder_button = new QPushButton(tr("Choose firmware folder…"), firmware_page);
+    auto* clear_firmware_button = new QPushButton(tr("Clear selection"), firmware_page);
+    firmware_buttons->addWidget(firmware_zip_button);
+    firmware_buttons->addWidget(firmware_folder_button);
+    firmware_buttons->addWidget(clear_firmware_button);
+    firmware_buttons->addStretch(1);
+    firmware_layout->addLayout(firmware_buttons);
+
+    connect(firmware_zip_button, &QPushButton::clicked, this, [this] {
+        const QString path = QFileDialog::getOpenFileName(
+            this, tr("Select firmware ZIP"), {}, tr("ZIP archives (*.zip)"));
+        if (!path.isEmpty()) {
+            firmware_path->setText(path);
+            firmware_source_is_zip = true;
+        }
+    });
+    connect(firmware_folder_button, &QPushButton::clicked, this, [this] {
+        const QString path = QFileDialog::getExistingDirectory(this, tr("Select firmware folder"));
+        if (!path.isEmpty()) {
+            firmware_path->setText(path);
+            firmware_source_is_zip = false;
+        }
+    });
+    connect(clear_firmware_button, &QPushButton::clicked, this, [this] {
+        firmware_path->clear();
+        firmware_source_is_zip = false;
+    });
+
+    keys_page = new QWizardPage(this);
+    keys_page->setTitle(tr("Select prod.keys"));
+    keys_page->setSubTitle(
+        tr("Choose your prod.keys file. If you selected firmware, it will be installed after the "
+           "keys are ready."));
+    setPage(1, keys_page);
+
+    auto* keys_layout = new QVBoxLayout(keys_page);
+    keys_layout->setContentsMargins(24, 20, 24, 20);
+    keys_layout->setSpacing(14);
+    keys_layout->addWidget(MutedLabel(
+        tr("Firmware is encrypted, so prod.keys must be installed before the selected firmware "
+           "can be imported. Keys are optional if you do not have them yet."),
+        keys_page));
+    keys_layout->addWidget(MutedLabel(
+        ContentManager::AreKeysPresent()
+            ? tr("Decryption keys are already installed. Choose a replacement only if needed.")
+            : tr("No decryption keys are installed yet. Some games can run without them; others need them."),
+        keys_page));
+
+    keys_path = new QLineEdit(keys_page);
+    keys_path->setReadOnly(true);
+    keys_path->setPlaceholderText(tr("No prod.keys file selected"));
+    keys_layout->addWidget(keys_path);
+
+    auto* keys_buttons = new QHBoxLayout;
+    auto* keys_button = new QPushButton(tr("Choose prod.keys…"), keys_page);
+    auto* clear_keys_button = new QPushButton(tr("Clear selection"), keys_page);
+    keys_buttons->addWidget(keys_button);
+    keys_buttons->addWidget(clear_keys_button);
+    keys_buttons->addStretch(1);
+    keys_layout->addLayout(keys_buttons);
+    keys_layout->addStretch(1);
+    connect(keys_button, &QPushButton::clicked, this, [this] {
+        const QString path = QFileDialog::getOpenFileName(
+            this, tr("Select prod.keys"), {}, tr("Prod keys (prod.keys);;Key files (*.keys)"));
+        if (!path.isEmpty()) {
+            keys_path->setText(path);
+        }
+    });
+    connect(clear_keys_button, &QPushButton::clicked, this, [this] { keys_path->clear(); });
+
+    auto* finish_page = new QWizardPage(this);
+    finish_page->setTitle(tr("You're all set"));
+    finish_page->setSubTitle(tr("The initial setup is complete."));
+    finish_page->setFinalPage(true);
+    auto* finish_layout = new QVBoxLayout(finish_page);
+    finish_layout->setContentsMargins(24, 24, 24, 24);
+    finish_layout->setSpacing(16);
+    auto* success_message = new QLabel(
+        tr("You made it! You can now launch your games directly from the library."), finish_page);
+    QFont success_font = success_message->font();
+    success_font.setBold(true);
+    success_font.setPointSizeF(success_font.pointSizeF() * 1.2);
+    success_message->setFont(success_font);
+    success_message->setWordWrap(true);
+    finish_layout->addWidget(success_message);
+    finish_layout->addWidget(MutedLabel(
+        tr("Some games require prod.keys or firmware. You can install or update them later from "
+           "the Tools menu."),
+        finish_page));
+    finish_layout->addStretch(1);
+    setPage(3, finish_page);
+    setStartId(0);
+
     ConfigurationShared::FitToScreen(this, QSize(940, 660));
 }
 
 FirstRunSetupDialog::~FirstRunSetupDialog() = default;
+
+bool FirstRunSetupDialog::validateCurrentPage() {
+    if (!QWizard::validateCurrentPage()) {
+        return false;
+    }
+    if (currentPage() != keys_page) {
+        return true;
+    }
+
+    bool keys_available = ContentManager::AreKeysPresent();
+    const QString selected_keys = keys_path->text().trimmed();
+    if (!selected_keys.isEmpty()) {
+        const auto result = QtCommon::Content::InstallKeys(selected_keys);
+        if (result != FirmwareManager::KeyInstallResult::Success) {
+            QMessageBox::critical(this, tr("Could not install prod.keys"),
+                                  QtCommon::Content::GetKeyInstallResultString(result));
+            return false;
+        }
+        keys_available = ContentManager::AreKeysPresent();
+        if (!keys_available) {
+            QMessageBox::critical(
+                this, tr("Could not install prod.keys"),
+                tr("The selected file was copied, but no valid decryption keys were detected."));
+            return false;
+        }
+        keys_installed = true;
+    }
+
+    const QString selected_firmware = firmware_path->text().trimmed();
+    if (selected_firmware.isEmpty()) {
+        return true;
+    }
+    if (!keys_available) {
+        QMessageBox::warning(
+            this, tr("prod.keys required"),
+            tr("Install prod.keys before importing firmware, or go back and clear the firmware "
+               "selection to finish setup without it."));
+        return false;
+    }
+
+    const QFileInfo source(selected_firmware);
+    if (!source.exists() || (firmware_source_is_zip ? !source.isFile() : !source.isDir())) {
+        QMessageBox::warning(this, tr("Firmware source not found"),
+                             tr("Choose an existing ZIP archive or firmware folder."));
+        return false;
+    }
+
+    const bool installed = firmware_source_is_zip
+                              ? QtCommon::Content::InstallFirmwareZip(selected_firmware)
+                              : QtCommon::Content::InstallFirmware(selected_firmware, false);
+    return installed;
+}
 
 UISettings::Theme FirstRunSetupDialog::selected_theme() const {
     if (theme_list == nullptr || theme_list->currentItem() == nullptr) {
@@ -558,6 +719,10 @@ UISettings::Theme FirstRunSetupDialog::selected_theme() const {
 
 UISettings::GameLibraryStyle FirstRunSetupDialog::selected_library_style() const {
     return selected_style;
+}
+
+bool FirstRunSetupDialog::installed_keys() const {
+    return keys_installed;
 }
 
 void FirstRunSetupDialog::BuildThemeList() {

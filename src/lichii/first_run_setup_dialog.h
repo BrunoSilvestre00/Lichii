@@ -3,16 +3,18 @@
 
 #pragma once
 
-#include <QDialog>
+#include <QWizard>
 
 #include "qt_common/config/uisettings.h"
 
 class QListWidget;
+class QLineEdit;
 class QRadioButton;
+class QWizardPage;
 
 /// The first-run setup. It picks a theme and a library style independently and shows a live
 /// preview of the combination before the choices are applied.
-class FirstRunSetupDialog : public QDialog {
+class FirstRunSetupDialog : public QWizard {
     Q_OBJECT
 
 public:
@@ -21,14 +23,21 @@ public:
 
     [[nodiscard]] UISettings::Theme selected_theme() const;
     [[nodiscard]] UISettings::GameLibraryStyle selected_library_style() const;
+    [[nodiscard]] bool installed_keys() const;
 
 private:
     void BuildThemeList();
     void UpdatePreview();
+    bool validateCurrentPage() override;
 
     QListWidget* theme_list{};
+    QLineEdit* firmware_path{};
+    QLineEdit* keys_path{};
+    QWizardPage* keys_page{};
     QRadioButton* modern_style{};
     QRadioButton* classic_style{};
     QWidget* preview{};
+    bool firmware_source_is_zip{};
+    bool keys_installed{};
     UISettings::GameLibraryStyle selected_style{UISettings::GameLibraryStyle::Modern};
 };

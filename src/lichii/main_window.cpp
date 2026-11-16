@@ -623,7 +623,7 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     }
 }
 
-void MainWindow::PromptFirstRunSetup() {
+bool MainWindow::PromptFirstRunSetup() {
     FirstRunSetupDialog dialog(this);
     UISettings::GameLibraryStyle style = UISettings::GameLibraryStyle::Modern;
 
@@ -647,6 +647,8 @@ void MainWindow::PromptFirstRunSetup() {
                         : Settings::GameListMode::TreeView,
                     false);
     config->SaveAllValues();
+    OnCheckFirmwareDecryption(false);
+    return dialog.installed_keys();
 }
 
 MainWindow::~MainWindow() {
@@ -2890,8 +2892,11 @@ void MainWindow::OnEmulationStopped() {
             deferred_library_style_prompt = false;
             if (!UISettings::values.has_selected_game_library_style.GetValue() ||
                 UISettings::values.first_start.GetValue()) {
-                PromptFirstRunSetup();
+                const bool keys_installed = PromptFirstRunSetup();
                 SetGameListMode(UISettings::values.game_list_mode.GetValue(), false);
+                if (keys_installed) {
+                    game_list->PopulateAsync(UISettings::values.game_dirs);
+                }
             }
         }
     }

@@ -9,6 +9,10 @@
 
 class GameCard;
 class GameListModel;
+class QLabel;
+class QResizeEvent;
+class QToolButton;
+class QWidget;
 
 class GameGrid : public QListView {
     Q_OBJECT
@@ -20,8 +24,7 @@ public:
     void ApplyFilter(const QString& edit_filter_text, GameListModel* model);
     void UpdateIconSize();
 
-    // Folder browsing: a folder card drilled into shows only its own games; the folder cards
-    // stay visible to switch folders, and leaving works through the same card again or Escape.
+    // The root view shows folders; browsing a folder shows only its games.
     void BrowseDirectory(int dir_index);
     void SetBrowsedDirectory(int dir_index);
     int BrowsedDirectory() const {
@@ -32,11 +35,15 @@ public:
 
 protected:
     void keyPressEvent(QKeyEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     GameCard* m_gameCard = nullptr;
+    QWidget* navigation_bar = nullptr;
+    QToolButton* back_button = nullptr;
+    QLabel* folder_title = nullptr;
     int browsed_dir = -1;
     QString last_filter_text;
 
-    void HighlightBrowsedFolder(GameListModel* model);
+    void UpdateNavigationBarGeometry();
 };

@@ -401,9 +401,14 @@ QRect GameCard::getCardRect(const QStyleOptionViewItem& option, const QModelInde
         // center everything in-line, such that the leftmost and rightmost cards
         // have ~ equal padding to the edge of the viewport
         // spacing between each card is larger, but equal to each other
-        const int column = index.row() % m_columns;
-
+        // Rows hidden by the grid's folder/search filter no longer match their visual column.
+        // Use the item cell's position so painting and the grid's hit test stay aligned.
         const int row_width = m_columns * cell_width;
+        const int column = cell_width > 0
+                               ? (((option.rect.left() % row_width) + row_width) % row_width) /
+                                     cell_width
+                               : index.row() % m_columns;
+
         const int total_gap = row_width - cardMargin * 2 - m_columns * card_width;
         const int gap = (m_columns > 1) ? (total_gap / (m_columns - 1)) : 0;
         card_left =

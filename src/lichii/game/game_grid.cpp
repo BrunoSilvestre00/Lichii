@@ -1,8 +1,15 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <QFileInfo>
+#include <QFont>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QResizeEvent>
 #include <QScroller>
 #include <QScrollerProperties>
+#include <QStyle>
+#include <QToolButton>
 
 #include "qt_common/config/uisettings.h"
 #include "qt_common/game_list/model.h"
@@ -31,6 +38,30 @@ GameGrid::GameGrid(QWidget* parent) : QListView{parent} {
     setTextElideMode(Qt::ElideRight);
     setFlow(QListView::LeftToRight);
     setWrapping(true);
+
+    navigation_bar = new QWidget(this);
+    auto* navigation_layout = new QHBoxLayout(navigation_bar);
+    navigation_layout->setContentsMargins(8, 0, 8, 0);
+    navigation_layout->setSpacing(10);
+
+    back_button = new QToolButton(navigation_bar);
+    back_button->setIcon(style()->standardIcon(QStyle::SP_ArrowBack));
+    back_button->setIconSize(QSize(20, 20));
+    back_button->setAutoRaise(true);
+    back_button->setToolTip(tr("Back to game folders"));
+    back_button->setAccessibleName(tr("Back to game folders"));
+    back_button->setFixedSize(36, 36);
+    navigation_layout->addWidget(back_button);
+
+    folder_title = new QLabel(navigation_bar);
+    QFont title_font = folder_title->font();
+    title_font.setBold(true);
+    folder_title->setFont(title_font);
+    navigation_layout->addWidget(folder_title, 1);
+
+    navigation_bar->hide();
+    connect(back_button, &QToolButton::clicked, this,
+            [this] { SetBrowsedDirectory(-1); });
 }
 
 void GameGrid::SetModel(GameListModel* model) {
@@ -47,51 +78,18 @@ void GameGrid::ApplyFilter(const QString& edit_filter_text, GameListModel* model
         if (!item)
             continue;
 
-        bool visible = Lichii::FilterMatches(edit_filter_text, item);
+        const auto type = item->data(GameListItem::TypeRole).value<GameListItemType>();
+        bool visible = false;
         if (browsed_dir >= 0) {
-            const auto type = item->data(GameListItem::TypeRole).value<GameListItemType>();
             if (type == GameListItemType::Game) {
                 visible = item->data(GameListItemPath::OwnerDirRole).toInt() == browsed_dir &&
                           Lichii::FilterMatches(edit_filter_text, item);
-            } else if (type == GameListItemType::CustomDir ||
-                       type == GameListItemType::AddDir) {
-                // Folder cards stay visible so another folder can be opened or the browsed one
-                // left again.
-                visible = true;
-            } else {
-                visible = false;
             }
+        } else if (type == GameListItemType::CustomDir || type == GameListItemType::AddDir) {
+            visible = Lichii::FilterMatches(edit_filter_text, item);
         }
 
         setRowHidden(i, !visible);
-    }
-
-    HighlightBrowsedFolder(model);
-}
-
-void GameGrid::HighlightBrowsedFolder(GameListModel* model) {
-    QModelIndex current;
-    if (browsed_dir >= 0) {
-        for (int i = 0; i < model->rowCount(); ++i) {
-            QStandardItem* item = model->item(i, 0);
-            if (!item) {
-                continue;
-            }
-            if (item->data(GameListItem::TypeRole).value<GameListItemType>() ==
-                    GameListItemType::CustomDir &&
-                item->data(GameListDir::GameDirRole).toInt() == browsed_dir) {
-                current = item->index();
-                break;
-            }
-        }
-    }
-
-    if (current.isValid()) {
-        setCurrentIndex(current);
-        scrollTo(current);
-    } else {
-        clearSelection();
-        setCurrentIndex({});
     }
 }
 
@@ -100,13 +98,29 @@ void GameGrid::SetBrowsedDirectory(int dir_index) {
         return;
     }
     browsed_dir = dir_index;
+    const bool browsing = browsed_dir >= 0;
+    setViewportMargins(0, browsing ? 44 : 0, 0, 0);
+    navigation_bar->setVisible(browsing);
+    if (browsing && browsed_dir < UISettings::values.game_dirs.size()) {
+        const QString path = QString::fromStdString(
+            UISettings::values.game_dirs[browsed_dir].path);
+        QString name = QFileInfo(path).fileName();
+        if (name.isEmpty()) {
+            name = path;
+        }
+        folder_title->setText(name);
+    }
+    UpdateNavigationBarGeometry();
+
     if (auto* model = qobject_cast<GameListModel*>(QListView::model())) {
         ApplyFilter(last_filter_text, model);
     }
 }
 
 void GameGrid::BrowseDirectory(int dir_index) {
-    SetBrowsedDirectory(browsed_dir == dir_index ? -1 : dir_index);
+    if (dir_index >= 0 && dir_index < UISettings::values.game_dirs.size()) {
+        SetBrowsedDirectory(dir_index);
+    }
 }
 
 void GameGrid::keyPressEvent(QKeyEvent* event) {
@@ -115,6 +129,17 @@ void GameGrid::keyPressEvent(QKeyEvent* event) {
         return;
     }
     QListView::keyPressEvent(event);
+}
+
+void GameGrid::resizeEvent(QResizeEvent* event) {
+    QListView::resizeEvent(event);
+    UpdateNavigationBarGeometry();
+}
+
+void GameGrid::UpdateNavigationBarGeometry() {
+    const int frame = frameWidth();
+    navigation_bar->setGeometry(frame, frame, std::max(0, width() - 2 * frame), 44);
+    navigation_bar->raise();
 }
 
 void GameGrid::UpdateIconSize() {
