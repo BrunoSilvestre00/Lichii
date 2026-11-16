@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <random>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -292,9 +293,14 @@ TEST_CASE("Fuzzed keys file: keyblob indices past the table", "[core][fuzz_regre
     // #1876: keyblob_ff wrote 0x90 bytes about 36 KiB past the 0x20-entry table. Plain builds
     // cannot see that write; with the fix the lines are skipped and no other key changes.
     auto& keys = Core::Crypto::KeyManager::Instance();
-    const auto directory = std::filesystem::temp_directory_path() / "lichii-parser-regressions";
-    std::filesystem::remove_all(directory);
-    std::filesystem::create_directories(directory);
+    // A folder this run creates itself (create_directory fails on one that exists), so another
+    // tests process can't remove it before ReloadKeys reads it.
+    std::filesystem::path directory;
+    std::random_device random;
+    do {
+        directory = std::filesystem::temp_directory_path() /
+                    ("lichii-parser-regressions-" + std::to_string(random()));
+    } while (!std::filesystem::create_directory(directory));
     {
         std::ofstream file{directory / "prod.keys"};
         file << "keyblob_ff = " << std::string(0x90 * 2, 'a') << '\n';
