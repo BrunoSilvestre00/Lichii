@@ -66,6 +66,7 @@
 
 #include "configuration/configure_dialog.h"
 #include "configuration/configure_input.h"
+#include "configuration/configure_network.h"
 #include "configuration/configure_per_game.h"
 #include "configuration/configure_tas.h"
 
@@ -159,6 +160,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include "common/logging.h"
 #include "common/memory_detect.h"
 #include "common/nextendo.h"
+#include "common/npln_patch_catalog.h"
 #include "common/scm_rev.h"
 #include "common/scope_exit.h"
 #include "common/string_util.h"
@@ -482,19 +484,69 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     }
 #endif
 
-    if constexpr (Common::Nextendo::OnlinePlayAvailable) {
-        connect(&nextendo_session_watcher, &QFutureWatcher<bool>::finished, this, [this] {
-            if (nextendo_session_watcher.result()) {
+    connect(&nextendo_session_watcher,
+            &QFutureWatcher<Common::Nextendo::SignOutReason>::finished, this, [this] {
+                QString why;
+                switch (nextendo_session_watcher.result()) {
+                case Common::Nextendo::SignOutReason::None:
+                    return;
+                case Common::Nextendo::SignOutReason::SessionExpired:
+                    why = tr("Your Nextendo session expired, so Lichii signed you out.");
+                    break;
+                case Common::Nextendo::SignOutReason::SessionRevoked:
+                    why = tr("Your session was ended on nextendo.network, so Lichii signed you "
+                             "out.");
+                    break;
+                case Common::Nextendo::SignOutReason::MissingScope:
+                    why = tr("Your Nextendo sign-in didn't allow online play, so Lichii signed "
+                             "you out.");
+                    break;
+                }
                 QMessageBox::warning(this, tr("Signed out of Nextendo"),
-                                     tr("Your session was ended on nextendo.network, so Lichii "
-                                        "signed you out. Sign in again in Configure > Network."));
-            }
-        });
-        connect(&nextendo_session_timer, &QTimer::timeout, this,
-                &MainWindow::KeepNextendoSessionAlive);
-        nextendo_session_timer.start(std::chrono::minutes{2});
-        KeepNextendoSessionAlive();
-    }
+                                     why + QLatin1Char(' ') +
+                                         tr("Sign in again in Configure > Network."));
+            });
+    connect(&nextendo_status_watcher,
+            &QFutureWatcher<std::optional<Common::Nextendo::OnlineStatus>>::finished, this,
+            [this] {
+                const auto status = nextendo_status_watcher.result();
+                QString message;
+                if (!Common::Nextendo::LoadAccount()) {
+                    message = tr("Nextendo online play is on, but you aren't signed in. Sign in "
+                                 "in Configure > Network.");
+                } else if (status && !status->allow) {
+                    LOG_WARNING(Frontend, "nextendo.network refuses online play: {}",
+                                status->reason);
+                    message = ConfigureNetwork::OnlineRefusal(status->reason);
+                }
+                if (!message.isEmpty()) {
+                    statusBar()->showMessage(message, 30000);
+                }
+            });
+    connect(&nextendo_catalog_watcher,
+            &QFutureWatcher<std::optional<Common::Nextendo::GameCatalog>>::finished, this, [this] {
+                const auto catalog = nextendo_catalog_watcher.result();
+                const auto check = std::exchange(nextendo_version_check, std::nullopt);
+                if (!catalog || !check) {
+                    return;
+                }
+                const auto verdict =
+                    Common::Nextendo::CheckGameVersion(*catalog, check->first, check->second);
+                if (!verdict || verdict->kind == Common::Nextendo::VersionVerdict::Kind::Accepted) {
+                    return;
+                }
+                statusBar()->showMessage(
+                    verdict->kind == Common::Nextendo::VersionVerdict::Kind::Disabled
+                        ? tr("Nextendo doesn't offer online play for this game right now.")
+                        : tr("This version of the game can't play online on Nextendo. Update it "
+                             "to %1.")
+                              .arg(QString::fromStdString(verdict->recommended)),
+                    30000);
+            });
+    connect(&nextendo_session_timer, &QTimer::timeout, this,
+            &MainWindow::KeepNextendoSessionAlive);
+    nextendo_session_timer.start(std::chrono::minutes{2});
+    KeepNextendoSessionAlive();
 
     // Setup content providers.
     QtCommon::SetupContentProviders();
@@ -2358,6 +2410,26 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
         }
     }
 
+    if (loader && Common::Nextendo::OnlinePlayActive()) {
+        QProgressDialog progress(tr("Checking online patches..."), QString{}, 0, 0, this);
+        progress.setWindowModality(Qt::ApplicationModal);
+        progress.setWindowFlag(Qt::WindowCloseButtonHint, false);
+        progress.setCancelButton(nullptr);
+        progress.setMinimumDuration(0);
+        QFutureWatcher<void> watcher;
+        QEventLoop loop;
+        connect(&watcher, &QFutureWatcher<void>::finished, &loop, &QEventLoop::quit);
+        watcher.setFuture(QtConcurrent::run([&loader, title_id] {
+            Common::NplnPatchCatalog::PrepareForGame(
+                title_id, [&] { return loader->ReadMainBuildIdHex(*QtCommon::system); });
+        }));
+        progress.show();
+        loop.exec();
+        if (close_pending) {
+            return;
+        }
+    }
+
     QElapsedTimer load_timer;
     load_timer.start();
     if (!LoadROM(filename, params)) {
@@ -2544,6 +2616,9 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     if (metadata.first != nullptr) {
         title_version = metadata.first->GetVersionString();
         title_name = metadata.first->GetApplicationName();
+    } else if (FileSys::NACP control; QtCommon::system->GetAppLoader().ReadControlData(control) ==
+                                      Loader::ResultStatus::Success) {
+        title_version = control.GetVersionString();
     }
     if (res != Loader::ResultStatus::Success || title_name.empty()) {
         title_name = Common::FS::PathToUTF8String(
@@ -2591,6 +2666,8 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
             ResetWindowSize720();
         }
     }
+    CheckNextendoOnlineStatus();
+    CheckNextendoGameVersion(title_id, title_version);
     OnStartGame();
 }
 
@@ -2814,6 +2891,7 @@ void MainWindow::OnEmulationStopped() {
     }
 
     emulation_running = false;
+    nextendo_version_check.reset();
 
     game_list->SetReportableProgramId(report_session ? report_session->program_id : 0);
 
@@ -5439,6 +5517,30 @@ void MainWindow::KeepNextendoSessionAlive() {
         }));
 }
 
+void MainWindow::CheckNextendoOnlineStatus() {
+    if (!Common::Nextendo::OnlinePlayActive() || nextendo_status_watcher.isRunning()) {
+        return;
+    }
+    nextendo_status_watcher.setFuture(
+        QtConcurrent::run([client_id = Settings::values.nextendo_client_id.GetValue()] {
+            return Common::Nextendo::CheckOnlineStatus(client_id);
+        }));
+}
+
+void MainWindow::CheckNextendoGameVersion(u64 title_id, std::string version) {
+    if (!Common::Nextendo::OnlinePlayActive()) {
+        return;
+    }
+    nextendo_version_check.emplace(title_id, std::move(version));
+    if (nextendo_catalog_watcher.isRunning()) {
+        return;
+    }
+    nextendo_catalog_watcher.setFuture(
+        QtConcurrent::run([client_id = Settings::values.nextendo_client_id.GetValue()] {
+            return Common::Nextendo::LoadGameCatalog(client_id);
+        }));
+}
+
 #ifdef ENABLE_UPDATE_CHECKER
 void MainWindow::CheckForUpdates(bool manual) {
     if (update_check_running) {
@@ -5574,6 +5676,7 @@ void MainWindow::OnApplicationChanged(u64 program_id) {
 
     UpdateWindowTitle(title_name, title_version,
                       QtCommon::system->GPU().Renderer().GetDeviceVendor());
+    CheckNextendoGameVersion(program_id, std::move(title_version));
 
     // Switch to record playtime for the running program
     if (play_time_manager)
@@ -6120,11 +6223,19 @@ bool MainWindow::SelectRomFSDumpTarget(const FileSys::ContentProvider& installed
     using ContentInfo = std::tuple<u64, FileSys::TitleType, FileSys::ContentRecordType>;
     boost::container::flat_set<ContentInfo> available_title_ids;
 
+    std::vector<u64> add_on_content;
+    for (const auto& entry :
+         installed.ListEntriesFilter(FileSys::TitleType::AOC, FileSys::ContentRecordType::Data)) {
+        add_on_content.push_back(entry.title_id);
+    }
+    const u64 add_on_base = FileSys::GetAddOnApplicationID(program_id, add_on_content);
+
     const auto RetrieveEntries = [&](FileSys::TitleType title_type,
                                      FileSys::ContentRecordType record_type) {
+        const u64 base = title_type == FileSys::TitleType::AOC ? add_on_base : program_id;
         const auto entries = installed.ListEntriesFilter(title_type, record_type);
         for (const auto& entry : entries) {
-            if (FileSys::GetBaseTitleID(entry.title_id) == program_id &&
+            if (FileSys::GetBaseTitleID(entry.title_id) == base &&
                 installed.GetEntry(entry)->GetStatus() == Loader::ResultStatus::Success) {
                 available_title_ids.insert({entry.title_id, title_type, record_type});
             }
