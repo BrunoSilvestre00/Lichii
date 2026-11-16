@@ -24,6 +24,10 @@ TEST_CASE("A play time manager that changed nothing does not save over newer pla
     REQUIRE(std::filesystem::create_directories(directory));
     Common::FS::SetEdenPath(Common::FS::EdenPath::PlayTimeDir, directory);
     SCOPE_EXIT {
+        // SetEdenPath keeps only an existing folder, and a fresh profile has not made the play
+        // time folder yet: make it, so the mapping is restored before the temporary one goes.
+        std::error_code make_error;
+        std::filesystem::create_directories(original, make_error);
         Common::FS::SetEdenPath(Common::FS::EdenPath::PlayTimeDir, original);
         std::error_code error;
         std::filesystem::remove_all(directory, error);
