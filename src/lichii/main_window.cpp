@@ -64,6 +64,7 @@
 
 #include "configuration/configure_dialog.h"
 #include "configuration/configure_input.h"
+#include "configuration/configure_network.h"
 #include "configuration/configure_per_game.h"
 #include "configuration/configure_tas.h"
 
@@ -471,19 +472,49 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     }
 #endif
 
-    if constexpr (Common::Nextendo::OnlinePlayAvailable) {
-        connect(&nextendo_session_watcher, &QFutureWatcher<bool>::finished, this, [this] {
-            if (nextendo_session_watcher.result()) {
+    connect(&nextendo_session_watcher,
+            &QFutureWatcher<Common::Nextendo::SignOutReason>::finished, this, [this] {
+                QString why;
+                switch (nextendo_session_watcher.result()) {
+                case Common::Nextendo::SignOutReason::None:
+                    return;
+                case Common::Nextendo::SignOutReason::SessionExpired:
+                    why = tr("Your Nextendo session expired, so Lichii signed you out.");
+                    break;
+                case Common::Nextendo::SignOutReason::SessionRevoked:
+                    why = tr("Your session was ended on nextendo.network, so Lichii signed you "
+                             "out.");
+                    break;
+                case Common::Nextendo::SignOutReason::MissingScope:
+                    why = tr("Your Nextendo sign-in didn't allow online play, so Lichii signed "
+                             "you out.");
+                    break;
+                }
                 QMessageBox::warning(this, tr("Signed out of Nextendo"),
-                                     tr("Your session was ended on nextendo.network, so Lichii "
-                                        "signed you out. Sign in again in Configure > Network."));
-            }
-        });
-        connect(&nextendo_session_timer, &QTimer::timeout, this,
-                &MainWindow::KeepNextendoSessionAlive);
-        nextendo_session_timer.start(std::chrono::minutes{2});
-        KeepNextendoSessionAlive();
-    }
+                                     why + QLatin1Char(' ') +
+                                         tr("Sign in again in Configure > Network."));
+            });
+    connect(&nextendo_status_watcher,
+            &QFutureWatcher<std::optional<Common::Nextendo::OnlineStatus>>::finished, this,
+            [this] {
+                const auto status = nextendo_status_watcher.result();
+                QString message;
+                if (!Common::Nextendo::LoadAccount()) {
+                    message = tr("Nextendo online play is on, but you aren't signed in. Sign in "
+                                 "in Configure > Network.");
+                } else if (status && !status->allow) {
+                    LOG_WARNING(Frontend, "nextendo.network refuses online play: {}",
+                                status->reason);
+                    message = ConfigureNetwork::OnlineRefusal(status->reason);
+                }
+                if (!message.isEmpty()) {
+                    statusBar()->showMessage(message, 30000);
+                }
+            });
+    connect(&nextendo_session_timer, &QTimer::timeout, this,
+            &MainWindow::KeepNextendoSessionAlive);
+    nextendo_session_timer.start(std::chrono::minutes{2});
+    KeepNextendoSessionAlive();
 
     // Setup content providers.
     QtCommon::SetupContentProviders();
@@ -2497,6 +2528,7 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
         }
     }
     discord_session_start = QDateTime::currentSecsSinceEpoch();
+    CheckNextendoOnlineStatus();
     OnStartGame();
 }
 
@@ -5274,6 +5306,16 @@ void MainWindow::KeepNextendoSessionAlive() {
     nextendo_session_watcher.setFuture(
         QtConcurrent::run([client_id = Settings::values.nextendo_client_id.GetValue()] {
             return Common::Nextendo::KeepSessionAlive(client_id);
+        }));
+}
+
+void MainWindow::CheckNextendoOnlineStatus() {
+    if (!Common::Nextendo::OnlinePlayActive() || nextendo_status_watcher.isRunning()) {
+        return;
+    }
+    nextendo_status_watcher.setFuture(
+        QtConcurrent::run([client_id = Settings::values.nextendo_client_id.GetValue()] {
+            return Common::Nextendo::CheckOnlineStatus(client_id);
         }));
 }
 
