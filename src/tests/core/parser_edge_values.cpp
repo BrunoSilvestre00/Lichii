@@ -415,6 +415,9 @@ TEST_CASE("NUP size and offset fields at edge values", "[core][file_sys][edge_va
             for (std::size_t i = 0; i < nup.GetFileCount(); ++i) {
                 const auto file = nup.OpenFile(i);
                 REQUIRE(file != nullptr);
+                u64 recorded{};
+                std::memcpy(&recorded, bytes.data() + NupFile + 0x08, sizeof(recorded));
+                CHECK(file->GetSize() == recorded);
                 CHECK(file->GetSize() <= bytes.size());
             }
         }
