@@ -58,10 +58,6 @@
 namespace {
 // A few at a time keeps SteamGridDB happy and the scan of a large library short.
 constexpr int MaxParallelLookups = 2;
-bool IsGameDirectoryType(GameListItemType type) {
-    return type == GameListItemType::CustomDir || type == GameListItemType::SdmcDir ||
-           type == GameListItemType::UserNandDir || type == GameListItemType::SysNandDir;
-}
 
 } // namespace
 
