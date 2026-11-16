@@ -189,6 +189,10 @@ void ConfigureDialog::ApplyConfiguration() {
     Settings::LogSettings();
 }
 
+void ConfigureDialog::RestoreInputConfiguration() {
+    input_tab->RestoreConfiguration();
+}
+
 void ConfigureDialog::changeEvent(QEvent* event) {
     if (event->type() == QEvent::LanguageChange) {
         RetranslateUI();
