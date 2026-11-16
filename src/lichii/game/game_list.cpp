@@ -93,9 +93,6 @@ GameList::GameList(FileSys::VirtualFilesystem vfs_, FileSys::ManualContentProvid
     connect(tree_view, &QTreeView::customContextMenuRequested, this, &GameList::PopupContextMenu);
 
     connect(grid_view, &QListView::doubleClicked, this, [this](const QModelIndex& index) {
-        if (suppress_grid_double_click) {
-            return;
-        }
         grid_mouse_activated = true;
         ValidateEntry(index);
     });
@@ -104,18 +101,6 @@ GameList::GameList(FileSys::VirtualFilesystem vfs_, FileSys::ManualContentProvid
     // that arrive from the mouse so the grid keeps keyboard and controller activation only.
     connect(grid_view, &QListView::activated, this,
             [this](const QModelIndex& index) { OnGridActivated(index); });
-    connect(grid_view, &QListView::clicked, this, [this](const QModelIndex& index) {
-        if (suppress_grid_double_click) {
-            return;
-        }
-        const auto type = index.data(GameListItem::TypeRole).value<GameListItemType>();
-        if (IsGameDirectoryType(type)) {
-            suppress_grid_double_click = true;
-            QTimer::singleShot(QApplication::doubleClickInterval(), this,
-                               [this] { suppress_grid_double_click = false; });
-            ValidateEntry(index);
-        }
-    });
     connect(grid_view, &QListView::customContextMenuRequested, this, &GameList::PopupContextMenu);
 
     connect(carousel_view, &QListView::activated, this, &GameList::ValidateEntry);
@@ -258,6 +243,7 @@ void GameList::UnloadController() {
 void GameList::ResetViewMode() {
     const auto mode = UISettings::values.game_list_mode.GetValue();
     game_list_mode = mode;
+    grid_view->SetBrowsedDirectory(-1);
 
     if (m_currentView)
         layout->removeWidget(m_currentView);
@@ -423,8 +409,9 @@ void GameList::OnPopulatingCompleted(const QStringList& watch_list) {
                      tree_view->header()->sortIndicatorOrder());
 
     // A repopulate (a directory removed, deep scan toggled) replaces the rows: apply the search
-    // text the user still has typed to them.
-    if (!search_field->filterText().isEmpty()) {
+    // text the user still has typed to them, and restore the folder card the grid is browsing.
+    if (!search_field->filterText().isEmpty() ||
+        (!m_isTreeMode && grid_view->BrowsedDirectory() >= 0)) {
         OnTextChanged(search_field->filterText());
     }
 
@@ -735,6 +722,13 @@ void GameList::ValidateEntry(const QModelIndex& item) {
         emit GameChosen(file_path, title_id);
         break;
     }
+    case GameListItemType::CustomDir:
+        // In the grid a folder card is drilled into (double-click or keyboard activation) and
+        // left the same way; the tree expands its rows natively, the carousel does not browse.
+        if (m_currentView == grid_view) {
+            grid_view->BrowseDirectory(selected.data(GameListDir::GameDirRole).toInt());
+        }
+        break;
     case GameListItemType::AddDir:
         emit AddDirectory();
         break;

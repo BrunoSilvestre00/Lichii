@@ -97,6 +97,10 @@ void GameListModel::AddEntry(const QList<QStandardItem*>& entry_items, GameListD
         if (parent) {
             parent->setData(parent->data(GameListDir::GameCountRole).toInt() + 1,
                             GameListDir::GameCountRole);
+            const QVariant dir_index = parent->data(GameListDir::GameDirRole);
+            if (dir_index.isValid() && !entry_items.isEmpty()) {
+                entry_items[0]->setData(dir_index, GameListItemPath::OwnerDirRole);
+            }
         }
         invisibleRootItem()->appendRow(entry_items);
     } else {

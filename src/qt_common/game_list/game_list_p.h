@@ -142,6 +142,10 @@ public:
     static constexpr int FileTypeRole = SortRole + 4;
     static constexpr int HasIconRole = SortRole + 5;
     static constexpr int CardIconRole = SortRole + 6;
+    // Index of the game directory (UISettings::values.game_dirs) a game came from. Set on the
+    // flat model so the grid can browse folders by filtering on it, where games live at the top
+    // level instead of under their folder row.
+    static constexpr int OwnerDirRole = SortRole + 7;
 
     /// Bounded, shared store for card-sized artwork: decode and scale each game's artwork once
     /// and keep at most MaxCost bytes resident instead of decoding it into every item.

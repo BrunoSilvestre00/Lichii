@@ -212,7 +212,6 @@ private:
     bool m_isFlat = false;
     bool m_populating = false;
     int grid_root_dir_index_to_restore = -1;
-    bool suppress_grid_double_click = false;
     /// Set while a mouse double-click is being processed; its trailing activated signal is skipped.
     bool grid_mouse_activated = false;
     bool nup_conversion_running{};

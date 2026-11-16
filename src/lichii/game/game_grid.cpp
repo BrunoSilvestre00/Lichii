@@ -39,6 +39,7 @@ void GameGrid::SetModel(GameListModel* model) {
 }
 
 void GameGrid::ApplyFilter(const QString& edit_filter_text, GameListModel* model) {
+    last_filter_text = edit_filter_text;
     int row_count = model->rowCount();
 
     for (int i = 0; i < row_count; ++i) {
@@ -46,12 +47,74 @@ void GameGrid::ApplyFilter(const QString& edit_filter_text, GameListModel* model
         if (!item)
             continue;
 
-        if (Lichii::FilterMatches(edit_filter_text, item)) {
-            setRowHidden(i, false);
-        } else {
-            setRowHidden(i, true);
+        bool visible = Lichii::FilterMatches(edit_filter_text, item);
+        if (browsed_dir >= 0) {
+            const auto type = item->data(GameListItem::TypeRole).value<GameListItemType>();
+            if (type == GameListItemType::Game) {
+                visible = item->data(GameListItemPath::OwnerDirRole).toInt() == browsed_dir &&
+                          Lichii::FilterMatches(edit_filter_text, item);
+            } else if (type == GameListItemType::CustomDir ||
+                       type == GameListItemType::AddDir) {
+                // Folder cards stay visible so another folder can be opened or the browsed one
+                // left again.
+                visible = true;
+            } else {
+                visible = false;
+            }
+        }
+
+        setRowHidden(i, !visible);
+    }
+
+    HighlightBrowsedFolder(model);
+}
+
+void GameGrid::HighlightBrowsedFolder(GameListModel* model) {
+    QModelIndex current;
+    if (browsed_dir >= 0) {
+        for (int i = 0; i < model->rowCount(); ++i) {
+            QStandardItem* item = model->item(i, 0);
+            if (!item) {
+                continue;
+            }
+            if (item->data(GameListItem::TypeRole).value<GameListItemType>() ==
+                    GameListItemType::CustomDir &&
+                item->data(GameListDir::GameDirRole).toInt() == browsed_dir) {
+                current = item->index();
+                break;
+            }
         }
     }
+
+    if (current.isValid()) {
+        setCurrentIndex(current);
+        scrollTo(current);
+    } else {
+        clearSelection();
+        setCurrentIndex({});
+    }
+}
+
+void GameGrid::SetBrowsedDirectory(int dir_index) {
+    if (browsed_dir == dir_index) {
+        return;
+    }
+    browsed_dir = dir_index;
+    if (auto* model = qobject_cast<GameListModel*>(QListView::model())) {
+        ApplyFilter(last_filter_text, model);
+    }
+}
+
+void GameGrid::BrowseDirectory(int dir_index) {
+    SetBrowsedDirectory(browsed_dir == dir_index ? -1 : dir_index);
+}
+
+void GameGrid::keyPressEvent(QKeyEvent* event) {
+    if (event->key() == Qt::Key_Escape && browsed_dir >= 0) {
+        SetBrowsedDirectory(-1);
+        return;
+    }
+    QListView::keyPressEvent(event);
 }
 
 void GameGrid::UpdateIconSize() {
