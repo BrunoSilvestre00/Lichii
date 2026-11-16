@@ -128,6 +128,10 @@ ClassicLoadingScreen::ClassicLoadingScreen(QWidget* parent)
 ClassicLoadingScreen::~ClassicLoadingScreen() = default;
 
 void ClassicLoadingScreen::Prepare(Loader::AppLoader& loader) {
+    // A completion fade that is still running would otherwise hide the new screen and emit Hidden,
+    // clearing its artwork before the reload finishes.
+    fadeout_animation->stop();
+    opacity_effect->setOpacity(1);
     Clear();
 
     std::vector<u8> buffer;
