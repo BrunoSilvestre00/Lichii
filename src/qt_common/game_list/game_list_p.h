@@ -447,6 +447,9 @@ public:
 class GameListDir : public GameListItem {
 public:
     static constexpr int GameDirRole = Qt::UserRole + 2;
+    // Number of games found for this directory. Set on the flat (grid/carousel) model, where
+    // games live at the top level and a folder card cannot count them as child rows.
+    static constexpr int GameCountRole = Qt::UserRole + 9;
 
     explicit GameListDir(UISettings::GameDir& directory,
                          GameListItemType dir_type_ = GameListItemType::CustomDir)

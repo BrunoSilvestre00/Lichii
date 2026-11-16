@@ -80,7 +80,10 @@ void GameListModel::WorkerEvent() {
 }
 
 void GameListModel::AddDirEntry(GameListDir* entry_items) {
-    if (m_flat) {
+    // The grid lists user folders as cards, empty ones included; the built-in SD and NAND
+    // locations stay structural and only appear in the tree.
+    if (m_flat &&
+        static_cast<GameListItemType>(entry_items->type()) != GameListItemType::CustomDir) {
         delete entry_items;
         return;
     }
@@ -89,6 +92,12 @@ void GameListModel::AddDirEntry(GameListDir* entry_items) {
 
 void GameListModel::AddEntry(const QList<QStandardItem*>& entry_items, GameListDir* parent) {
     if (m_flat) {
+        // Games sit at the top level in the flat list, so the folder card cannot read its game
+        // count from child rows; keep the counter the card displays up to date instead.
+        if (parent) {
+            parent->setData(parent->data(GameListDir::GameCountRole).toInt() + 1,
+                            GameListDir::GameCountRole);
+        }
         invisibleRootItem()->appendRow(entry_items);
     } else {
         parent->appendRow(entry_items);
@@ -97,15 +106,13 @@ void GameListModel::AddEntry(const QList<QStandardItem*>& entry_items, GameListD
 
 void GameListModel::DonePopulating(const QStringList& watch_list) {
     if (m_flat) {
+        // The grid keeps its empty-library card: it is the add-a-folder entry point, so hiding
+        // the whole list would leave a blank window.
         invisibleRootItem()->appendRow(new GameListAddDir());
         emit ShowList(true);
     } else {
         const bool has_games = !IsEmpty();
-        // The modern (grid) view keeps its empty-library card: it is the add-a-folder entry point,
-        // so hiding the whole list leaves a blank window. Only the tree and carousel views have no
-        // such card.
-        emit ShowList(has_games ||
-                      UISettings::values.game_list_mode.GetValue() == Settings::GameListMode::GridView);
+        emit ShowList(has_games);
         invisibleRootItem()->appendRow(new GameListAddDir());
         invisibleRootItem()->insertRow(0, new GameListFavorites());
 
@@ -161,7 +168,8 @@ bool GameListModel::IsEmpty() const {
             continue;
         }
 
-        if (type == GameListItemType::Game || child->hasChildren()) {
+        if (type == GameListItemType::Game || type == GameListItemType::CustomDir ||
+            child->hasChildren()) {
             return false;
         }
     }

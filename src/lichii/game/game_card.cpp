@@ -359,7 +359,8 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
         if (add_folder) {
             meta_parts.append(tr("Add a location to your library"));
         } else if (game_folder) {
-            meta_parts.append(tr("%n game(s)", "", index.model()->rowCount(index)));
+            meta_parts.append(
+                tr("%n game(s)", "", index.data(GameListDir::GameCountRole).toInt()));
         } else {
             const QString size_text = index.sibling(index.row(), GameListModel::COLUMN_SIZE)
                                           .data(Qt::DisplayRole)

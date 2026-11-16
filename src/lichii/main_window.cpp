@@ -529,7 +529,8 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     const bool direct_launch = !startup_lp.filepath.empty() || startup_lp.launch_setup ||
                                startup_lp.launch_qlaunch || startup_lp.launch_hlaunch;
 
-    if (!UISettings::values.has_selected_game_library_style.GetValue()) {
+    if (!UISettings::values.has_selected_game_library_style.GetValue() ||
+        UISettings::values.first_start.GetValue()) {
         if (direct_launch) {
             // Defer the first-run setup until the interactive library session comes back after
             // this launch; do not record choices while the user never picked them.
@@ -2887,7 +2888,8 @@ void MainWindow::OnEmulationStopped() {
         // Ask after cleanup and rescan so deferred first-run setup cannot interrupt shutdown.
         if (deferred_library_style_prompt && isVisible()) {
             deferred_library_style_prompt = false;
-            if (!UISettings::values.has_selected_game_library_style.GetValue()) {
+            if (!UISettings::values.has_selected_game_library_style.GetValue() ||
+                UISettings::values.first_start.GetValue()) {
                 PromptFirstRunSetup();
                 SetGameListMode(UISettings::values.game_list_mode.GetValue(), false);
             }

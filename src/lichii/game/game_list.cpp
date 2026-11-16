@@ -338,7 +338,10 @@ void GameList::OnFilterCloseClicked() {
 }
 
 void GameList::OnPopulatingCompleted(const QStringList& watch_list) {
-    emit ShowList(!item_model->IsEmpty());
+    // The grid keeps its empty-library card (the add-a-folder entry point), so it always shows.
+    emit ShowList(UISettings::values.game_list_mode.GetValue() ==
+                      Settings::GameListMode::GridView ||
+                  !item_model->IsEmpty());
 
     // favorites row
     if (m_isTreeMode) {
