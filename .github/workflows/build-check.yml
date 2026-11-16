@@ -248,13 +248,17 @@ jobs:
           build-san/bin/tests \
             "[fuzz_regressions],[edge_values],[file_sys],[crypto],[cheats],[ncz],[nup-validation]"
 
-      # A short run of each harness from an empty corpus (the NUP one from a made-up seed), to
-      # catch a parser change that crashes on the first inputs. Longer runs are done by hand
+      # A short run of each harness, to catch a parser change that crashes on the first inputs.
+      # The NUP, NCA, package and NCZ ones start from made-up seeds: from an empty corpus the NCA
+      # and NCZ ones never get past their header magic. Longer runs are done by hand
       # (docs/Fuzzing.md).
       - name: Smoke-run the fuzzers
         run: |
           mkdir -p fuzz-ci/nup
           FUZZ_NUP_SEED=fuzz-ci/nup/seed.nup build-san/bin/fuzz_nup
+          FUZZ_NCA_SEED=fuzz-ci/nca build-san/bin/fuzz_nca -runs=0
+          FUZZ_PACKAGE_SEED=fuzz-ci/package build-san/bin/fuzz_package -runs=0
+          FUZZ_NCZ_SEED=fuzz-ci/ncz build-san/bin/fuzz_ncz -runs=0
           for harness in partition_romfs nca package cheats ips meta nup ncz keys; do
             mkdir -p "fuzz-ci/$harness"
             echo "::group::fuzz_$harness"
