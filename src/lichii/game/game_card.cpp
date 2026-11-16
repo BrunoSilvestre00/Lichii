@@ -6,6 +6,7 @@
 #include <QColor>
 #include <QFileInfo>
 #include <QFont>
+#include <QImage>
 #include <QPainter>
 #include <QPainterPath>
 #include <QRectF>
@@ -119,7 +120,26 @@ bool IsGameDirectory(GameListItemType type) {
 }
 
 QPixmap GameListFallbackIcon(int size) {
-    return RoundedIcon(GetDefaultIcon(static_cast<u32>(std::max(0, size))));
+    if (size <= 0) {
+        return {};
+    }
+    if (IsLichiiTheme()) {
+        return RoundedIcon(GetDefaultIcon(static_cast<u32>(size)));
+    }
+
+    QImage image(size, size, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(48, 52, 60));
+    painter.drawRoundedRect(QRectF(image.rect()), size * 0.18, size * 0.18);
+
+    const int glyph_size = size * 3 / 8;
+    painter.drawImage(QRect((size - glyph_size) / 2, (size - glyph_size) / 2, glyph_size,
+                             glyph_size),
+                      QImage(QStringLiteral(":/lichii/icons/menu_gamepad@2x.png")));
+    return QPixmap::fromImage(image);
 }
 
 GameCard::GameCard(QObject* parent) : QStyledItemDelegate{parent} {
@@ -179,6 +199,8 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
     const QPixmap icon_pixmap = game_folder || add_folder
                                     ? QPixmap{}
                                     : index.data(GameListItemPath::CardIconRole).value<QPixmap>();
+    const bool has_icon = !game_folder && !add_folder &&
+                          index.data(GameListItemPath::HasIconRole).toBool();
     const bool folder_cards = option.widget &&
                               option.widget->objectName() == QStringLiteral("gameGridView");
     const bool show_game_name = UISettings::values.show_game_name.GetValue() ||
@@ -204,11 +226,11 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
                                        : palette.highlight().color();
         DrawGameFolderArtwork(painter, artworkRect, accent, dark);
     } else {
-        // Use the existing neutral controller icon when a game has no artwork; the red console
-        // logo placeholder obscured the library theme and had no actual game art.
-        const QPixmap artwork = icon_pixmap.isNull()
-                                    ? index.data(Qt::DecorationRole).value<QPixmap>()
-                                    : icon_pixmap;
+        const QPixmap artwork = has_icon
+                                    ? (icon_pixmap.isNull()
+                                           ? index.data(Qt::DecorationRole).value<QPixmap>()
+                                           : icon_pixmap)
+                                    : GameListFallbackIcon(static_cast<int>(icon_size));
         if (!artwork.isNull()) {
             QSize scaled = artwork.size();
             scaled.scale(artworkRect.size(), Qt::KeepAspectRatioByExpanding);
