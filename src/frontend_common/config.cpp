@@ -142,8 +142,15 @@ void Config::WriteToIni() const {
     CSimpleIniA::FileWriter writer(fp);
     // FileWriter ignores fputs errors, so the stream's error flag is checked too
     const bool written = config->Save(writer, false) >= 0 && !std::ferror(fp);
+    // On disk before the rename: without it a power loss or kernel panic right after a save can
+    // leave the renamed file empty (delayed allocation on ext4 and XFS).
+#ifdef _WIN32
+    const bool synced = written && std::fflush(fp) == 0 && _commit(_fileno(fp)) == 0;
+#else
+    const bool synced = written && std::fflush(fp) == 0 && fsync(fileno(fp)) == 0;
+#endif
     const bool closed = std::fclose(fp) == 0;
-    if (!written || !closed) {
+    if (!synced || !closed) {
         LOG_ERROR(Frontend, "Config file could not be saved!");
         std::filesystem::remove(temporary, error);
         return;
