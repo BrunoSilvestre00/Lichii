@@ -946,7 +946,13 @@ struct Values {
     SwitchableSetting<bool> enable_accurate_vibrations{linkage, false, "enable_accurate_vibrations",
                                                        Category::Controls};
     Setting<bool> enable_steam_controller_hd_rumble{
-        linkage, false, "enable_steam_controller_hd_rumble", Category::Controls};
+        linkage,
+#ifdef _WIN32
+        true,
+#else
+        false,
+#endif
+        "enable_steam_controller_hd_rumble", Category::Controls};
     // Only tested on Windows so far; on Linux (PipeWire) the haptics play through the speaker
     Setting<bool> enable_dualsense_haptics{linkage,
 #ifdef _WIN32

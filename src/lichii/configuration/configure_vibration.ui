@@ -513,10 +513,10 @@
       <item>
        <widget class="QCheckBox" name="checkBoxSteamControllerHdRumble">
         <property name="toolTip">
-         <string>Experimental dual-band haptics for the physical 2026 Steam Controller on Windows. Steam may interfere with the controller's haptics mode.</string>
+         <string>Play HD Rumble through the Steam Controller haptic actuators. Does not require Steam</string>
         </property>
         <property name="text">
-         <string>Detailed Steam Controller (2026) haptics</string>
+         <string>Steam Controller (2026) HD Haptics</string>
         </property>
        </widget>
       </item>
