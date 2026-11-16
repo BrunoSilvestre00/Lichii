@@ -181,7 +181,21 @@ void Config::WriteToIni() const {
     if (error) {
         LOG_ERROR(Frontend, "Config file could not be saved: {}", error.message());
         std::filesystem::remove(temporary, error);
+        return;
     }
+#ifndef _WIN32
+    // The rename is a change to the folder: it survives a power loss only once the folder is on
+    // disk too. The config is saved either way; a failure here only leaves that window open.
+    const auto folder =
+        target.has_parent_path() ? target.parent_path() : std::filesystem::path{"."};
+    const int folder_fd = open(folder.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (folder_fd < 0 || fsync(folder_fd) != 0) {
+        LOG_WARNING(Frontend, "Config file saved, but its folder could not be synced");
+    }
+    if (folder_fd >= 0) {
+        close(folder_fd);
+    }
+#endif
 }
 
 void Config::SetUpIni() {
