@@ -2076,7 +2076,7 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
                 .basePipelineHandle = nullptr,
                 .basePipelineIndex = 0,
             };
-            const auto build = [&] {
+            const auto create_pipeline = [&] {
                 return binaries
                            ? binaries->CreateComputePipeline(compute_ci, *pipeline_cache,
                                                              GraphicsRecordKey(key) ^
@@ -2085,9 +2085,9 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
             };
             auto& trace = GetPipelineBuildTraceWriter();
             if (!trace.Enabled()) {
-                return build();
+                return create_pipeline();
             }
-            return TracePipelineBuild(trace, "compute", key.Hash(), key.unique_hashes, false, build,
+            return TracePipelineBuild(trace, "compute", key.Hash(), key.unique_hashes, false, create_pipeline,
                                       role);
         };
         mesh_vertex_module = BuildShader(device, mesh_emulation->vertex_spirv);
