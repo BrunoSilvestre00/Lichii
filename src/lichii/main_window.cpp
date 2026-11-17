@@ -723,55 +723,18 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     // to prevent the UI from blowing up.
     UpdateUITheme();
 
-<<<<<<< HEAD
-    // Handle launch arguments parsed at the top of this constructor.
-    if (!startup_lp.filepath.empty() || startup_lp.fullscreen) {
-        ui->action_Fullscreen->setChecked(startup_lp.fullscreen);
-=======
-    std::optional<Core::LaunchParams> launch;
-    if (QStringList args = QApplication::arguments(); args.size() >= 2) {
-        QList<QByteArray> qba{};
-        for (auto const& e : args)
-            qba.push_back(e.toUtf8());
-        std::vector<char*> args_cstr{};
-        for (auto& e : qba)
-            args_cstr.push_back(e.data());
-
-        launch =
-            Core::ParseLaunchParams(*QtCommon::system, args_cstr.size(), args_cstr.data(), nullptr);
-    }
-
+    // The launch arguments were parsed before first-run setup so direct launches remain
+    // non-interactive until the user returns to the library.
     // Once FixProfiles has read the configured NAND and -u may have picked another user.
     Common::Nextendo::MigrateAccountFile(
         Service::Account::Nextendo::CurrentProfile(*QtCommon::system));
     nextendo_session_timer.start(std::chrono::minutes{2});
     KeepNextendoSessionAlive();
 
-    if (launch) {
-        const auto& lp = *launch;
-
-        // Override fullscreen setting if gamepath or argument is provided
-        if (!lp.filepath.empty() || lp.fullscreen) {
-            ui->action_Fullscreen->setChecked(lp.fullscreen);
-        }
-
-        if (!lp.filepath.empty()) {
-            BootGame(QString::fromStdString(lp.filepath), ApplicationAppletParameters());
-        } else if (lp.launch_setup) {
-            LaunchFirmwareApplet(u64(Service::AM::AppletProgramId::Starter), std::nullopt);
-        } else if (lp.launch_qlaunch) {
-            LaunchFirmwareApplet(u64(Service::AM::AppletProgramId::QLaunch), std::nullopt);
-        } else if (lp.launch_hlaunch) {
-            std::filesystem::path const sd_dir =
-                Common::FS::GetEdenPathString(Common::FS::EdenPath::SDMCDir);
-            auto const hbl_path = (sd_dir / "atmosphere" / "hbl.nsp").string();
-            BootGame(
-                QString::fromStdString(hbl_path),
-                LibraryAppletParameters(0x010000000000100Dull, Service::AM::AppletId::QLaunch));
-        }
->>>>>>> zortos/nx2
+    // Handle the launch arguments parsed at the top of this constructor.
+    if (!startup_lp.filepath.empty() || startup_lp.fullscreen) {
+        ui->action_Fullscreen->setChecked(startup_lp.fullscreen);
     }
-
     if (!startup_lp.filepath.empty()) {
         BootGame(QString::fromStdString(startup_lp.filepath), ApplicationAppletParameters());
     } else if (startup_lp.launch_setup) {
