@@ -5020,8 +5020,24 @@ f32 TextureCacheRuntime::OcarinaFsrLodBias() {
         // Keep both sampler variants available when switching between DLSS and FSR live.
         const bool can_use_fsr = ocarina &&
             (ocarina_fsr_active || Settings::values.ocarina_fsr.GetValue());
-        ocarina_fsr_lod_bias = can_use_fsr ? VideoCommon::OcarinaFsrLodBias(
-                                              VideoCommon::OcarinaUpscaleBackend::Fsr) : 0.0f;
+        // The render height follows the applied render-scale patch, the output FSR's setting.
+        u32 render_height = 1440;
+        if (const auto scale = Settings::AppliedOcarinaRenderScale()) {
+            using Quality = Settings::NvidiaDlssQuality;
+            render_height = *scale == Quality::Balanced      ? 1280
+                            : *scale == Quality::Performance ? 1080
+                            : *scale == Quality::UltraPerformance ? 720
+                                                                  : 1440;
+        }
+        const u32 output_height = Settings::values.ocarina_fsr_output.GetValue() ==
+                                          Settings::OcarinaFsrOutput::Output1440p
+                                      ? 1440
+                                      : 2160;
+        ocarina_fsr_lod_bias =
+            can_use_fsr ? VideoCommon::OcarinaFsrLodBias(
+                              VideoCommon::OcarinaUpscaleBackend::Fsr, render_height,
+                              output_height)
+                        : 0.0f;
     }
     return *ocarina_fsr_lod_bias;
 }
