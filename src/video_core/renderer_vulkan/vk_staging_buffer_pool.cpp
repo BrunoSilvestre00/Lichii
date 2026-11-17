@@ -144,14 +144,12 @@ void StagingBufferPool::FreeDeferred(StagingBufferRef& ref) {
 void StagingBufferPool::InvalidateDeferredDownload(const StagingBufferRef& ref) {
     ASSERT(ref.usage == MemoryUsage::Download);
     ASSERT(ref.log2_level < NUM_LEVELS);
-    auto& entries = GetCache(ref.usage)[ref.log2_level].entries;
-    const auto it = std::find_if(entries.begin(), entries.end(), [&ref](const StagingBuffer& entry) {
-        return entry.index == ref.index;
-    });
-    ASSERT(it != entries.end());
-    ASSERT(it->deferred && *it->buffer == ref.buffer);
-    ASSERT(ref.offset == 0 && it->mapped_span.data() == ref.mapped_span.data());
-    it->buffer.Invalidate();
+    auto& deferred = GetCache(ref.usage)[ref.log2_level].deferred;
+    const auto it = deferred.find(ref.index);
+    ASSERT(it != deferred.end());
+    ASSERT(*it->second.buffer == ref.buffer);
+    ASSERT(ref.offset == 0 && it->second.mapped_span.data() == ref.mapped_span.data());
+    it->second.buffer.Invalidate();
 }
 
 void StagingBufferPool::TickFrame() {

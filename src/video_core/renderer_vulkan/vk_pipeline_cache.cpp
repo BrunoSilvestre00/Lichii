@@ -2897,7 +2897,7 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
         auto pipeline = std::make_unique<GraphicsPipeline>(
             scheduler, buffer_cache, texture_cache, vulkan_pipeline_cache, pipeline_binaries.get(),
             &shader_notify, device, descriptor_pool, guest_descriptor_queue, descriptor_buffer_ring,
-            BuildQueue(build_in_parallel, reused->SpirvBytes()), statistics, render_pass_cache,
+            draw_templates, BuildQueue(build_in_parallel, reused->SpirvBytes()), statistics, render_pass_cache,
             key, std::array<std::vector<u32>, Maxwell::MaxShaderStage>{}, reused->InfoPointers(),
             [reused] { return reused->Spirv(); });
         pipeline->SetMappedPointers(MappedPointers(key, envs));
