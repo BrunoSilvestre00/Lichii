@@ -124,6 +124,32 @@ TEST_CASE("Ampere TLD.B.LL takes the handle, then the level, after the coordinat
     }
 }
 
+TEST_CASE("Ampere TLD.B keeps its value and result spans below the uniform registers",
+          "[video_core][ampere]") {
+    // UMOV UR0, 0x0 makes R216 and up hold uniform registers. Each TLD.B.LL 2D below has its
+    // base registers under R216, but a span reaches R216: Rb = R215 (level in R216), Ra = R215
+    // (y in R216), Rd = R215 with two results, and a second destination R215 with two results.
+    constexpr Instruction uniform_move{{0x00007c02, 0, 0x08000f00, 0}};
+    const std::array crossing{
+        Instruction{{0x0c047367, 0x380000d7, 0x019e03ff, 0x004f4200}},
+        Instruction{{0xd7047367, 0x38000004, 0x019e03ff, 0x004f4200}},
+        Instruction{{0x0cd77367, 0x38000004, 0x019e03ff, 0x004f4200}},
+        Instruction{{0x04007367, 0x38000008, 0x059e0fd7, 0x104fc200}},
+    };
+    for (const Instruction& insn : crossing) {
+        CHECK_FALSE(LowerToMaxwell(std::array{uniform_move, insn, EXIT}));
+        // Without uniform registers R216 is an ordinary register.
+        const auto plain = LowerToMaxwell(std::array{insn, EXIT});
+        INFO(plain.error);
+        CHECK(static_cast<bool>(plain));
+    }
+    // Rb = R214 keeps the level in R215.
+    const auto kept = LowerToMaxwell(std::array{uniform_move,
+        Instruction{{0x0c047367, 0x380000d6, 0x019e03ff, 0x004f4200}}, EXIT});
+    INFO(kept.error);
+    CHECK(static_cast<bool>(kept));
+}
+
 TEST_CASE("Ampere TXQ takes its handle from a uniform register", "[video_core][ampere]") {
     // Cyberpunk 2077 (#1084): a dimension query, mask 0x7, of the handle in UR6 at the level
     // in R3, the third component going to R3 -> Maxwell TXQ.B with the handle, then the level.
