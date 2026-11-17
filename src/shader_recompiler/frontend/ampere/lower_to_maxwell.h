@@ -394,15 +394,18 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
         const auto base = [&](u64 opcode_bits) { return opcode_bits | predicate | dest; };
         // Banks 24-31 are NVN2's 256-byte root tables (Maxwell3D::RootTables). Maxwell has 18 banks,
         // so they are read from bank 17, which games never bind, one after another: bank 24 + n at
-        // byte n * 256 (Cyberpunk 2077 reads banks 25 and 31). An indexed form's offset is a signed
-        // displacement, so the sum wraps at 16 bits; a direct offset past its table is rejected.
+        // byte n * 256 (Cyberpunk 2077 reads banks 25 and 31). A direct offset past its table is
+        // rejected. An indexed form's offset is a signed displacement, as is Maxwell LDC's, which
+        // adds the index without wrapping outside .IS, so the displacement plus the table's base
+        // must stay at most 0x7fff.
         const auto root_bank = [&] { return insn.Bits(54, 5) >= 24; };
         const auto bank = [&]() -> u32 { return root_bank() ? 17U : insn.Bits(54, 5); };
-        const auto cbuf_offset = [&]() -> u32 {
-            const u32 table_base = root_bank() ? (insn.Bits(54, 5) - 24) * 256 : 0U;
-            return (insn.Bits(38, 16) + table_base) & 0xffff;
-        };
+        const auto table_base = [&]() -> u32 { return root_bank() ? (insn.Bits(54, 5) - 24) * 256 : 0U; };
+        const auto cbuf_offset = [&]() -> u32 { return (insn.Bits(38, 16) + table_base()) & 0xffff; };
         const auto direct_cbuf_in_table = [&] { return !root_bank() || insn.Bits(38, 16) < 256; };
+        const auto indexed_cbuf_in_range = [&] {
+            return static_cast<s16>(insn.Bits(38, 16)) + static_cast<s32>(table_base()) <= 0x7fff;
+        };
         const auto cbuf = [&]() -> u64 {
             return (u64{cbuf_offset() / 4} << 20) | (u64{bank()} << 34);
         };
@@ -1174,6 +1177,7 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
                 // An index register can align the offset; the host reads the aligned word either way.
                 bank() >= 18 || insn.Bits(62, 2) ||
                 (opcode == 0xab9 && (offset % alignment || !direct_cbuf_in_table())) ||
+                (opcode == 0xabb && !indexed_cbuf_in_range()) ||
                 (insn.words[2] & ~0xe00U) != (opcode == 0xab9 ? 0U : 0x08000000U) ||
                 index_target == ~0U)
                 return fail(index, "native uniform constant load mode");
@@ -1236,7 +1240,7 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
             const u32 width = insn.Bits(73, 3), mode = insn.Bits(78, 2);
             if (width > 5 || (mode != 0 && mode != 2) ||
                 (insn.words[2] & ~0xce00U) || (insn.words[1] & 0xf800003fU) ||
-                bank() >= 18 ||
+                bank() >= 18 || (mode == 0 && !indexed_cbuf_in_range()) ||
                 (width == 5 && ((dest & 1) || dest >= 254)))
                 return fail(index, "native indexed constant load mode");
             emit(base(0xef90000000000000ULL) | (u64{insn.Bits(24, 8)} << 8) |
