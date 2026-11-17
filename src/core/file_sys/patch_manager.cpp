@@ -456,6 +456,10 @@ constexpr std::array TEXT_SPEED_INSTANT_RECORDS{
     BuiltinPatchRecord{TEXT_SPEED_CAVE, TEXT_SPEED_INSTANT_CAVE, {}, true},
 };
 
+// Photo mode's state (core/ocarina_photo_mode.h).
+constexpr std::array PHOTO_MODE_STATES{BuiltinPatchState{
+    Core::OcarinaPhotoMode::StateOffset, Core::OcarinaPhotoMode::StateSize}};
+
 constexpr std::array BUILTIN_PATCHES{
     // Ocarina of Time takes its "dynamic resolution disabled" path, so the 3D renders at full scale
     // instead of following the GPU-time controller down to its 480p floor.
@@ -527,8 +531,7 @@ constexpr std::array BUILTIN_PATCHES{
         .module = "main",
         .build_id = "E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348",
         .records = PHOTO_MODE_RECORDS,
-        .state_offset = Core::OcarinaPhotoMode::StateOffset,
-        .state_size = Core::OcarinaPhotoMode::StateSize,
+        .states = PHOTO_MODE_STATES,
     },
     // Text speed: off until checked in Add-Ons; with more than one checked, the fastest wins.
     BuiltinPatch{

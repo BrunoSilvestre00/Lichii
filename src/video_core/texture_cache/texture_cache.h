@@ -622,9 +622,7 @@ void TextureCache<P>::EvictDeadRenderTargets() {
             const auto copies = FullDownloadCopies(image.info);
             image.DownloadMemory(map, copies);
             runtime.Finish();
-            SwizzleImage(*gpu_memory, image.gpu_addr, image.info, copies, map.mapped_span,
-                         swizzle_data_buffer);
-            ClearStaleImage(image);
+            WriteBackImage(image, copies, map.mapped_span);
             ++saved;
             ++evict_saved;
             saved_this = true;

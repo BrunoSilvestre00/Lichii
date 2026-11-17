@@ -2570,7 +2570,8 @@ void RasterizerVulkan::DispatchCompute() {
             if (byte_addressed_shadow) {
                 TextureCacheRuntime::CopyByteAddressedShadow(cmdbuf, *byte_addressed_shadow, false);
             }
-            scheduler.TraceGpuWork(cmdbuf, pipeline->ShaderHash(), 0, {}, [&] {
+            scheduler.TraceGpuWork(cmdbuf, Scheduler::GpuWork::IndirectDispatch,
+                                   pipeline->ShaderHash(), 0, {}, [&] {
                 cmdbuf.DispatchIndirect(indirect_buffer, indirect_offset);
             });
             if (byte_addressed_shadow) {
