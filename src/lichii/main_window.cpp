@@ -138,6 +138,7 @@
 #include "qt_common/util/game.h"
 #include "qt_common/util/meta.h"
 #include "qt_common/util/mod.h"
+#include "qt_common/util/open.h"
 #include "qt_common/util/path.h"
 
 #include "qt_common/render/emu_thread.h"
@@ -3299,7 +3300,7 @@ void MainWindow::OnGameListOpenFolder(u64 program_id, GameListOpenTarget target,
     }
     LOG_INFO(Frontend, "Opening {} path for program_id={:016x}", open_target.toStdString(),
              program_id);
-    QDesktopServices::openUrl(QUrl::fromLocalFile(qpath));
+    QtCommon::OpenLocalFolder(qpath);
 }
 
 static bool RomFSRawCopy(size_t total_size, size_t& read_size, QProgressDialog& dialog,
@@ -3601,7 +3602,7 @@ void MainWindow::OnGameListDumpRomFS(u64 program_id, const std::string& game_pat
         progress.close();
         QMessageBox::information(this, tr("RomFS Extraction Succeeded!"),
                                  tr("The operation completed successfully."));
-        QDesktopServices::openUrl(QUrl::fromLocalFile(QString::fromStdString(path)));
+        QtCommon::OpenLocalFolder(QString::fromStdString(path));
     } else {
         progress.close();
         failed();
@@ -3651,7 +3652,7 @@ void MainWindow::OnGameListOpenDirectory(const QString& directory) {
         return;
     }
 
-    QDesktopServices::openUrl(QUrl::fromLocalFile(qt_path));
+    QtCommon::OpenLocalFolder(qt_path);
 }
 
 void MainWindow::OnGameListAddDirectory() {
@@ -4175,7 +4176,7 @@ void MainWindow::OnMenuReportCompatibility() {
 }
 
 void MainWindow::OpenURL(const QUrl& url) {
-    const bool open = QDesktopServices::openUrl(url);
+    const bool open = QtCommon::OpenUrl(url);
     if (!open) {
         QMessageBox::warning(this, tr("Error opening URL"),
                              tr("Unable to open the URL \"%1\".").arg(url.toString()));
