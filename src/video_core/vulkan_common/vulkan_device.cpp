@@ -1368,6 +1368,13 @@ void Device::ReportLoss() const {
     }
     LOG_CRITICAL(Render_Vulkan, "Device loss occurred!");
     ReportDeviceFault();
+    {
+        std::scoped_lock lock{g_hang_marker_report_mutex};
+        if (g_hang_marker_report) {
+            g_hang_marker_report();
+        }
+    }
+
     if (nsight_aftermath_tracker) {
         // Give Nsight Aftermath time to write its dump.
         std::this_thread::sleep_for(std::chrono::seconds{15});
@@ -1845,6 +1852,15 @@ bool Device::GetSuitability(bool requires_swapchain) {
     if (AddressMap::Wanted()) {
         LOG_INFO(Render_Vulkan, "EDEN_NX2_FAULT_MAP: device address binding reports {}",
                  address_binding_report ? "on" : "not supported by the driver");
+    }
+
+    // EDEN_NX2_HANG_MARKERS: VK_AMD_buffer_marker values around draws, indirect draws and
+    // dispatches, so a device loss can name the work that never finished
+    // (Scheduler::TraceGpuWork).
+    if (std::getenv("EDEN_NX2_HANG_MARKERS") != nullptr &&
+        supported_extensions.contains(VK_AMD_BUFFER_MARKER_EXTENSION_NAME)) {
+        loaded_extensions.insert(VK_AMD_BUFFER_MARKER_EXTENSION_NAME);
+        has_buffer_marker = true;
     }
 
     // Base Vulkan 1.0 features are always valid regardless of instance version.
