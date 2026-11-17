@@ -268,7 +268,15 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
             const auto copies = FullDownloadCopies(image.info);
             image.DownloadMemory(map, copies);
             runtime.Finish();
-            if (!WriteBackImage(image, copies, map.mapped_span)) {
+            // Newer data that landed over it stays; write-backs this pass queued land after it.
+            boost::container::small_vector<WritebackRanges::TickedRange, 8> queued;
+            for (const auto& download : overlap_downloads) {
+                queued.push_back({download.cpu_addr, download.cpu_addr + download.size,
+                                  download.tick});
+            }
+            KeepRanges newer;
+            KeepNewerLanded(image, image.modification_tick, newer, queued);
+            if (!WriteBackImage(image, copies, map.mapped_span, newer)) {
                 MarkStale(image);
             } else {
                 // Older write-backs still queued keep what this one wrote, and later ones see it as
@@ -988,12 +996,19 @@ void TextureCache<P>::NoteFlushed(const ImageBase& image, u64 tick) {
 }
 
 template <class P>
-void TextureCache<P>::KeepNewerLanded(const ImageBase& image, u64 tick, KeepRanges& keep) {
+void TextureCache<P>::KeepNewerLanded(const ImageBase& image, u64 tick, KeepRanges& keep,
+                                      std::span<const WritebackRanges::TickedRange> queued) {
     keep.clear();
     if (overlap_writeback_ranges.empty()) {
         return;
     }
-    const auto waiting = [this](const WritebackRange& range) {
+    const auto waiting = [this, queued](const WritebackRange& range) {
+        if (std::ranges::any_of(queued, [&](const WritebackRanges::TickedRange& download) {
+                return download.tick == range.tick && download.begin == range.begin &&
+                       download.end == range.end;
+            })) {
+            return true;
+        }
         return std::ranges::any_of(
             async_overlap_downloads, [&](const AsyncOverlapDownload& download) {
                 return !download.cancelled && download.tick == range.tick &&
