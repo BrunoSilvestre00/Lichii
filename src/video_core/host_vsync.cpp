@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <cstdlib>
 #include <mutex>
 #include <utility>
 #include <vector>
@@ -47,16 +46,8 @@ State& GetState() {
 
 } // Anonymous namespace
 
-bool Enabled() {
-    static const bool enabled = [] {
-        const char* const value = std::getenv("EDEN_NX2_HOST_VSYNC");
-        return value == nullptr || value[0] != '0';
-    }();
-    return enabled;
-}
-
 bool Active() {
-    return Enabled() && GetState().active_listeners.load(std::memory_order_acquire) != 0;
+    return GetState().active_listeners.load(std::memory_order_acquire) != 0;
 }
 
 void AddListener(const void* owner, std::function<void()> start) {

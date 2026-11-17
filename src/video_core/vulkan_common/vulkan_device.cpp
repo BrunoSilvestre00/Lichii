@@ -30,7 +30,6 @@
 #include <ranges>
 #include "common/settings.h"
 #include "common/settings_enums.h"
-#include "video_core/host_vsync.h"
 #include "video_core/nx2_stutter_trace.h"
 #include "video_core/vulkan_common/nsight_aftermath_tracker.h"
 #include "video_core/vulkan_common/vma.h"
@@ -1779,7 +1778,7 @@ bool Device::GetSuitability(bool requires_swapchain) {
 
     // VK_KHR_present_id + VK_KHR_present_wait: the presenter learns when the display shows a
     // present. Each pair is asked for on its own and chained for device creation only when its
-    // extensions are enabled. Only host vsync uses them (EDEN_NX2_HOST_VSYNC=0: neither).
+    // extensions are enabled. Only host vsync uses them.
     const auto probe_present_wait = [this, &next](auto& id_features, auto& wait_features,
                                                   VkBool32& id, VkBool32& wait,
                                                   const char* id_name, const char* wait_name) {
@@ -1805,7 +1804,7 @@ bool Device::GetSuitability(bool requires_swapchain) {
                  enabled ? "enabled" : "not supported by the device");
     };
     const bool wants_present_wait =
-        requires_swapchain && VideoCore::HostVsync::Enabled() &&
+        requires_swapchain &&
         loaded_extensions.contains(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
     if (wants_present_wait && supported_extensions.contains(VK_KHR_PRESENT_ID_EXTENSION_NAME) &&
         supported_extensions.contains(VK_KHR_PRESENT_WAIT_EXTENSION_NAME)) {
@@ -1817,9 +1816,7 @@ bool Device::GetSuitability(bool requires_swapchain) {
     }
     // VK_KHR_present_id2 + VK_KHR_present_wait2: the same per surface, preferred where the
     // surface supports them. They need VK_KHR_get_surface_capabilities2 on the instance.
-    // EDEN_NX2_PRESENT_WAIT2=0 keeps to the first versions.
-    const char* const present_wait2_switch = std::getenv("EDEN_NX2_PRESENT_WAIT2");
-    if (wants_present_wait && (present_wait2_switch == nullptr || present_wait2_switch[0] != '0') &&
+    if (wants_present_wait &&
         dld.vkGetPhysicalDeviceSurfaceCapabilities2KHR != nullptr &&
         supported_extensions.contains(VK_KHR_PRESENT_ID_2_EXTENSION_NAME) &&
         supported_extensions.contains(VK_KHR_PRESENT_WAIT_2_EXTENSION_NAME)) {
