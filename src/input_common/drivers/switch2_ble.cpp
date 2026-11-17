@@ -291,10 +291,13 @@ void OnInput(Pad& pad, std::span<const u8> data) {
     std::scoped_lock lock{pad.mutex};
     pad.report = *report;
     pad.last_report = now;
-    if (report->imu_timestamp < pad.last_tick) {
-        ++pad.tick_wraps;
+    // A zero timestamp has no sample, so it must not count as a wrap.
+    if (report->imu_timestamp != 0) {
+        if (report->imu_timestamp < pad.last_tick) {
+            ++pad.tick_wraps;
+        }
+        pad.last_tick = report->imu_timestamp;
     }
-    pad.last_tick = report->imu_timestamp;
     if (!pad.timebase) {
         MeasureTimebase(pad, *report, now);
         return;
