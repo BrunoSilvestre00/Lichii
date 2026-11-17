@@ -128,6 +128,8 @@ struct Pad {
     std::mutex mutex;
     std::condition_variable response_cv;
     std::optional<std::vector<u8>> response;
+    // Shutdown began: waits on response_cv return and no new command is sent.
+    bool stopping{};
     Switch2::InputReport report{};
     std::vector<MotionEvent> motion;
     Clock::time_point last_report{};
@@ -176,15 +178,36 @@ GattCommunicationStatus Write(const GattCharacteristic& characteristic, std::spa
         .get();
 }
 
-bool EnableNotify(const GattCharacteristic& characteristic) {
+bool Stopping(Pad& pad) {
+    std::scoped_lock lock{pad.mutex};
+    return pad.stopping;
+}
+
+void Stop(Pad& pad) {
+    {
+        std::scoped_lock lock{pad.mutex};
+        pad.stopping = true;
+    }
+    pad.response_cv.notify_all();
+}
+
+// Waits a second between retries; returns true when shutdown began instead.
+bool RetryWaitStopped(Pad& pad) {
+    std::unique_lock lock{pad.mutex};
+    return pad.response_cv.wait_for(lock, std::chrono::seconds{1}, [&] { return pad.stopping; });
+}
+
+bool EnableNotify(Pad& pad, const GattCharacteristic& characteristic) {
     for (int attempt = 0; attempt < 3; ++attempt) {
+        if (attempt > 0 && RetryWaitStopped(pad)) {
+            return false;
+        }
         if (characteristic
                 .WriteClientCharacteristicConfigurationDescriptorAsync(
                     GattClientCharacteristicConfigurationDescriptorValue::Notify)
                 .get() == GattCommunicationStatus::Success) {
             return true;
         }
-        std::this_thread::sleep_for(std::chrono::seconds{1});
     }
     return false;
 }
@@ -192,13 +215,18 @@ bool EnableNotify(const GattCharacteristic& characteristic) {
 std::optional<std::vector<u8>> SendCommand(Pad& pad, std::span<const u8> packet) {
     {
         std::scoped_lock lock{pad.mutex};
+        if (pad.stopping) {
+            return std::nullopt;
+        }
         pad.response.reset();
     }
     if (Write(pad.command, packet) != GattCommunicationStatus::Success) {
         return std::nullopt;
     }
     std::unique_lock lock{pad.mutex};
-    if (!pad.response_cv.wait_for(lock, CommandTimeout, [&] { return pad.response.has_value(); })) {
+    pad.response_cv.wait_for(lock, CommandTimeout,
+                             [&] { return pad.stopping || pad.response.has_value(); });
+    if (pad.stopping || !pad.response) {
         return std::nullopt;
     }
     return std::exchange(pad.response, std::nullopt);
@@ -220,8 +248,10 @@ std::optional<std::vector<u8>> ReadFlash(Pad& pad, u32 address) {
 
 void ReadCalibration(Pad& pad) {
     const auto warn = [&](u32 address) {
-        LOG_WARNING(Input, "Switch 2 controller {}: couldn't read flash at {:X}",
-                    FormatAddress(pad.address), address);
+        if (!Stopping(pad)) {
+            LOG_WARNING(Input, "Switch 2 controller {}: couldn't read flash at {:X}",
+                        FormatAddress(pad.address), address);
+        }
     };
     if (const auto block = ReadFlash(pad, Switch2::GyroBiasAddress)) {
         pad.gyro_bias = Switch2::ParseGyroBias(*block);
@@ -314,8 +344,8 @@ void OnInput(Pad& pad, std::span<const u8> data) {
 
 bool FindCharacteristics(Pad& pad) {
     for (int attempt = 0; attempt < 3; ++attempt) {
-        if (attempt > 0) {
-            std::this_thread::sleep_for(std::chrono::seconds{1});
+        if (attempt > 0 && RetryWaitStopped(pad)) {
+            return false;
         }
         const auto services = pad.device.GetGattServicesAsync(BluetoothCacheMode::Uncached).get();
         if (services.Status() != GattCommunicationStatus::Success) {
@@ -367,24 +397,32 @@ void ClosePad(Pad& pad) {
     }
 }
 
-std::shared_ptr<Pad> Connect(u64 address, const Product& product) {
-    auto pad = std::make_shared<Pad>();
-    pad->address = address;
-    pad->product = &product;
+// Shutdown (Stop) ends the waits between and after the GATT operations, not an operation already
+// in flight.
+bool Connect(const std::shared_ptr<Pad>& pad) {
+    const u64 address = pad->address;
     const std::weak_ptr<Pad> weak = pad;
     const auto fail = [&](std::string_view reason) {
-        LOG_WARNING(Input, "Switch 2 controller {}: {}", FormatAddress(address), reason);
+        if (Stopping(*pad)) {
+            LOG_INFO(Input, "Switch 2 controller {}: connecting stopped for shutdown",
+                     FormatAddress(address));
+        } else {
+            LOG_WARNING(Input, "Switch 2 controller {}: {}", FormatAddress(address), reason);
+        }
         ClosePad(*pad);
-        return nullptr;
+        return false;
     };
     try {
         pad->device = BluetoothLEDevice::FromBluetoothAddressAsync(address).get();
         if (!pad->device) {
             return fail("couldn't open the Bluetooth device");
         }
+        if (Stopping(*pad)) {
+            return fail({});
+        }
         pad->session = GattSession::FromDeviceIdAsync(pad->device.BluetoothDeviceId()).get();
         pad->session.MaintainConnection(true);
-        if (!FindCharacteristics(*pad)) {
+        if (Stopping(*pad) || !FindCharacteristics(*pad)) {
             return fail("couldn't read its GATT services; remove it from Windows' Bluetooth "
                         "devices if it is paired there");
         }
@@ -395,10 +433,13 @@ std::shared_ptr<Pad> Connect(u64 address, const Product& product) {
                     OnResponse(*locked, View(args.CharacteristicValue()));
                 }
             });
-        if (!EnableNotify(pad->command_response)) {
+        if (!EnableNotify(*pad, pad->command_response)) {
             return fail("couldn't subscribe to command responses");
         }
         ReadCalibration(*pad);
+        if (Stopping(*pad)) {
+            return fail({});
+        }
         pad->input_revoker = pad->input.ValueChanged(
             winrt::auto_revoke,
             [weak](const GattCharacteristic&, const GattValueChangedEventArgs& args) {
@@ -406,7 +447,7 @@ std::shared_ptr<Pad> Connect(u64 address, const Product& product) {
                     OnInput(*locked, View(args.CharacteristicValue()));
                 }
             });
-        if (!EnableNotify(pad->input)) {
+        if (!EnableNotify(*pad, pad->input)) {
             return fail("couldn't subscribe to input reports");
         }
         if (!SendCommand(*pad, Switch2::BuildSetFeatureMaskCommand(Switch2::FeatureBleDefault,
@@ -437,7 +478,7 @@ std::shared_ptr<Pad> Connect(u64 address, const Product& product) {
         pad->last_report = Clock::now();
     }
     LOG_INFO(Input, "Switch 2 controller {} connected over Bluetooth", FormatAddress(address));
-    return pad;
+    return true;
 }
 
 void Service(Pad& pad, Clock::time_point now) {
@@ -566,6 +607,7 @@ struct Switch2Ble::Impl : std::enable_shared_from_this<Impl> {
     std::condition_variable cv;
     bool stopping{};
     std::vector<std::shared_ptr<Pad>> pads;
+    std::shared_ptr<Pad> connecting;
     std::vector<Offer> offers;
     std::vector<std::pair<u64, Clock::time_point>> retry_after;
     std::thread worker;
@@ -646,20 +688,23 @@ struct Switch2Ble::Impl : std::enable_shared_from_this<Impl> {
     void RunConnector() {
         winrt::init_apartment(winrt::apartment_type::multi_threaded);
         while (true) {
-            Offer offer;
+            auto pad = std::make_shared<Pad>();
             {
                 std::unique_lock lock{mutex};
                 cv.wait(lock, [&] { return stopping || !offers.empty(); });
                 if (stopping) {
                     break;
                 }
-                offer = offers.front();
+                pad->address = offers.front().address;
+                pad->product = offers.front().product;
+                connecting = pad;
             }
-            auto pad = Connect(offer.address, *offer.product);
+            const bool connected = Connect(pad);
             std::scoped_lock lock{mutex};
-            std::erase_if(offers, [&](const auto& other) { return other.address == offer.address; });
-            if (!pad) {
-                retry_after.emplace_back(offer.address, Clock::now() + RetryAfter);
+            connecting.reset();
+            std::erase_if(offers, [&](const auto& other) { return other.address == pad->address; });
+            if (!connected) {
+                retry_after.emplace_back(pad->address, Clock::now() + RetryAfter);
             } else if (stopping) {
                 ClosePad(*pad);
             } else {
@@ -751,6 +796,12 @@ Switch2Ble::~Switch2Ble() {
     {
         std::scoped_lock lock{impl->mutex};
         impl->stopping = true;
+        if (impl->connecting) {
+            Stop(*impl->connecting);
+        }
+        for (const auto& pad : impl->pads) {
+            Stop(*pad);
+        }
     }
     impl->cv.notify_all();
     impl->connector.join();
