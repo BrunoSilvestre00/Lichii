@@ -98,10 +98,11 @@ public:
         for (std::size_t side = 0; side < 2; ++side) {
             const Target target = Sanitize(targets[side]);
             // A perceptual amplitude curve, shared by both bands; no pitch-dependent EQ or
-            // onset envelope. Normalize the sum to retain headroom for simultaneous tones.
+            // onset envelope. Reserve headroom for simultaneous tones without flattening
+            // equal-band strength changes: low + high <= 1 + low * high for bands in [0, 1].
             f32 low = std::sqrt(target.low_amplitude);
             f32 high = std::sqrt(target.high_amplitude);
-            const f32 scale = 0.8f / std::max(1.0f, low + high);
+            const f32 scale = 0.8f / (1.0f + low * high);
             low *= scale;
             high *= scale;
             auto& voice = voices[side];

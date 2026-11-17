@@ -8,6 +8,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <system_error>
 #include <thread>
 #include <utility>
 
@@ -30,7 +31,11 @@ public:
     }
 
     bool Open(const std::string& path) override {
+        write_error_logged = false;
         hid = SDL_hid_open_path(path.c_str());
+        if (!hid) {
+            LOG_WARNING(Input, "Steam haptics HID open: {}", SDL_GetError());
+        }
         return hid != nullptr;
     }
 
@@ -38,6 +43,7 @@ public:
         SteamHaptics::Report zero_rumble{};
         zero_rumble[0] = 0x80;
         if (!Write(zero_rumble) || !Mode(1, format) || !Mode(1, 0) || !Mode(2, format)) {
+            LOG_WARNING(Input, "Steam haptics configure format={}: {}", format, SDL_GetError());
             return false;
         }
         SDL_Delay(200);
@@ -50,7 +56,13 @@ public:
         }
         // Windows can pad output reports and return the padded size.
         const int written = SDL_hid_write(hid, report.data(), report.size());
-        return SteamHaptics::CompleteReportWrite(written, report.size());
+        const bool complete = SteamHaptics::CompleteReportWrite(written, report.size());
+        if (!complete && !write_error_logged) {
+            LOG_WARNING(Input, "Steam haptics HID write returned {} of {} bytes: {}", written,
+                        report.size(), SDL_GetError());
+            write_error_logged = true;
+        }
+        return complete;
     }
 
     void Silence(u8 format) override {
@@ -82,6 +94,7 @@ private:
     }
 
     SDL_hid_device* hid{};
+    bool write_error_logged{};
 };
 #endif
 
@@ -104,8 +117,9 @@ struct SteamControllerHaptics::Impl {
     std::condition_variable wake;
     u64 generation{};
     std::thread sender;
+    enum class State { Stopped, Starting, Streaming, Failed, Disconnected };
+    std::atomic<State> state{State::Stopped};
     std::atomic<bool> running{};
-    bool opened{};
     bool attempted{};
     bool fallback_logged{};
     bool disconnected{};
@@ -125,23 +139,16 @@ struct SteamControllerHaptics::Impl {
 
     bool Start() {
         attempted = true;
-        if (!transport || !transport->Open(path)) {
-            LOG_WARNING(Input, "Steam Controller haptics could not open the physical device");
-            return false;
-        }
-        opened = true;
-        if (!transport->Configure(Format())) {
-            transport->Silence(Format());
-            transport->Close();
-            opened = false;
-            LOG_WARNING(Input, "Steam Controller haptics could not configure grip PCM output");
-            return false;
-        }
-
         running.store(true);
-        sender = std::thread([this] { Run(); });
-        LOG_INFO(Input, "Steam Controller haptics: dual-band grip PCM, product={:04x}, rate={} Hz",
-                 product_id, SteamHaptics::SampleRateForProduct(product_id));
+        state.store(State::Starting);
+        try {
+            sender = std::thread([this] { Run(); });
+        } catch (const std::system_error& error) {
+            running.store(false);
+            state.store(State::Failed);
+            LOG_WARNING(Input, "Steam Controller haptics thread failed: {}", error.what());
+            return false;
+        }
         return true;
     }
 
@@ -153,16 +160,27 @@ struct SteamControllerHaptics::Impl {
         wake.notify_all();
         if (sender.joinable()) {
             sender.join();
-        } else if (opened) {
-            transport->Silence(Format());
         }
-        if (opened) {
-            transport->Close();
-            opened = false;
-        }
+        state.store(disconnected ? State::Disconnected : State::Stopped);
     }
 
     void Run() {
+        if (!transport || !transport->Open(path)) {
+            LOG_WARNING(Input, "Steam Controller haptics open failed, product={:04x}", product_id);
+            state.store(State::Failed);
+            running.store(false);
+            return;
+        }
+        if (!transport->Configure(Format()) || !running.load()) {
+            state.store(State::Failed);
+            running.store(false);
+            transport->Silence(Format());
+            transport->Close();
+            return;
+        }
+        state.store(State::Streaming);
+        LOG_INFO(Input, "Steam haptics streaming: product={:04x}, format={}, rate={} Hz",
+                 product_id, Format(), SteamHaptics::SampleRateForProduct(product_id));
 #ifdef _WIN32
         if (!SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_HIGH)) {
             LOG_DEBUG(Input, "Could not raise Steam haptics thread priority: {}", SDL_GetError());
@@ -225,8 +243,10 @@ struct SteamControllerHaptics::Impl {
                 deadline = after_write;
             }
         }
-        transport->Silence(Format());
+        state.store(running.load() ? State::Failed : State::Stopped);
         running.store(false);
+        transport->Silence(Format());
+        transport->Close();
     }
 
     bool SetVibration(const Common::Input::VibrationStatus& vibration, bool enabled) {
@@ -273,7 +293,9 @@ struct SteamControllerHaptics::Impl {
             (void)Start();
         }
         if (!running.load()) {
-            Stop();
+            if (sender.joinable()) {
+                sender.join();
+            }
             if (!fallback_logged) {
                 LOG_WARNING(Input, "Steam Controller haptics: using standard rumble fallback "
                                    "(frequencies are lost)");
@@ -304,7 +326,15 @@ bool SteamControllerHaptics::SetVibration(const Common::Input::VibrationStatus& 
 }
 
 bool SteamControllerHaptics::IsStreaming() const {
-    return impl->running.load();
+    const auto state = impl->state.load();
+    return impl->running.load() &&
+           (state == Impl::State::Starting || state == Impl::State::Streaming);
+}
+
+bool SteamControllerHaptics::RequiresUpdates() const {
+    // Accepted requests can fail asynchronously, so identical updates must reach fallback too.
+    std::scoped_lock lock{impl->state_mutex};
+    return !impl->disconnected;
 }
 
 void SteamControllerHaptics::Disconnect() {

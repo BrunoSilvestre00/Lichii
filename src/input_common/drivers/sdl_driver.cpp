@@ -359,8 +359,9 @@ public:
         return motion;
     }
 
-    bool RumblePlay(const Common::Input::VibrationStatus& vibration, f32 curve_factor) {
-        if (SteamControllerHapticsPlay(vibration)) {
+    bool RumblePlay(const Common::Input::VibrationStatus& vibration, f32 curve_factor,
+                    bool try_steam = true) {
+        if (try_steam && SteamControllerHapticsPlay(vibration)) {
             return true;
         }
         constexpr u32 rumble_max_duration_ms = 2000;
@@ -442,10 +443,10 @@ public:
         return true;
     }
 
-    bool IsHapticsOpen() {
-        const auto steam_haptics = GetSteamHaptics();
-        if (steam_haptics && Settings::values.enable_steam_controller_hd_rumble.GetValue() &&
-            steam_haptics->IsStreaming()) {
+    bool HasStreamedVibration() {
+        const auto steam_device = GetSteamHaptics();
+        if (steam_device && Settings::values.enable_steam_controller_hd_rumble.GetValue() &&
+            steam_device->RequiresUpdates()) {
             return true;
         }
         std::scoped_lock lock{haptics_mutex};
@@ -699,12 +700,24 @@ private:
     }
 
     bool SteamControllerHapticsPlay(const Common::Input::VibrationStatus& vibration) {
-        const auto steam_haptics = GetSteamHaptics();
-        if (!steam_haptics) {
+        const auto steam_device = GetSteamHaptics();
+        if (!steam_device) {
             return false;
         }
         const bool enabled = Settings::values.enable_steam_controller_hd_rumble.GetValue();
-        return steam_haptics->SetVibration(vibration, enabled);
+        const bool accepted = steam_device->SetVibration(vibration, enabled);
+        std::scoped_lock lock{rumble_mutex};
+        if (accepted && !steam_rumbling) {
+            side_vibrations = {};
+            if (sdl_controller) {
+                SDL_RumbleGamepad(sdl_controller.get(), 0, 0, 0);
+                SDL_RumbleGamepadTriggers(sdl_controller.get(), 0, 0, 0);
+            } else if (sdl_joystick) {
+                SDL_RumbleJoystick(sdl_joystick.get(), 0, 0, 0);
+            }
+        }
+        steam_rumbling = accepted;
+        return accepted;
     }
 
     void InitializeSteamHaptics() {
@@ -718,9 +731,9 @@ private:
             return;
         }
         const char* const path = SDL_GetJoystickPath(sdl_joystick.get());
-        auto haptics = std::make_shared<SteamControllerHaptics>(path ? path : "", product_id);
+        auto steam_device = std::make_shared<SteamControllerHaptics>(path ? path : "", product_id);
         std::scoped_lock lock{steam_haptics_mutex};
-        steam_haptics = std::move(haptics);
+        steam_haptics = std::move(steam_device);
 #endif
     }
 
@@ -772,6 +785,7 @@ private:
     std::unique_ptr<SDL_Joystick, decltype(&SDL_CloseJoystick)> sdl_joystick;
     std::unique_ptr<SDL_Gamepad, decltype(&SDL_CloseGamepad)> sdl_controller;
     std::atomic<u64> reversed_axes;
+    bool steam_rumbling{};
     mutable std::mutex steam_haptics_mutex;
     std::shared_ptr<SteamControllerHaptics> steam_haptics;
     mutable std::mutex mutex;
@@ -1247,9 +1261,9 @@ Common::Input::DriverResult SDLDriver::SetVibration(
         factor = 1.0f;
     }
 
-    joystick->RumblePlay(vibration, factor);
-
-    return Common::Input::DriverResult::Success;
+    return joystick->RumblePlay(vibration, factor, false)
+               ? Common::Input::DriverResult::Success
+               : Common::Input::DriverResult::ErrorWritingData;
 }
 
 bool SDLDriver::IsVibrationEnabled(const PadIdentifier& identifier) {
@@ -1293,7 +1307,7 @@ bool SDLDriver::IsVibrationEnabled(const PadIdentifier& identifier) {
 
 bool SDLDriver::IsVibrationStreamed(const PadIdentifier& identifier) {
     const auto joystick = GetSDLJoystickByGUID(identifier.guid, static_cast<int>(identifier.port));
-    return joystick->IsHapticsOpen();
+    return joystick->HasStreamedVibration();
 }
 
 Common::ParamPackage SDLDriver::BuildAnalogParamPackageForButton(int port, const Common::UUID& guid,

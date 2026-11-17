@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <complex>
+#include <limits>
 #include <numbers>
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
@@ -47,8 +48,8 @@ TEST_CASE("Steam grip PCM preserves independent simultaneous frequencies", "[inp
         for (auto& side : samples) {
             side.resize(rate);
         }
-        REQUIRE(Magnitude(samples[0], rate, 220.0) > 0.35);
-        REQUIRE(Magnitude(samples[0], rate, 660.0) > 0.35);
+        REQUIRE(Magnitude(samples[0], rate, 220.0) > 0.30);
+        REQUIRE(Magnitude(samples[0], rate, 660.0) > 0.30);
         REQUIRE(Magnitude(samples[0], rate, 330.0) < 0.01);
         REQUIRE(Magnitude(samples[1], rate, 330.0) > 0.35);
         REQUIRE(Magnitude(samples[1], rate, 220.0) < 0.01);
@@ -89,6 +90,46 @@ TEST_CASE("Steam grip PCM keeps note pitch across both transport rates", "[input
     }
 }
 
+TEST_CASE("Steam grip PCM preserves equal-band strength within headroom", "[input][rumble]") {
+    using namespace InputCommon::SteamHaptics;
+    for (const u32 rate : {4000U, 8000U}) {
+        GripPcm quiet{rate};
+        GripPcm loud{rate};
+        const std::array<Target, 2> quiet_targets{{{0.25f, 220.0f, 0.25f, 660.0f}, {}}};
+        const std::array<Target, 2> loud_targets{{{1.0f, 220.0f, 1.0f, 660.0f}, {}}};
+        REQUIRE(quiet.Build(quiet_targets) != loud.Build(loud_targets));
+
+        f64 previous_low = 0.0;
+        f64 previous_high = 0.0;
+        for (const f32 amplitude : {0.25f, 0.5f, 0.75f, 1.0f}) {
+            GripPcm pcm{rate};
+            const std::array<Target, 2> targets{{{amplitude, 220.0f, amplitude, 660.0f}, {}}};
+            std::vector<f32> samples;
+            f32 peak = 0.0f;
+            for (int i = 0; i < 32; ++i) {
+                pcm.Build(targets);
+            }
+            while (samples.size() < rate) {
+                const auto report = pcm.Build(targets);
+                for (std::size_t i = 0; i < SamplesPerGrip; ++i) {
+                    const f32 sample = DecodeMuLaw(report[2 + i]);
+                    peak = std::max(peak, std::abs(sample));
+                    samples.push_back(sample);
+                }
+            }
+            samples.resize(rate);
+            INFO("rate=" << rate << " amplitude=" << amplitude);
+            REQUIRE(peak <= 0.82f);
+            const f64 low = Magnitude(samples, rate, 220.0);
+            const f64 high = Magnitude(samples, rate, 660.0);
+            REQUIRE(low > previous_low);
+            REQUIRE(high > previous_high);
+            previous_low = low;
+            previous_high = high;
+        }
+    }
+}
+
 TEST_CASE("Steam grip PCM uses standard mu-law reference encodings", "[input][rumble]") {
     using InputCommon::SteamHaptics::EncodeMuLaw;
     REQUIRE(EncodeMuLaw(0.0f) == 0xff);
@@ -115,4 +156,25 @@ TEST_CASE("Steam Controller product IDs select transport rate", "[input][rumble]
     REQUIRE(SampleRateForProduct(UsbProductId) == UsbSampleRate);
     REQUIRE(FormatForProduct(PuckProductId) == WirelessPcmFormat);
     REQUIRE(SampleRateForProduct(PuckProductId) == WirelessSampleRate);
+}
+
+TEST_CASE("Steam grip PCM sanitizes invalid signals and retains unequal bands", "[input][rumble]") {
+    using namespace InputCommon::SteamHaptics;
+    const auto invalid = Sanitize({std::numeric_limits<f32>::quiet_NaN(), 220.0f,
+                                   std::numeric_limits<f32>::infinity(), -1.0f});
+    REQUIRE_FALSE(Active(invalid));
+    const auto clamped = Sanitize({2.0f, 2000.0f, -1.0f, 0.0f});
+    REQUIRE(clamped.low_amplitude == 1.0f);
+    REQUIRE(clamped.low_frequency == 1253.0f);
+    REQUIRE(clamped.high_amplitude == 0.0f);
+    for (const u32 rate : {4000U, 8000U}) {
+        GripPcm first{rate};
+        GripPcm second{rate};
+        REQUIRE(first.Build({{{0.25f, 220.0f, 0.5f, 660.0f}, {}}}) !=
+                second.Build({{{0.25f, 220.0f, 1.0f, 660.0f}, {}}}));
+        GripPcm silence{rate};
+        const auto report = silence.Build({{invalid, invalid}});
+        REQUIRE(std::all_of(report.begin() + 2, report.end(),
+                            [](u8 sample) { return sample == 0xff; }));
+    }
 }

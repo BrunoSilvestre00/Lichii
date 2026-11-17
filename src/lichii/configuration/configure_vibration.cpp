@@ -94,6 +94,9 @@ void ConfigureVibration::ApplyConfiguration() {
     Settings::values.trigger_rumble_strength.SetValue(
         ui->checkBoxTriggerRumble->isChecked() ? static_cast<u8>(ui->spinTriggerRumble->value())
                                                : u8{0});
+    for (std::size_t i = 0; i < NUM_PLAYERS; ++i) {
+        hid_core.GetEmulatedControllerByIndex(i)->RefreshVibration();
+    }
 }
 
 void ConfigureVibration::changeEvent(QEvent* event) {

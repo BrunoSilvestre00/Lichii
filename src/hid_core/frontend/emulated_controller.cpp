@@ -334,6 +334,7 @@ void EmulatedController::LoadVirtualGamepadParams() {
 }
 
 void EmulatedController::ReloadInput() {
+    UnloadInput();
     // If you load any device here add the equivalent to the UnloadInput() function
     LoadDevices();
     for (std::size_t index = 0; index < button_devices.size(); ++index) {
@@ -527,6 +528,7 @@ void EmulatedController::ReloadInput() {
 }
 
 void EmulatedController::UnloadInput() {
+    std::scoped_lock vibration_lock{vibration_mutex};
     for (std::size_t index = 0; index < 2; ++index) {
         if (output_devices[index]) {
             output_devices[index]->SetVibration({
@@ -536,6 +538,10 @@ void EmulatedController::UnloadInput() {
             });
         }
     }
+    last_vibration_value.fill(DEFAULT_VIBRATION_VALUE);
+    vibration_delivered.fill(false);
+    requested_vibration.fill(DEFAULT_VIBRATION_VALUE);
+    last_vibration_timepoint.fill({});
     is_initialized = false;
     for (auto& button : button_devices) {
         button.reset();
@@ -1217,6 +1223,24 @@ void EmulatedController::SetNfc(const Common::Input::CallbackStatus& callback) {
     }
 }
 
+void EmulatedController::RefreshVibration() {
+    std::scoped_lock vibration_lock{vibration_mutex};
+    const auto requested = requested_vibration;
+    for (std::size_t index = 0; index < 2; ++index) {
+        if (output_devices[index]) {
+            output_devices[index]->SetVibration({
+                .type = Common::Input::VibrationAmplificationType::Linear,
+                .side = index == 0 ? Common::Input::VibrationSide::Left
+                                   : Common::Input::VibrationSide::Right,
+            });
+        }
+    }
+    vibration_delivered.fill(false);
+    last_vibration_timepoint.fill({});
+    SetVibrationLocked(DeviceIndex::Left, requested[0], Common::Input::VibrationSide::Left);
+    SetVibrationLocked(DeviceIndex::Right, requested[1], Common::Input::VibrationSide::Right);
+}
+
 bool EmulatedController::SetVibration(bool should_vibrate) {
     VibrationValue vibration_value = DEFAULT_VIBRATION_VALUE;
     if (should_vibrate) {
@@ -1243,6 +1267,12 @@ bool EmulatedController::SetVibration(DeviceIndex device_index, const VibrationV
 
 bool EmulatedController::SetVibration(DeviceIndex device_index, const VibrationValue& vibration,
                                       Common::Input::VibrationSide side) {
+    std::scoped_lock vibration_lock{vibration_mutex};
+    return SetVibrationLocked(device_index, vibration, side);
+}
+
+bool EmulatedController::SetVibrationLocked(DeviceIndex device_index, const VibrationValue& vibration,
+                                          Common::Input::VibrationSide side) {
     if (!is_initialized) {
         return false;
     }
@@ -1254,14 +1284,9 @@ bool EmulatedController::SetVibration(DeviceIndex device_index, const VibrationV
         return false;
     }
 
-    // Skip duplicated vibrations
-    if (last_vibration_value[index] == vibration) {
-        return Settings::values.vibration_enabled.GetValue();
-    }
-
-    last_vibration_value[index] = vibration;
-
+    requested_vibration[index] = vibration;
     if (!Settings::values.vibration_enabled) {
+        vibration_delivered[index] = false;
         return false;
     }
 
@@ -1270,7 +1295,12 @@ bool EmulatedController::SetVibration(DeviceIndex device_index, const VibrationV
     const f32 strength = static_cast<f32>(player.vibration_strength) / 100.0f;
 
     if (!player.vibration_enabled) {
+        vibration_delivered[index] = false;
         return false;
+    }
+    if (!output_devices[index]->IsVibrationStreamed() && vibration_delivered[index] &&
+        last_vibration_value[index] == vibration && last_vibration_strength[index] == strength) {
+        return true;
     }
 
     if (!Settings::values.enable_accurate_vibrations.GetValue() &&
@@ -1286,8 +1316,6 @@ bool EmulatedController::SetVibration(DeviceIndex device_index, const VibrationV
             duration_cast<milliseconds>(now - last_vibration_timepoint[index]) < milliseconds(15)) {
             return false;
         }
-
-        last_vibration_timepoint[index] = now;
     }
 
     // Exponential amplification is too strong at low amplitudes. Switch to a linear
@@ -1308,10 +1336,19 @@ bool EmulatedController::SetVibration(DeviceIndex device_index, const VibrationV
     // Send vibrations to Android's input overlay
     output_devices[4]->SetVibration(status);
 
-    return output_devices[index]->SetVibration(status) == Common::Input::DriverResult::Success;
+    const bool delivered =
+        output_devices[index]->SetVibration(status) == Common::Input::DriverResult::Success;
+    vibration_delivered[index] = delivered;
+    if (delivered) {
+        last_vibration_timepoint[index] = std::chrono::steady_clock::now();
+        last_vibration_value[index] = vibration;
+        last_vibration_strength[index] = strength;
+    }
+    return delivered;
 }
 
 VibrationValue EmulatedController::GetActualVibrationValue(DeviceIndex device_index) const {
+    std::scoped_lock vibration_lock{vibration_mutex};
     if (device_index >= DeviceIndex::MaxDeviceIndex) {
         return Core::HID::DEFAULT_VIBRATION_VALUE;
     }

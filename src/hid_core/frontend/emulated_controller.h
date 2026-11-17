@@ -394,6 +394,7 @@ public:
      * @return true if vibration had no errors
      */
     bool SetVibration(DeviceIndex device_index, const VibrationValue& vibration);
+    void RefreshVibration();
 
     /**
      * @return The last sent vibration
@@ -503,6 +504,8 @@ private:
     /// Sends a vibration to the output device for the given side of the controller
     bool SetVibration(DeviceIndex device_index, const VibrationValue& vibration,
                       Common::Input::VibrationSide side);
+    bool SetVibrationLocked(DeviceIndex device_index, const VibrationValue& vibration,
+                            Common::Input::VibrationSide side);
 
     /**
      * @param use_temporary_value If true tmp_npad_type will be used
@@ -603,6 +606,11 @@ private:
     std::size_t nfc_handles{0};
     std::array<VibrationValue, 2> last_vibration_value{DEFAULT_VIBRATION_VALUE,
                                                        DEFAULT_VIBRATION_VALUE};
+    std::array<VibrationValue, 2> requested_vibration{DEFAULT_VIBRATION_VALUE,
+                                                      DEFAULT_VIBRATION_VALUE};
+    mutable std::mutex vibration_mutex;
+    std::array<bool, 2> vibration_delivered{};
+    std::array<f32, 2> last_vibration_strength{};
     std::array<std::chrono::steady_clock::time_point, 2> last_vibration_timepoint{};
 
     // Atomically synched values

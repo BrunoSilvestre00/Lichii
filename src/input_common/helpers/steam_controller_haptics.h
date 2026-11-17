@@ -36,6 +36,7 @@ public:
     bool SetVibration(const Common::Input::VibrationStatus& vibration, bool enabled);
 
     bool IsStreaming() const;
+    bool RequiresUpdates() const;
     void Disconnect();
 
 private:
