@@ -244,6 +244,7 @@ add_executable(tests
     core/local_redirect.cpp
     core/nextendo_redirect.cpp
     core/filesystem_rename.cpp
+    core/filesystem_buffer_bounds.cpp
     core/thread_startup_policy.cpp
     core/nup_writer.cpp
     core/nup_metadata.cpp
