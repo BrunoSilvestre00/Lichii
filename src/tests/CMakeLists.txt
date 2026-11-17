@@ -311,6 +311,7 @@ add_executable(tests
     video_core/indirect_reset.cpp
     video_core/stale_pages.cpp
     input_common/calibration_configuration_job.cpp
+    input_common/steam_controller_signal.cpp
 )
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID)
@@ -447,7 +448,8 @@ add_test(NAME shader_translation_tests COMMAND shader_translation_tests)
 
 if (NOT ANDROID)
     target_sources(tests PRIVATE input_common/joycon_subcommand_response.cpp
-                                 input_common/rumble_mapping.cpp)
+                                 input_common/rumble_mapping.cpp
+                                 input_common/steam_controller_haptics.cpp)
     target_link_libraries(tests PRIVATE SDL3::SDL3)
 
     add_executable(config_tests
