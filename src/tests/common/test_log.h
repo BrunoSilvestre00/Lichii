@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 #include <system_error>
 
 #ifndef _WIN32
@@ -47,9 +48,18 @@ inline void InitializeTestLog() {
     static std::once_flag once;
     std::call_once(once, [] {
         const auto previous = Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir);
+#ifdef _WIN32
+        // The temporary folder is the user's own.
         const auto directory = std::filesystem::temp_directory_path() / "lichii-tests-log";
         std::error_code error;
         std::filesystem::create_directories(directory, error);
+#else
+        // /tmp may be shared: one folder per user, made private from the start (create_directory
+        // would follow the umask, which may leave it group-writable).
+        const auto directory = std::filesystem::temp_directory_path() /
+                               ("lichii-tests-log-" + std::to_string(geteuid()));
+        mkdir(directory.c_str(), 0700);
+#endif
         // SetEdenPath keeps the old folder when the new one isn't a directory, and the log would
         // then start in the user's folder. The temporary folder may be shared with other users
         // (/tmp), so the folder must also be a real one this user owns and nobody else can write
