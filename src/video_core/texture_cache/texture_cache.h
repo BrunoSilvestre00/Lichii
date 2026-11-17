@@ -1119,8 +1119,8 @@ template <class P>
 std::shared_ptr<Tegra::MemoryManager> TextureCache<P>::WriteBackMemory(const ImageBase& image) {
     // The garbage collector and CPU-side downloads reach images of every address space, so the
     // bound channel's memory may map image.gpu_addr to other memory. The image's own address
-    // space writes it; once nvdrv has closed that one, another address space that still maps
-    // image.gpu_addr to the image's device memory does (FindImage shares images between them).
+    // space writes it; once nvdrv has closed that one, another address space that maps all of
+    // the image's GPU range to its device memory does (FindImage shares images between them).
     // The returned reference keeps the memory manager alive while the image is written.
     boost::container::small_vector<std::shared_ptr<Tegra::MemoryManager>, 4> others;
     {
@@ -1140,7 +1140,8 @@ std::shared_ptr<Tegra::MemoryManager> TextureCache<P>::WriteBackMemory(const Ima
         return nullptr;
     }
     for (std::shared_ptr<Tegra::MemoryManager>& memory : others) {
-        if (memory->GpuToCpuAddress(image.gpu_addr) == image.cpu_addr) {
+        if (memory->GpuToCpuAddress(image.gpu_addr) == image.cpu_addr &&
+            memory->IsContinuousRange(image.gpu_addr, image.guest_size_bytes)) {
             return std::move(memory);
         }
     }
