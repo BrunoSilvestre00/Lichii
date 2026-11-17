@@ -8,13 +8,13 @@
 #include <QFont>
 #include <QHash>
 #include <QImage>
+#include <QImageReader>
 #include <QPainter>
 #include <QPainterPath>
 #include <QRectF>
 #include <QTextLayout>
 #include <QTextOption>
 #include <QStringList>
-#include <QSvgRenderer>
 #include <QWidget>
 #include "game_card.h"
 #include "qt_common/config/uisettings.h"
@@ -25,16 +25,8 @@ namespace {
 
 const QImage& Switch2LogoImage() {
     static const QImage logo = [] {
-        QImage image(512, 512, QImage::Format_ARGB32_Premultiplied);
-        image.fill(Qt::transparent);
-        QSvgRenderer renderer(QStringLiteral(":/img/switch2_logo.svg"));
-        if (!renderer.isValid()) {
-            return QImage{};
-        }
-        QPainter painter(&image);
-        painter.setRenderHint(QPainter::Antialiasing);
-        renderer.render(&painter, QRectF(image.rect()));
-        return image;
+        QImageReader reader(QStringLiteral(":/img/switch2_logo.svg"));
+        return reader.read();
     }();
     return logo;
 }
