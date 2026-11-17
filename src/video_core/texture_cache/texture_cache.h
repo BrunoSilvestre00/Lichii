@@ -4752,10 +4752,16 @@ bool TextureCache<P>::ClearOverwritesWhole(const ImageInfo& new_info, GPUVAddr g
     if (!ClearCovers(width, height)) {
         return false;
     }
-    // The clear covers the framebuffer's render area, the smallest bound target.
+    // The clear covers the framebuffer's render area, the smallest bound target. The clear's
+    // own depth target follows IsFullClear as an existing one does (its contents are dropped,
+    // the colour targets' sizes aside): Ocarina binds a 1920x1024 depth buffer under 1280x720
+    // colour, and this rule uploaded its 7.5 MiB from guest memory every frame (port of
+    // Fritchii's EXP56, #1631).
+    const bool depth_follows_full_clear = regs.zeta_enable && regs.zeta.Address() == gpu_addr;
     for (u32 index = 0; index < regs.rt_control.count && index < NUM_RT; ++index) {
         const auto& rt = regs.rt[index];
-        if (rt.Address() != 0 && rt.format != Tegra::RenderTargetFormat::NONE &&
+        if (!depth_follows_full_clear && rt.Address() != 0 &&
+            rt.format != Tegra::RenderTargetFormat::NONE &&
             (rt.width < width || rt.height < height)) {
             return false;
         }
@@ -6341,10 +6347,16 @@ bool TextureCache<P>::ClearWritesWhole(const ImageInfo& info, GPUVAddr gpu_addr)
     if (!ClearCovers(width, height)) {
         return false;
     }
-    // The clear covers the framebuffer's render area, the smallest bound target.
+    // The clear covers the framebuffer's render area, the smallest bound target. The clear's
+    // own depth target follows IsFullClear as an existing one does (its contents are dropped,
+    // the colour targets' sizes aside): Ocarina binds a 1920x1024 depth buffer under 1280x720
+    // colour, and this rule uploaded its 7.5 MiB from guest memory every frame (port of
+    // Fritchii's EXP56, #1631).
+    const bool depth_follows_full_clear = regs.zeta_enable && regs.zeta.Address() == gpu_addr;
     for (u32 index = 0; index < regs.rt_control.count && index < NUM_RT; ++index) {
         const auto& rt = regs.rt[index];
-        if (rt.Address() != 0 && rt.format != Tegra::RenderTargetFormat::NONE &&
+        if (!depth_follows_full_clear && rt.Address() != 0 &&
+            rt.format != Tegra::RenderTargetFormat::NONE &&
             (rt.width < width || rt.height < height)) {
             return false;
         }
