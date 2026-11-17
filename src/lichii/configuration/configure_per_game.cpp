@@ -79,6 +79,7 @@
 #include "lichii/configuration/configure_system.h"
 #include "lichii/configuration/settings_share.h"
 #include "lichii/util/util.h"
+#include "lichii/configuration/linux_scrollable_page.h"
 
 namespace {
 
@@ -421,6 +422,12 @@ ConfigurePerGame::ConfigurePerGame(QWidget* parent, u64 title_id_, const std::st
         ui->tabWidget->addTab(ConfigurationShared::ScrollTab(tab),
                               ConfigurationShared::PageIcon(QString::fromLatin1(icon)), name);
     }
+
+#if defined(__linux__) && !defined(__ANDROID__)
+    for (int index = 0; index < ui->tabWidget->count(); ++index) {
+        ConfigurationShared::MakePageScrollable(ui->tabWidget->widget(index));
+    }
+#endif
 
     setFocusPolicy(Qt::ClickFocus);
     setWindowTitle(tr("Properties"));
