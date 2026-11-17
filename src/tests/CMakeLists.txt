@@ -312,6 +312,7 @@ add_executable(tests
     video_core/shader_attributes.cpp
     video_core/indirect_reset.cpp
     video_core/stale_pages.cpp
+    video_core/superseded_images.cpp
     input_common/calibration_configuration_job.cpp
     input_common/steam_controller_signal.cpp
 )
