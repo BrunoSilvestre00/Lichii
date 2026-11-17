@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <mutex>
+#include <stdexcept>
 #include <system_error>
 
 #include "common/fs/path_util.h"
@@ -27,6 +28,11 @@ inline void InitializeTestLog() {
         const auto directory = std::filesystem::temp_directory_path() / "lichii-tests-log";
         std::error_code error;
         std::filesystem::create_directories(directory, error);
+        // SetEdenPath keeps the old folder when the new one isn't a directory, and the log would
+        // then start in the user's folder.
+        if (!std::filesystem::is_directory(directory, error)) {
+            throw std::runtime_error("Cannot use the tests' log folder");
+        }
         Common::FS::SetEdenPath(Common::FS::EdenPath::LogDir, directory);
         Common::Log::Initialize();
         RestoreEdenPath(Common::FS::EdenPath::LogDir, previous);
