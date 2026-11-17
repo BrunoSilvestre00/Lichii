@@ -17,6 +17,7 @@ add_library(video_core STATIC
     neural_rendering/model.h
     buffer_cache/buffer_base.h
     buffer_cache/buffer_cache_base.h
+    buffer_cache/command_read_snapshots.h
     buffer_cache/buffer_cache.cpp
     buffer_cache/buffer_cache.h
     buffer_cache/compute_write_grid.h
@@ -128,6 +129,7 @@ add_library(video_core STATIC
     gpu_trace/trace_file.cpp
     gpu_trace/trace_file.h
     guest_memory.h
+    command_read_scope.h
     invalidation_accumulator.h
     memory_manager.cpp
     memory_manager.h
