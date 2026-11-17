@@ -19,6 +19,7 @@ add_executable(tests
     video_core/nx2_stutter_trace.cpp
     video_core/back_idle_trace.cpp
     video_core/list_macro_trace.cpp
+    video_core/pipeline_build_trace.cpp
     video_core/host_mip_limits.cpp
     video_core/writeback_ranges.cpp
     video_core/writeback_switches.cpp
