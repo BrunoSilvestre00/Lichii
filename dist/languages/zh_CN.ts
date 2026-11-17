@@ -3128,13 +3128,13 @@ Enabling it bypasses such prompts and directly exits the emulation.</source>
         <translation>**这会在 Eden 关闭时自动重置。</translation>
     </message>
     <message>
-            <location filename="../../src/yuzu/configuration/configure_debug.ui" line="449"/>
-            <source>When checked, yuzu will log statistics about the compiled pipeline cache</source>
-            <translation>选中时，yuzu 将记录有关已编译着色器缓存的统计信息。</translation>
+            <location filename="../../src/lichii/configuration/configure_debug.ui" line="449"/>
+            <source>When checked, Lichii will log statistics about the compiled pipeline cache</source>
+            <translation>选中时，Lichii 将记录有关已编译着色器缓存的统计信息。</translation>
         </message><message>
-            <location filename="../../src/yuzu/configuration/configure_debug.ui" line="488"/>
-            <source>Enables yuzu to check for a working Vulkan environment when the program starts up. Disable this if this is causing issues with external programs seeing yuzu.</source>
-            <translation>允许 yuzu 在启动时检查 Vulkan 环境是否正常工作。如果是其他程序导致 yuzu 出现相关问题，请禁用此选项。</translation>
+            <location filename="../../src/lichii/configuration/configure_debug.ui" line="488"/>
+            <source>Enables Lichii to check for a working Vulkan environment when the program starts up. Disable this if this is causing issues with external programs seeing Lichii.</source>
+            <translation>允许 Lichii 在启动时检查 Vulkan 环境是否正常工作。如果是其他程序导致 Lichii 出现相关问题，请禁用此选项。</translation>
         </message>
 </context>
 <context>
@@ -8597,27 +8597,27 @@ Would you like to bypass this and exit anyway?</source>
         <translation>空</translation>
     </message>
     <message>
-            <location filename="../../src/yuzu/main.ui" line="14"/>
-            <source>yuzu</source>
-            <translation>yuzu</translation>
+            <location filename="../../src/lichii/main.ui" line="14"/>
+            <source>Lichii</source>
+            <translation>Lichii</translation>
         </message><message>
-            <location filename="../../src/yuzu/main.ui" line="62"/>
+            <location filename="../../src/lichii/main.ui" line="62"/>
             <source>Open &amp;Lichii Folders</source>
             <translation>打开 Lichii 文件夹(&amp;L)</translation>
         </message><message>
-            <location filename="../../src/yuzu/main.ui" line="298"/>
+            <location filename="../../src/lichii/main.ui" line="298"/>
             <source>&amp;About Lichii</source>
             <translation>关于 Lichii(&amp;A)</translation>
         </message><message>
-            <location filename="../../src/yuzu/main.ui" line="420"/>
+            <location filename="../../src/lichii/main.ui" line="420"/>
             <source>Apply Recommended &amp;Settings...</source>
             <translation>应用推荐设置(&amp;S)...</translation>
         </message><message>
-            <location filename="../../src/yuzu/main.ui" line="425"/>
+            <location filename="../../src/lichii/main.ui" line="425"/>
             <source>Restore My &amp;Previous Settings</source>
             <translation>恢复原设置(&amp;P)</translation>
         </message><message>
-            <location filename="../../src/yuzu/main.ui" line="571"/>
+            <location filename="../../src/lichii/main.ui" line="571"/>
             <source>&amp;Lichii Dependencies</source>
             <translation>Lichii 依赖(&amp;L)</translation>
         </message><message>
@@ -11884,72 +11884,72 @@ Would you like to manually select a portable folder to use?</source>
 <context>
     <name>RecommendedSettingsDialog</name>
     <message>
-            <location filename="../../src/yuzu/recommended_settings_dialog.cpp" line="89"/>
+            <location filename="../../src/lichii/recommended_settings_dialog.cpp" line="89"/>
             <source>Recommended settings</source>
             <translation>推荐设置</translation>
         </message>
     <message>
-            <location filename="../../src/yuzu/recommended_settings_dialog.cpp" line="90"/>
+            <location filename="../../src/lichii/recommended_settings_dialog.cpp" line="90"/>
             <source>Do you want to use the recommended settings from the Lichii developer?</source>
             <translation>是否使用 Lichii 开发者提供的推荐设置？</translation>
         </message>
     <message>
-            <location filename="../../src/yuzu/recommended_settings_dialog.cpp" line="92"/>
+            <location filename="../../src/lichii/recommended_settings_dialog.cpp" line="92"/>
             <source>They improve performance for most games. Lichii keeps your own settings, so you can go back at any time with Help &gt; Restore My Previous Settings. Per-game settings do not change.</source>
             <translation>这些设置可提升大多数游戏的性能。Lichii 会保留你原有的设置，你随时可以用「帮助 &gt; 恢复原设置」还原。单个游戏的设置不会改变。</translation>
         </message>
     <message>
-            <location filename="../../src/yuzu/recommended_settings_dialog.cpp" line="95"/>
+            <location filename="../../src/lichii/recommended_settings_dialog.cpp" line="95"/>
             <source>Use recommended settings</source>
             <translation>使用推荐设置</translation>
         </message>
     <message>
-            <location filename="../../src/yuzu/recommended_settings_dialog.cpp" line="96"/>
+            <location filename="../../src/lichii/recommended_settings_dialog.cpp" line="96"/>
             <source>Not now</source>
             <translation>以后再说</translation>
         </message>
     <message>
-            <location filename="../../src/yuzu/recommended_settings_dialog.cpp" line="107"/>
+            <location filename="../../src/lichii/recommended_settings_dialog.cpp" line="107"/>
             <source>Your settings already match the recommended settings. Nothing changed.</source>
             <translation>你的设置已与推荐设置一致，未做任何更改。</translation>
         </message>
     <message>
-            <location filename="../../src/yuzu/recommended_settings_dialog.cpp" line="110"/>
+            <location filename="../../src/lichii/recommended_settings_dialog.cpp" line="110"/>
             <source>Lichii now uses the recommended settings.</source>
             <translation>Lichii 现在使用推荐设置。</translation>
         </message>
     <message>
-            <location filename="../../src/yuzu/recommended_settings_dialog.cpp" line="111"/>
+            <location filename="../../src/lichii/recommended_settings_dialog.cpp" line="111"/>
             <source>On</source>
             <translation>开启</translation>
         </message>
     <message>
-            <location filename="../../src/yuzu/recommended_settings_dialog.cpp" line="111"/>
+            <location filename="../../src/lichii/recommended_settings_dialog.cpp" line="111"/>
             <source>Off</source>
             <translation>关闭</translation>
         </message>
     <message>
-            <location filename="../../src/yuzu/recommended_settings_dialog.cpp" line="112"/>
+            <location filename="../../src/lichii/recommended_settings_dialog.cpp" line="112"/>
             <source>To go back, use Help &gt; Restore My Previous Settings.</source>
             <translation>如需还原，请使用「帮助 &gt; 恢复原设置」。</translation>
         </message>
     <message>
-            <location filename="../../src/yuzu/recommended_settings_dialog.cpp" line="119"/>
+            <location filename="../../src/lichii/recommended_settings_dialog.cpp" line="119"/>
             <source>Previous settings</source>
             <translation>原设置</translation>
         </message>
     <message>
-            <location filename="../../src/yuzu/recommended_settings_dialog.cpp" line="120"/>
+            <location filename="../../src/lichii/recommended_settings_dialog.cpp" line="120"/>
             <source>Your settings already match your previous settings. Nothing changed.</source>
             <translation>你的设置已与原设置一致，未做任何更改。</translation>
         </message>
     <message>
-            <location filename="../../src/yuzu/recommended_settings_dialog.cpp" line="123"/>
+            <location filename="../../src/lichii/recommended_settings_dialog.cpp" line="123"/>
             <source>Lichii uses your previous settings again.</source>
             <translation>Lichii 已重新使用原设置。</translation>
         </message>
     <message>
-            <location filename="../../src/yuzu/recommended_settings_dialog.cpp" line="125"/>
+            <location filename="../../src/lichii/recommended_settings_dialog.cpp" line="125"/>
             <source>To use the recommended settings again, use Help &gt; Apply Recommended Settings.</source>
             <translation>如需再次使用推荐设置，请使用「帮助 &gt; 应用推荐设置」。</translation>
         </message>
