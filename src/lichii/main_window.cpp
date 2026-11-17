@@ -93,6 +93,7 @@
 #include <QClipboard>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
 #include <QElapsedTimer>
@@ -506,7 +507,6 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     UpdateUITheme();
 
     SetDiscordEnabled(UISettings::values.enable_discord_presence.GetValue());
-    discord_rpc->Update();
 
     play_time_manager = std::make_unique<PlayTime::PlayTimeManager>();
 
@@ -2817,6 +2817,7 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
             ResetWindowSize720();
         }
     }
+    discord_session_start = QDateTime::currentSecsSinceEpoch();
     CheckNextendoOnlineStatus();
     CheckNextendoGameVersion(title_id, title_version);
     nextendo_social_timer.start(Common::Nextendo::FriendsRefreshInterval);
@@ -3064,6 +3065,7 @@ void MainWindow::OnEmulationStopped() {
         }
     }
     SyncNextendoProfile(false);
+    discord_session_start = 0;
 
     game_list->SetReportableProgramId(report_session ? report_session->program_id : 0);
 
@@ -3993,7 +3995,7 @@ void MainWindow::OnStartGame() {
     play_time_manager->SetProgramId(QtCommon::system->GetApplicationProcessProgramID());
     play_time_manager->Start();
 
-    discord_rpc->Update();
+    discord_rpc->Update(discord_session_start);
     Common::FeralGamemode::Start();
 }
 
@@ -5904,6 +5906,8 @@ void MainWindow::OnApplicationChanged(u64 program_id) {
     // Switch to record playtime for the running program
     if (play_time_manager)
         play_time_manager->SetProgramId(program_id);
+
+    discord_rpc->Update(discord_session_start);
 }
 
 void MainWindow::UpdateWindowTitle(std::string_view title_name, std::string_view title_version,
@@ -7107,7 +7111,7 @@ void MainWindow::SetDiscordEnabled([[maybe_unused]] bool state) {
 #else
     discord_rpc = std::make_unique<DiscordRPC::NullImpl>();
 #endif
-    discord_rpc->Update();
+    discord_rpc->Update(discord_session_start);
 }
 
 void MainWindow::SetGamemodeEnabled(bool state) {
