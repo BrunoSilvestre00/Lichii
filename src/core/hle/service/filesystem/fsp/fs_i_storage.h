@@ -20,6 +20,7 @@ public:
     explicit IStorage(Core::System& system_, FileSys::VirtualFile backend_);
 
 private:
+    friend struct FileIoTestAccess;
     FileSys::VirtualFile backend;
 
     ReadThrottle throttle;
