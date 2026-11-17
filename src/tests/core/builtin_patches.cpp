@@ -425,7 +425,11 @@ TEST_CASE("Built-in FPS Unlock defaults on and replaces Dynamic FPS", "[patch_ma
     REQUIRE(listed(DynamicFps).enabled);
     REQUIRE(listed(DynamicFps).version ==
             fmt::format("IPS, replaced by {} when it applies", FpsUnlock));
-    auto patched = manager.PatchNSO(nso, "main");
+    // FPS Unlock lowers the step above 60 fps, so the display may start its frames
+    // (KProcess::IsFrameRateUnlocked).
+    bool frame_rate_unlocked = false;
+    auto patched = manager.PatchNSO(nso, "main", &frame_rate_unlocked);
+    REQUIRE(frame_rate_unlocked);
     REQUIRE(WordAt(patched, DynamicCallOffset) == DynamicCallInstruction);
     REQUIRE(routine(patched, UnlockRoutineSize) ==
             std::string{RoutineHead} + "E300001C4268231EC300001C4278231E4840201EC0035FD6"
@@ -474,10 +478,11 @@ TEST_CASE("Built-in FPS Unlock defaults on and replaces Dynamic FPS", "[patch_ma
     Settings::values.disabled_addons[OcarinaTitleId] = {std::string{FpsUnlock}};
     REQUIRE_FALSE(listed(FpsUnlock).enabled);
     REQUIRE(listed(DynamicFps).version == "IPS");
-    // Either patch unlocks the frame rate (KProcess::IsFrameRateUnlocked).
-    bool frame_rate_unlocked = false;
+    // Dark's step never drops below 1.0, so the game keeps the vsync timer's rate
+    // (KProcess::IsFrameRateUnlocked stays false).
+    frame_rate_unlocked = false;
     patched = manager.PatchNSO(nso, "main", &frame_rate_unlocked);
-    REQUIRE(frame_rate_unlocked);
+    REQUIRE_FALSE(frame_rate_unlocked);
     REQUIRE(WordAt(patched, DynamicCallOffset) == DynamicCallInstruction);
     REQUIRE(routine(patched, DynamicRoutineSize) ==
             std::string{RoutineHead} + "C300001C0309231E4020231E4D0000544840201EC0035FD6"
