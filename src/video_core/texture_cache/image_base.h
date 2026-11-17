@@ -149,6 +149,10 @@ struct ImageBase {
     /// Levels whose every layer a shader last wrote through a storage view. Any other GPU write
     /// (render pass, clear, copy, alias copy) and an upload from guest memory clear them.
     u32 storage_written_levels = 0;
+    /// modification_tick of the latest GPU write that covered the whole image (a clear).
+    u64 full_write_tick = 0;
+    /// Last frame the image was prepared for use in (TextureCache::PrepareImage), 0 before.
+    u64 last_use_frame = 0;
     size_t lru_index = SIZE_MAX;
     /// The tick lru_index's entry was last inserted or touched with (TouchLru).
     u64 lru_tick = 0;
